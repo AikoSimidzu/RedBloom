@@ -1,0 +1,140 @@
+<Window x:Class="RedBloom.Views.HostKeyPrompt"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Host key"
+        Width="470"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+
+    <Border x:Name="RootBorder"
+            Background="{DynamicResource Chrome}"
+            BorderBrush="{DynamicResource Divider}"
+            BorderThickness="1"
+            CornerRadius="9"
+            MouseLeftButtonDown="Root_MouseLeftButtonDown">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="26" ShadowDepth="6" Opacity="0.6" Color="Black" />
+        </Border.Effect>
+
+        <StackPanel Margin="22,20,22,18">
+
+            <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="HeaderIcon"
+                           Text="&#xE946;"
+                           FontFamily="{StaticResource IconFont}"
+                           FontSize="15"
+                           Foreground="{DynamicResource Accent}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,10,0" />
+                <TextBlock x:Name="HeaderText"
+                           Text="Unknown server"
+                           Foreground="{DynamicResource TextPrimary}"
+                           FontFamily="{DynamicResource UiFont}"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <TextBlock x:Name="BodyText"
+                       Foreground="{DynamicResource TextMuted}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       LineHeight="18"
+                       Margin="0,12,0,0" />
+
+            <!-- fingerprint card -->
+            <Border Background="{DynamicResource Surface}"
+                    BorderBrush="{DynamicResource Divider}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="14,12"
+                    Margin="0,14,0,0">
+                <StackPanel>
+                    <TextBlock x:Name="EndpointText"
+                               Foreground="{DynamicResource TextPrimary}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="12"
+                               FontWeight="SemiBold" />
+
+                    <TextBlock x:Name="AlgorithmText"
+                               Foreground="{DynamicResource TextFaint}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="10.5"
+                               Margin="0,3,0,0" />
+
+                    <TextBlock Text="PRESENTED FINGERPRINT"
+                               Foreground="{DynamicResource TextFaint}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="9.5"
+                               FontWeight="SemiBold"
+                               Margin="0,11,0,3" />
+                    <TextBox x:Name="FingerprintText"
+                             IsReadOnly="True"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             Padding="0"
+                             FontFamily="Cascadia Mono, Consolas, monospace"
+                             FontSize="11.5"
+                             Foreground="{DynamicResource TextPrimary}"
+                             TextWrapping="Wrap" />
+
+                    <StackPanel x:Name="StoredPanel" Visibility="Collapsed">
+                        <TextBlock Text="PREVIOUSLY TRUSTED FINGERPRINT"
+                                   Foreground="{DynamicResource TextFaint}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="9.5"
+                                   FontWeight="SemiBold"
+                                   Margin="0,11,0,3" />
+                        <TextBox x:Name="StoredFingerprintText"
+                                 IsReadOnly="True"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 Padding="0"
+                                 FontFamily="Cascadia Mono, Consolas, monospace"
+                                 FontSize="11.5"
+                                 Foreground="{DynamicResource TextMuted}"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="HintText"
+                       Foreground="{DynamicResource TextFaint}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="10.5"
+                       TextWrapping="Wrap"
+                       LineHeight="16"
+                       Margin="1,12,0,0" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                <Button x:Name="RejectButton"
+                        Style="{StaticResource GhostButton}"
+                        Content="Cancel"
+                        Margin="0,0,8,0"
+                        IsCancel="True"
+                        Click="Reject_Click" />
+                <Button x:Name="AcceptOnceButton"
+                        Style="{StaticResource GhostButton}"
+                        Content="Connect once"
+                        Margin="0,0,8,0"
+                        Click="AcceptOnce_Click" />
+                <Button x:Name="AcceptStoreButton"
+                        Style="{StaticResource AccentButton}"
+                        Content="Trust and remember"
+                        Click="AcceptAndStore_Click" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>
+

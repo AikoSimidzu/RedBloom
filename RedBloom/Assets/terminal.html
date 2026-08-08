@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>RedBloom Terminal</title>
+  <link rel="stylesheet" href="xterm/xterm.css" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+    #root {
+      position: absolute;
+      inset: 0;
+      padding: 8px 4px 8px 10px;
+      box-sizing: border-box;
+    }
+    .xterm-viewport::-webkit-scrollbar { width: 10px; }
+    .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+    .xterm-viewport::-webkit-scrollbar-thumb {
+      background: #3a3636;
+      border-radius: 5px;
+      border: 2px solid #171616;
+    }
+    .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #554c4c; }
+
+    #find {
+      position: absolute;
+      top: 8px;
+      right: 18px;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 6px 5px 10px;
+      background: #221f1f;
+      border: 1px solid #3a3636;
+      border-radius: 6px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+      z-index: 20;
+      font: 12px "Segoe UI", sans-serif;
+    }
+    #find.open { display: flex; }
+    #find input {
+      background: #171616;
+      border: 1px solid #3a3636;
+      border-radius: 4px;
+      color: #e6e0e0;
+      padding: 4px 7px;
+      width: 190px;
+      outline: none;
+      font: inherit;
+    }
+    #find input:focus { border-color: #ff4d5a; }
+    #find button {
+      background: transparent;
+      border: none;
+      color: #a89f9f;
+      cursor: pointer;
+      padding: 3px 7px;
+      border-radius: 4px;
+      font: inherit;
+      line-height: 1;
+    }
+    #find button:hover { background: #332e2e; color: #e6e0e0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="find">
+    <input id="find-input" type="text" placeholder="Find" spellcheck="false" />
+    <button id="find-prev" title="Previous (Shift+Enter)">&#8593;</button>
+    <button id="find-next" title="Next (Enter)">&#8595;</button>
+    <button id="find-close" title="Close (Esc)">&#10005;</button>
+  </div>
+
+  <script src="xterm/xterm.js"></script>
+  <script src="xterm/addon-fit.js"></script>
+  <script src="xterm/addon-web-links.js"></script>
+  <script src="xterm/addon-search.js"></script>
+  <script src="xterm/addon-unicode11.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      var host = window.chrome && window.chrome.webview;
+
+      var theme = {
+        background: "rgba(0,0,0,0)",
+        foreground: "#e6e0e0",
+        cursor: "#ff4d5a",
+        cursorAccent: "#171616",
+        selectionBackground: "rgba(255, 77, 90, 0.28)",
+        black: "#2d2d2d",
+        red: "#ff4d5a",
+        green: "#5fd68a",
+        yellow: "#f0c674",
+        blue: "#6aa9f0",
+        magenta: "#c78bf0",
+        cyan: "#5fd0d6",
+        white: "#d6cfcf",
+        brightBlack: "#6b6363",
+        brightRed: "#ff7b85",
+        brightGreen: "#8ce8ac",
+        brightYellow: "#ffdb94",
+        brightBlue: "#96c5ff",
+        brightMagenta: "#dbb0ff",
+        brightCyan: "#8ee9ee",
+        brightWhite: "#ffffff"
+      };
+
+      var term = new Terminal({
+        allowProposedApi: true,
+        allowTransparency: true,
+        cursorBlink: true,
+        cursorStyle: "bar",
+        fontFamily: '"Cascadia Mono", "Consolas", "Courier New", monospace',
+        fontSize: 14,
+        lineHeight: 1.2,
+        letterSpacing: 0,
+        scrollback: 10000,
+        drawBoldTextInBrightColors: true,
+        macOptionIsMeta: false,
+        theme: theme
+      });
+
+      var fit = new FitAddon.FitAddon();
+      var search = new SearchAddon.SearchAddon();
+      term.loadAddon(fit);
+      term.loadAddon(search);
+      term.loadAddon(new WebLinksAddon.WebLinksAddon(function (event, uri) {
+        send("l" + uri);
+      }));
+
+      try {
+        term.loadAddon(new Unicode11Addon.Unicode11Addon());
+        term.unicode.activeVersion = "11";
+      } catch (e) {
+        // Proposed API unavailable; fall back to the built-in width tables.
+      }
+
+      term.open(document.getElementById("root"));
+
+      function send(message) {
+        if (host) {
+          host.postMessage(message);
+        }
+      }
+
+      // ---- input -------------------------------------------------------------
+      term.onData(function (data) { send("i" + data); });
+      term.onBinary(function (data) {
+        // Binary payloads arrive as a latin1 string; widen them the same way xterm does.
+        var out = "";
+        for (var i = 0; i < data.length; i++) {
+          out += String.fromCharCode(data.charCodeAt(i) & 255);
+        }
+        send("i" + out);
+      });
+      term.onTitleChange(function (title) { send("t" + title); });
+
+      var lastCols = 0;
+      var lastRows = 0;
+
+      function reportSize() {
+        if (term.cols !== lastCols || term.rows !== lastRows) {
+          lastCols = term.cols;
+          lastRows = term.rows;
+          send("r" + term.cols + "," + term.rows);
+        }
+      }
+
+      function doFit() {
+        try {
+          fit.fit();
+        } catch (e) {
+          // Happens while the element is detached or zero-sized.
+        }
+        reportSize();
+      }
+
+      // Clipboard goes through the host: WPF owns the real clipboard, which avoids
+      // the browser permission prompt entirely.
+      term.attachCustomKeyEventHandler(function (event) {
+        if (event.type !== "keydown") {
+          return true;
+        }
+
+        var ctrl = event.ctrlKey && !event.altKey;
+
+        if (ctrl && event.shiftKey && event.code === "KeyC") {
+          copySelection();
+          return false;
+        }
+        if (ctrl && event.shiftKey && event.code === "KeyV") {
+          send("p");
+          return false;
+        }
+        if (ctrl && event.shiftKey && event.code === "KeyF") {
+          openFind();
+          return false;
+        }
+
+        // Tab management. These use Shift so they never shadow shell bindings that
+        // matter — bash reads plain Ctrl+W as delete-word, for instance.
+        if (ctrl && event.shiftKey && event.code === "KeyT") {
+          send("kT");
+          return false;
+        }
+        if (ctrl && event.shiftKey && event.code === "KeyW") {
+          send("kW");
+          return false;
+        }
+        if (ctrl && event.shiftKey && event.code === "KeyB") {
+          send("kB");
+          return false;
+        }
+        if (ctrl && event.code === "Tab") {
+          send(event.shiftKey ? "kP" : "kN");
+          return false;
+        }
+        // Ctrl+<letter> is turned into its control byte here rather than left to xterm.
+        // xterm derives that byte from event.keyCode, which is not dependable once a
+        // non-Latin keyboard layout is active — on a Russian layout Ctrl+C could end up
+        // producing nothing at all, leaving no way to interrupt a running command.
+        // event.code names the physical key, so this behaves the same on every layout.
+        if (ctrl && !event.shiftKey && !event.metaKey && /^Key[A-Z]$/.test(event.code)) {
+          event.preventDefault();
+
+          if (event.code === "KeyV") {
+            send("p");
+            return false;
+          }
+
+          // Ctrl+C copies whatever is selected, and interrupts when nothing is. The
+          // selection is dropped immediately afterwards so the next Ctrl+C is an interrupt
+          // again — leaving it in place is what used to make Ctrl+C look broken, since a
+          // forgotten selection turned every later press into a silent copy.
+          if (event.code === "KeyC" && term.hasSelection()) {
+            copySelection();
+            term.clearSelection();
+            return false;
+          }
+
+          // "KeyA".charCodeAt(3) is 65, and 65 - 64 is 0x01: the usual control mapping.
+          send("i" + String.fromCharCode(event.code.charCodeAt(3) - 64));
+          return false;
+        }
+
+        return true;
+      });
+
+      function copySelection() {
+        var selection = term.getSelection();
+        if (selection) {
+          send("y" + selection);
+        }
+      }
+
+      // Right-click pastes, matching the console habit.
+      term.element.addEventListener("contextmenu", function (event) {
+        event.preventDefault();
+        if (term.hasSelection()) {
+          copySelection();
+          term.clearSelection();
+        } else {
+          send("p");
+        }
+      });
+
+      // Ctrl+wheel changes the font size.
+      term.element.addEventListener("wheel", function (event) {
+        if (!event.ctrlKey) {
+          return;
+        }
+        event.preventDefault();
+        var size = term.options.fontSize + (event.deltaY < 0 ? 1 : -1);
+        term.options.fontSize = Math.min(32, Math.max(6, size));
+        doFit();
+      }, { passive: false });
+
+      // ---- output ------------------------------------------------------------
+      if (host) {
+        host.addEventListener("message", function (event) {
+          var raw = event.data;
+          if (typeof raw !== "string" || raw.length === 0) {
+            return;
+          }
+          var kind = raw[0];
+          var body = raw.slice(1);
+
+          switch (kind) {
+            case "o":
+              term.write(body);
+              break;
+            case "c":
+              term.clear();
+              break;
+            case "b":
+              // A host-side notice: dim red, on its own line, never confused with shell output.
+              term.write("\r\n\x1b[38;2;255;123;133m" + body + "\x1b[0m\r\n");
+              break;
+            case "f":
+              term.focus();
+              break;
+            case "z":
+              term.options.fontSize = Math.min(32, Math.max(6, parseInt(body, 10) || 14));
+              doFit();
+              break;
+            case "S":
+              applySettings(body);
+              break;
+          }
+        });
+      }
+
+      // ---- appearance --------------------------------------------------------
+      function applySettings(json) {
+        var s;
+        try {
+          s = JSON.parse(json);
+        } catch (e) {
+          return;
+        }
+
+        if (s.fontFamily) {
+          term.options.fontFamily = '"' + s.fontFamily + '", "Consolas", monospace';
+        }
+        if (s.fontSize) { term.options.fontSize = s.fontSize; }
+        if (s.lineHeight) { term.options.lineHeight = s.lineHeight; }
+        if (s.cursorStyle) { term.options.cursorStyle = s.cursorStyle; }
+        if (typeof s.cursorBlink === "boolean") { term.options.cursorBlink = s.cursorBlink; }
+        if (s.scrollback) { term.options.scrollback = s.scrollback; }
+
+        if (s.theme) {
+          // Replacing the whole object rather than mutating it: xterm only repaints when
+          // the theme option is assigned.
+          term.options.theme = s.theme;
+          document.documentElement.style.background = s.theme.background || "#171616";
+          document.body.style.background = s.theme.background || "#171616";
+        }
+
+        doFit();
+      }
+
+      // ---- find bar ----------------------------------------------------------
+      var findBar = document.getElementById("find");
+      var findInput = document.getElementById("find-input");
+      var searchOptions = { incremental: false, caseSensitive: false, decorations: {
+        matchBackground: "#5a2a2f",
+        activeMatchBackground: "#ff4d5a",
+        matchOverviewRuler: "#ff7b85",
+        activeMatchColorOverviewRuler: "#ff4d5a"
+      } };
+
+      function openFind() {
+        findBar.classList.add("open");
+        findInput.select();
+        findInput.focus();
+      }
+
+      function closeFind() {
+        findBar.classList.remove("open");
+        search.clearDecorations();
+        term.focus();
+      }
+
+      function findNext() {
+        if (findInput.value) {
+          search.findNext(findInput.value, searchOptions);
+        }
+      }
+
+      function findPrevious() {
+        if (findInput.value) {
+          search.findPrevious(findInput.value, searchOptions);
+        }
+      }
+
+      document.getElementById("find-next").addEventListener("click", findNext);
+      document.getElementById("find-prev").addEventListener("click", findPrevious);
+      document.getElementById("find-close").addEventListener("click", closeFind);
+
+      findInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          if (event.shiftKey) {
+            findPrevious();
+          } else {
+            findNext();
+          }
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          closeFind();
+        }
+      });
+
+      var resizeObserver = new ResizeObserver(function () { doFit(); });
+      resizeObserver.observe(document.getElementById("root"));
+      window.addEventListener("resize", doFit);
+
+      doFit();
+      term.focus();
+      send("R");
+    })();
+  </script>
+</body>
+</html>
+
