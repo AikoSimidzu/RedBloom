@@ -10,6 +10,12 @@ namespace RedBloom.Models;
 /// </summary>
 public sealed class AppSettings : INotifyPropertyChanged
 {
+    // ---- interface ----
+    private AppLanguage _language = AppLanguage.English;
+
+    /// <summary>Language of the interface. Applied live, like every other appearance setting.</summary>
+    public AppLanguage Language { get => _language; set => Set(ref _language, value); }
+
     // ---- application chrome ----
     private string _accent = "#FF4D5A";
     private string _accentDim = "#8C2B33";

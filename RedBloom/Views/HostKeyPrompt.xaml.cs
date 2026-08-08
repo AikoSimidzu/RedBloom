@@ -20,7 +20,7 @@ public partial class HostKeyPrompt : Window
 
         EndpointText.Text = key.Endpoint;
         AlgorithmText.Text = key.KeyLength > 0
-            ? $"{key.Algorithm} · {key.KeyLength} bit"
+            ? string.Format(LocalizationService.T("L_HkAlgoBits"), key.Algorithm, key.KeyLength)
             : key.Algorithm;
         FingerprintText.Text = key.DisplayFingerprint;
 
@@ -50,23 +50,18 @@ public partial class HostKeyPrompt : Window
 
     private void ConfigureForFirstContact()
     {
-        HeaderText.Text = "Unknown server";
-        BodyText.Text = $"RedBloom has not connected to {EndpointText.Text} before, so it cannot tell "
-                        + "whether this is the right machine. Check the fingerprint against the server "
-                        + "before trusting it.";
-        HintText.Text = "On the server, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints the "
-                        + "fingerprint it should be showing.";
+        HeaderText.Text = LocalizationService.T("L_HkUnknownServer");
+        BodyText.Text = string.Format(LocalizationService.T("L_HkFirstBody"), EndpointText.Text);
+        HintText.Text = LocalizationService.T("L_HkFirstHint");
         AcceptStoreButton.IsDefault = true;
     }
 
     private void ConfigureForNewAlgorithm()
     {
         HeaderIcon.Text = "";
-        HeaderText.Text = "New key type for a known host";
-        BodyText.Text = $"{EndpointText.Text} is already trusted, but has never presented a key of this "
-                        + "type before. That is normal after a server reconfiguration — and is also what "
-                        + "an interception attempt would look like. Verify the fingerprint.";
-        HintText.Text = "If you did not change anything on the server, do not trust this key.";
+        HeaderText.Text = LocalizationService.T("L_HkNewKeyType");
+        BodyText.Text = string.Format(LocalizationService.T("L_HkNewAlgoBody"), EndpointText.Text);
+        HintText.Text = LocalizationService.T("L_HkNewAlgoHint");
         AcceptStoreButton.IsDefault = true;
     }
 
@@ -74,15 +69,12 @@ public partial class HostKeyPrompt : Window
     {
         HeaderIcon.Text = "";
         HeaderIcon.Foreground = (Brush)FindResource("Danger");
-        HeaderText.Text = "Host key has changed";
+        HeaderText.Text = LocalizationService.T("L_HkChanged");
         HeaderText.Foreground = (Brush)FindResource("Danger");
         RootBorder.BorderBrush = (Brush)FindResource("Danger");
 
-        BodyText.Text = $"The key presented by {EndpointText.Text} does not match the one RedBloom "
-                        + "trusted previously. This happens when a server is rebuilt or its keys are "
-                        + "rotated — but it is also exactly what a machine-in-the-middle attack looks "
-                        + "like. Do not continue unless you know why the key changed.";
-        HintText.Text = "Anything you type — including passwords — would go to whoever holds this key.";
+        BodyText.Text = string.Format(LocalizationService.T("L_HkChangedBody"), EndpointText.Text);
+        HintText.Text = LocalizationService.T("L_HkChangedHint");
 
         if (stored is not null)
         {
@@ -92,9 +84,9 @@ public partial class HostKeyPrompt : Window
 
         // One deliberate choice only: no "just this once" escape hatch for a changed key.
         AcceptOnceButton.Visibility = Visibility.Collapsed;
-        AcceptStoreButton.Content = "Replace stored key";
+        AcceptStoreButton.Content = LocalizationService.T("L_ReplaceStoredKey");
         AcceptStoreButton.Style = (Style)FindResource("GhostButton");
-        RejectButton.Content = "Cancel connection";
+        RejectButton.Content = LocalizationService.T("L_CancelConnection");
         RejectButton.Style = (Style)FindResource("AccentButton");
         RejectButton.IsDefault = true;
     }

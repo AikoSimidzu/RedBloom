@@ -37,7 +37,7 @@
                            VerticalAlignment="Center"
                            Margin="0,0,10,0" />
                 <TextBlock x:Name="HeaderText"
-                           Text="Unknown server"
+                           Text="{DynamicResource L_HkUnknownServer}"
                            Foreground="{DynamicResource TextPrimary}"
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="14"
@@ -73,7 +73,7 @@
                                FontSize="10.5"
                                Margin="0,3,0,0" />
 
-                    <TextBlock Text="PRESENTED FINGERPRINT"
+                    <TextBlock Text="{DynamicResource L_PresentedFingerprint}"
                                Foreground="{DynamicResource TextFaint}"
                                FontFamily="{DynamicResource UiFont}"
                                FontSize="9.5"
@@ -90,7 +90,7 @@
                              TextWrapping="Wrap" />
 
                     <StackPanel x:Name="StoredPanel" Visibility="Collapsed">
-                        <TextBlock Text="PREVIOUSLY TRUSTED FINGERPRINT"
+                        <TextBlock Text="{DynamicResource L_PreviouslyTrusted}"
                                    Foreground="{DynamicResource TextFaint}"
                                    FontFamily="{DynamicResource UiFont}"
                                    FontSize="9.5"
@@ -120,18 +120,18 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
                 <Button x:Name="RejectButton"
                         Style="{StaticResource GhostButton}"
-                        Content="Cancel"
+                        Content="{DynamicResource L_Cancel}"
                         Margin="0,0,8,0"
                         IsCancel="True"
                         Click="Reject_Click" />
                 <Button x:Name="AcceptOnceButton"
                         Style="{StaticResource GhostButton}"
-                        Content="Connect once"
+                        Content="{DynamicResource L_ConnectOnce}"
                         Margin="0,0,8,0"
                         Click="AcceptOnce_Click" />
                 <Button x:Name="AcceptStoreButton"
                         Style="{StaticResource AccentButton}"
-                        Content="Trust and remember"
+                        Content="{DynamicResource L_TrustRemember}"
                         Click="AcceptAndStore_Click" />
             </StackPanel>
         </StackPanel>

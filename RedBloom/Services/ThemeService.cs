@@ -254,6 +254,13 @@ public static class ThemeService
         resources["TabBarFill"] = Translucent(Settings.Chrome, Settings.TabBarOpacity);
         resources["TerminalFill"] = Translucent(Settings.TerminalBackground, Settings.TerminalOpacity);
 
+        // A translucent plate under every tab, so they stay legible over a background picture
+        // without hiding it. It tracks the tab bar's own see-through so the two never fight.
+        resources["TabBacking"] = Translucent(Settings.SurfaceRaised, Math.Min(0.85, 0.35 + 0.5 * Settings.TabBarOpacity));
+
+        // Same shared apply path, so a language change repaints instantly like a colour does.
+        LocalizationService.Apply(Settings.Language);
+
         Applied?.Invoke();
     }
 

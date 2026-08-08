@@ -30,7 +30,7 @@
         <!-- ===== a tab in the strip ===== -->
         <DataTemplate x:Key="TabTemplate" DataType="{x:Type local:TerminalTab}">
             <Border x:Name="TabRoot"
-                    Background="Transparent"
+                    Background="{DynamicResource TabBacking}"
                     CornerRadius="6,6,0,0"
                     Margin="0,4,2,0"
                     Padding="10,0,6,0"
@@ -68,7 +68,7 @@
                             Margin="6,0,0,0"
                             Click="CloseTab_Click"
                             Tag="{Binding}"
-                            ToolTip="Close tab (Ctrl+Shift+W)" />
+                            ToolTip="{DynamicResource L_CloseTabTip}" />
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
@@ -152,13 +152,13 @@
                             Width="22" Height="22"
                             Click="EditSession_Click"
                             Tag="{Binding}"
-                            ToolTip="Edit" />
+                            ToolTip="{DynamicResource L_Edit}" />
                     <Button Style="{StaticResource IconButton}"
                             Content="&#xE74D;"
                             Width="22" Height="22"
                             Click="DeleteSession_Click"
                             Tag="{Binding}"
-                            ToolTip="Delete" />
+                            ToolTip="{DynamicResource L_Delete}" />
                 </StackPanel>
             </Grid>
             <DataTemplate.Triggers>
@@ -193,7 +193,7 @@
                         Content="&#xE700;"
                         Width="30" Height="28"
                         Click="ToggleSidebar_Click"
-                        ToolTip="Collapse the sidebar (Ctrl+Shift+B)" />
+                        ToolTip="{DynamicResource L_CollapseSidebarTip}" />
                 <!-- A drawn mark rather than a glyph, so it never depends on an icon font. -->
                 <Ellipse x:Name="BrandDot"
                          Width="9" Height="9"
@@ -240,14 +240,14 @@
                                 Content="&#xE710;"
                                 Width="26" Height="26"
                                 Click="NewTab_Click"
-                                ToolTip="New tab (Ctrl+Shift+T)" />
+                                ToolTip="{DynamicResource L_NewTabTip}" />
                         <Button x:Name="ShellMenuButton"
                                 Style="{StaticResource IconButton}"
                                 Content="&#xE70D;"
                                 FontSize="9"
                                 Width="18" Height="26"
                                 Click="ShellMenu_Click"
-                                ToolTip="Choose a shell" />
+                                ToolTip="{DynamicResource L_ChooseShell}" />
                     </StackPanel>
                 </StackPanel>
 
@@ -258,16 +258,16 @@
                     <Button Style="{StaticResource CaptionButton}"
                             Content="&#xE921;"
                             Click="Minimize_Click"
-                            ToolTip="Minimize" />
+                            ToolTip="{DynamicResource L_Minimize}" />
                     <Button x:Name="MaximizeButton"
                             Style="{StaticResource CaptionButton}"
                             Content="&#xE922;"
                             Click="MaximizeRestore_Click"
-                            ToolTip="Maximize" />
+                            ToolTip="{DynamicResource L_Maximize}" />
                     <Button Style="{StaticResource CloseCaptionButton}"
                             Content="&#xE8BB;"
                             Click="Close_Click"
-                            ToolTip="Close" />
+                            ToolTip="{DynamicResource L_Close}" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -287,7 +287,7 @@
 
                 <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="14,12,8,6">
                     <TextBlock Grid.Column="0"
-                               Text="SSH SESSIONS"
+                               Text="{DynamicResource L_SshSessions}"
                                Foreground="{DynamicResource TextFaint}"
                                FontFamily="{DynamicResource UiFont}"
                                FontSize="10"
@@ -298,7 +298,7 @@
                             Content="&#xE710;"
                             Width="22" Height="22"
                             Click="AddSession_Click"
-                            ToolTip="New SSH session" />
+                            ToolTip="{DynamicResource L_NewSshSession}" />
                 </Grid>
 
                 <Grid Grid.Row="1" Margin="12,0,12,8">
@@ -307,7 +307,7 @@
                              FontSize="11.5"
                              TextChanged="SessionFilter_TextChanged" />
                     <TextBlock x:Name="FilterHint"
-                               Text="Filter…"
+                               Text="{DynamicResource L_FilterHint}"
                                Foreground="{DynamicResource TextFaint}"
                                FontFamily="{DynamicResource UiFont}"
                                FontSize="11.5"
@@ -332,12 +332,12 @@
                                 Margin="24,0"
                                 IsHitTestVisible="False"
                                 Visibility="{Binding HasNoSessions, Converter={StaticResource BoolToVis}}">
-                        <TextBlock Text="No saved sessions"
+                        <TextBlock Text="{DynamicResource L_NoSavedSessions}"
                                    Foreground="{DynamicResource TextFaint}"
                                    FontFamily="{DynamicResource UiFont}"
                                    FontSize="11.5"
                                    HorizontalAlignment="Center" />
-                        <TextBlock Text="Use + above to add one"
+                        <TextBlock Text="{DynamicResource L_UsePlusToAdd}"
                                    Foreground="{DynamicResource TextFaint}"
                                    FontFamily="{DynamicResource UiFont}"
                                    FontSize="10.5"
@@ -360,13 +360,13 @@
                            Foreground="{DynamicResource TextFaint}"
                            HorizontalAlignment="Center"
                            Opacity="0.5" />
-                <TextBlock Text="No open terminals"
+                <TextBlock Text="{DynamicResource L_NoOpenTerminals}"
                            Foreground="{DynamicResource TextMuted}"
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="13"
                            HorizontalAlignment="Center"
                            Margin="0,14,0,0" />
-                <TextBlock Text="Ctrl+Shift+T for a new tab  ·  double-click a session to connect"
+                <TextBlock Text="{DynamicResource L_EmptyHint}"
                            Foreground="{DynamicResource TextFaint}"
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="11"
@@ -457,7 +457,7 @@
                                    Foreground="{DynamicResource TextMuted}"
                                    VerticalAlignment="Center"
                                    Width="20" />
-                        <TextBlock Text="Settings"
+                        <TextBlock Text="{DynamicResource L_Settings}"
                                    Foreground="{DynamicResource TextPrimary}"
                                    FontFamily="{DynamicResource UiFont}"
                                    FontSize="12"

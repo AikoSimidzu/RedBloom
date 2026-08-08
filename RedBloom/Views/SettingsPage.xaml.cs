@@ -30,65 +30,96 @@ public partial class SettingsPage : UserControl
         RefreshPreview();
 
         ThemeService.Applied += OnThemeApplied;
-        Unloaded += (_, _) => ThemeService.Applied -= OnThemeApplied;
+        LocalizationService.Changed += OnLanguageChanged;
+        Unloaded += (_, _) =>
+        {
+            ThemeService.Applied -= OnThemeApplied;
+            LocalizationService.Changed -= OnLanguageChanged;
+        };
 
         _loading = false;
     }
 
+    /// <summary>Rebuilds the text this page sets from code, which DynamicResource cannot reach.</summary>
+    private void OnLanguageChanged()
+    {
+        // These carry their labels as plain strings fixed at build time, so the only way to
+        // show them in the new language is to build them again.
+        BuildColorLists();
+        BuildBackdropEditors();
+        RefreshBackdropVisibility();
+        RefreshPreview();
+
+        FpsText.Text = string.Format(LocalizationService.T("L_Fps"), _settings.WallpaperFps);
+    }
+
+    // Colour rows, paired with the string key that names each one, so the list can be rebuilt
+    // in the other language without repeating the property wiring.
+    private static readonly (string Property, string Key)[] TerminalColorDefs =
+    [
+        (nameof(AppSettings.TerminalBackground), "L_ColBackground"),
+        (nameof(AppSettings.TerminalForeground), "L_ColText"),
+        (nameof(AppSettings.TerminalCursor), "L_ColCursor"),
+        (nameof(AppSettings.TerminalSelection), "L_ColSelection"),
+    ];
+
+    private static readonly (string Property, string Key)[] AnsiColorDefs =
+    [
+        (nameof(AppSettings.AnsiBlack), "L_AnsiBlack"),
+        (nameof(AppSettings.AnsiBrightBlack), "L_AnsiBrightBlack"),
+        (nameof(AppSettings.AnsiRed), "L_AnsiRed"),
+        (nameof(AppSettings.AnsiBrightRed), "L_AnsiBrightRed"),
+        (nameof(AppSettings.AnsiGreen), "L_AnsiGreen"),
+        (nameof(AppSettings.AnsiBrightGreen), "L_AnsiBrightGreen"),
+        (nameof(AppSettings.AnsiYellow), "L_AnsiYellow"),
+        (nameof(AppSettings.AnsiBrightYellow), "L_AnsiBrightYellow"),
+        (nameof(AppSettings.AnsiBlue), "L_AnsiBlue"),
+        (nameof(AppSettings.AnsiBrightBlue), "L_AnsiBrightBlue"),
+        (nameof(AppSettings.AnsiMagenta), "L_AnsiMagenta"),
+        (nameof(AppSettings.AnsiBrightMagenta), "L_AnsiBrightMagenta"),
+        (nameof(AppSettings.AnsiCyan), "L_AnsiCyan"),
+        (nameof(AppSettings.AnsiBrightCyan), "L_AnsiBrightCyan"),
+        (nameof(AppSettings.AnsiWhite), "L_AnsiWhite"),
+        (nameof(AppSettings.AnsiBrightWhite), "L_AnsiBrightWhite"),
+    ];
+
+    private static readonly (string Property, string Key)[] AppColorDefs =
+    [
+        (nameof(AppSettings.Accent), "L_ColAccent"),
+        (nameof(AppSettings.AccentDim), "L_ColAccentDim"),
+        (nameof(AppSettings.Surface), "L_ColSurface"),
+        (nameof(AppSettings.SurfaceRaised), "L_ColSurfaceRaised"),
+        (nameof(AppSettings.Chrome), "L_ColChrome"),
+        (nameof(AppSettings.ChromeHover), "L_ColChromeHover"),
+        (nameof(AppSettings.Divider), "L_ColDivider"),
+        (nameof(AppSettings.TextPrimary), "L_ColText"),
+        (nameof(AppSettings.TextMuted), "L_ColTextMuted"),
+        (nameof(AppSettings.TextFaint), "L_ColTextFaint"),
+    ];
+
     private void BuildColorLists()
     {
-        _terminalColors.Add(new ColorEntry(_settings, nameof(AppSettings.TerminalBackground), "Background"));
-        _terminalColors.Add(new ColorEntry(_settings, nameof(AppSettings.TerminalForeground), "Text"));
-        _terminalColors.Add(new ColorEntry(_settings, nameof(AppSettings.TerminalCursor), "Cursor"));
-        _terminalColors.Add(new ColorEntry(_settings, nameof(AppSettings.TerminalSelection), "Selection"));
+        _terminalColors.Clear();
+        _ansiColors.Clear();
+        _appColors.Clear();
+
+        foreach (var (property, key) in TerminalColorDefs)
+        {
+            _terminalColors.Add(new ColorEntry(_settings, property, LocalizationService.T(key)));
+        }
+
+        foreach (var (property, key) in AnsiColorDefs)
+        {
+            _ansiColors.Add(new ColorEntry(_settings, property, LocalizationService.T(key)));
+        }
+
+        foreach (var (property, key) in AppColorDefs)
+        {
+            _appColors.Add(new ColorEntry(_settings, property, LocalizationService.T(key)));
+        }
+
         TerminalColors.ItemsSource = _terminalColors;
-
-        (string Property, string Label)[] ansi =
-        [
-            (nameof(AppSettings.AnsiBlack), "Black"),
-            (nameof(AppSettings.AnsiBrightBlack), "Bright black"),
-            (nameof(AppSettings.AnsiRed), "Red"),
-            (nameof(AppSettings.AnsiBrightRed), "Bright red"),
-            (nameof(AppSettings.AnsiGreen), "Green"),
-            (nameof(AppSettings.AnsiBrightGreen), "Bright green"),
-            (nameof(AppSettings.AnsiYellow), "Yellow"),
-            (nameof(AppSettings.AnsiBrightYellow), "Bright yellow"),
-            (nameof(AppSettings.AnsiBlue), "Blue"),
-            (nameof(AppSettings.AnsiBrightBlue), "Bright blue"),
-            (nameof(AppSettings.AnsiMagenta), "Magenta"),
-            (nameof(AppSettings.AnsiBrightMagenta), "Bright magenta"),
-            (nameof(AppSettings.AnsiCyan), "Cyan"),
-            (nameof(AppSettings.AnsiBrightCyan), "Bright cyan"),
-            (nameof(AppSettings.AnsiWhite), "White"),
-            (nameof(AppSettings.AnsiBrightWhite), "Bright white"),
-        ];
-
-        foreach (var (property, label) in ansi)
-        {
-            _ansiColors.Add(new ColorEntry(_settings, property, label));
-        }
-
         AnsiColors.ItemsSource = _ansiColors;
-
-        (string Property, string Label)[] app =
-        [
-            (nameof(AppSettings.Accent), "Accent"),
-            (nameof(AppSettings.AccentDim), "Accent (dim)"),
-            (nameof(AppSettings.Surface), "Surface"),
-            (nameof(AppSettings.SurfaceRaised), "Surface (raised)"),
-            (nameof(AppSettings.Chrome), "Chrome"),
-            (nameof(AppSettings.ChromeHover), "Chrome (hover)"),
-            (nameof(AppSettings.Divider), "Divider"),
-            (nameof(AppSettings.TextPrimary), "Text"),
-            (nameof(AppSettings.TextMuted), "Text (muted)"),
-            (nameof(AppSettings.TextFaint), "Text (faint)"),
-        ];
-
-        foreach (var (property, label) in app)
-        {
-            _appColors.Add(new ColorEntry(_settings, property, label));
-        }
-
         AppColors.ItemsSource = _appColors;
     }
 
@@ -165,8 +196,10 @@ public partial class SettingsPage : UserControl
         BgRegions.IsChecked = _settings.BackgroundMode == BackgroundMode.Regions;
         BgLive.IsChecked = _settings.BackgroundMode == BackgroundMode.LiveWallpaper;
         AlwaysOnTopBox.IsChecked = _settings.AlwaysOnTop;
+        LangEn.IsChecked = _settings.Language == AppLanguage.English;
+        LangRu.IsChecked = _settings.Language == AppLanguage.Russian;
         FpsSlider.Value = _settings.WallpaperFps;
-        FpsText.Text = $"{_settings.WallpaperFps} fps";
+        FpsText.Text = string.Format(LocalizationService.T("L_Fps"), _settings.WallpaperFps);
         WpAligned.IsChecked = _settings.WallpaperDisplay == WallpaperDisplay.AlignedToDesktop;
         WpFit.IsChecked = _settings.WallpaperDisplay == WallpaperDisplay.FitToWindow;
         CropLeftSlider.Value = _settings.WallpaperCropLeft;
@@ -296,15 +329,24 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    private void Language_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_loading)
+        {
+            _settings.Language = LangRu.IsChecked == true ? AppLanguage.Russian : AppLanguage.English;
+        }
+    }
+
     // ================= background and see-through =================
 
     private readonly ObservableCollection<BackdropEntry> _backdrops = [];
 
     private void BuildBackdropEditors()
     {
-        _backdrops.Add(new BackdropEntry("Whole window", _settings.WindowBackdrop));
-        _backdrops.Add(new BackdropEntry("Sidebar", _settings.SidebarBackdrop));
-        _backdrops.Add(new BackdropEntry("Terminal", _settings.TerminalBackdrop));
+        _backdrops.Clear();
+        _backdrops.Add(new BackdropEntry(LocalizationService.T("L_BackdropWholeWindow"), _settings.WindowBackdrop));
+        _backdrops.Add(new BackdropEntry(LocalizationService.T("L_BackdropSidebar"), _settings.SidebarBackdrop));
+        _backdrops.Add(new BackdropEntry(LocalizationService.T("L_BackdropTerminal"), _settings.TerminalBackdrop));
         BackdropEditors.ItemsSource = _backdrops;
     }
 
@@ -361,7 +403,7 @@ public partial class SettingsPage : UserControl
         if (!_loading)
         {
             _settings.WallpaperFps = (int)Math.Round(FpsSlider.Value);
-            FpsText.Text = $"{_settings.WallpaperFps} fps";
+            FpsText.Text = string.Format(LocalizationService.T("L_Fps"), _settings.WallpaperFps);
         }
     }
 

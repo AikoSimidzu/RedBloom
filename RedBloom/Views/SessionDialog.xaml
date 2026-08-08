@@ -43,7 +43,7 @@
                   ColumnDefinitions="*,Auto">
                 <TextBlock x:Name="HeaderText"
                            Grid.Column="0"
-                           Text="New SSH session"
+                           Text="{DynamicResource L_NewSshSessionHeader}"
                            Foreground="{DynamicResource TextPrimary}"
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="13"
@@ -55,7 +55,7 @@
                             Width="28" Height="28"
                             Margin="0,0,2,0"
                             Click="PasteSshCommand_Click"
-                            ToolTip="Fill this in from an ssh command on the clipboard" />
+                            ToolTip="{DynamicResource L_PasteSshTip}" />
                     <Button Style="{StaticResource IconButton}"
                             Content="&#xE711;"
                             Width="28" Height="28"
@@ -66,42 +66,42 @@
             <!-- fields -->
             <StackPanel Grid.Row="1" Margin="20,14,20,0">
 
-                <TextBlock Text="NAME" Style="{StaticResource FieldLabel}" />
+                <TextBlock Text="{DynamicResource L_FieldName}" Style="{StaticResource FieldLabel}" />
                 <TextBox x:Name="NameBox" />
 
                 <Grid ColumnDefinitions="*,10,90" Margin="0,12,0,0">
                     <StackPanel Grid.Column="0">
-                        <TextBlock Text="HOST" Style="{StaticResource FieldLabel}" />
+                        <TextBlock Text="{DynamicResource L_FieldHost}" Style="{StaticResource FieldLabel}" />
                         <TextBox x:Name="HostBox" />
                     </StackPanel>
                     <StackPanel Grid.Column="2">
-                        <TextBlock Text="PORT" Style="{StaticResource FieldLabel}" />
+                        <TextBlock Text="{DynamicResource L_FieldPort}" Style="{StaticResource FieldLabel}" />
                         <TextBox x:Name="PortBox" MaxLength="5" />
                     </StackPanel>
                 </Grid>
 
-                <TextBlock Text="USERNAME" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
+                <TextBlock Text="{DynamicResource L_FieldUsername}" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
                 <TextBox x:Name="UserBox" />
 
-                <TextBlock Text="AUTHENTICATION" Style="{StaticResource FieldLabel}" Margin="0,16,0,6" />
+                <TextBlock Text="{DynamicResource L_FieldAuth}" Style="{StaticResource FieldLabel}" Margin="0,16,0,6" />
                 <StackPanel Orientation="Horizontal">
                     <RadioButton x:Name="PasswordAuth"
                                  Style="{StaticResource SegmentedRadio}"
-                                 Content="Password"
+                                 Content="{DynamicResource L_AuthPassword}"
                                  IsChecked="True"
                                  Checked="AuthKind_Changed"
                                  Margin="0,0,8,0" />
                     <RadioButton x:Name="KeyAuth"
                                  Style="{StaticResource SegmentedRadio}"
-                                 Content="Private key"
+                                 Content="{DynamicResource L_AuthPrivateKey}"
                                  Checked="AuthKind_Changed" />
                 </StackPanel>
 
                 <!-- password branch -->
                 <StackPanel x:Name="PasswordPanel" Margin="0,14,0,0">
-                    <TextBlock Text="PASSWORD" Style="{StaticResource FieldLabel}" />
+                    <TextBlock Text="{DynamicResource L_FieldPassword}" Style="{StaticResource FieldLabel}" />
                     <PasswordBox x:Name="PasswordField" />
-                    <TextBlock Text="Stored encrypted with Windows DPAPI under your account. Leave empty to be asked on each connect."
+                    <TextBlock Text="{DynamicResource L_PasswordDpapiNote}"
                                Foreground="{DynamicResource TextFaint}"
                                FontFamily="{DynamicResource UiFont}"
                                FontSize="10.5"
@@ -111,23 +111,23 @@
 
                 <!-- key branch -->
                 <StackPanel x:Name="KeyPanel" Margin="0,14,0,0" Visibility="Collapsed">
-                    <TextBlock Text="PRIVATE KEY FILE" Style="{StaticResource FieldLabel}" />
+                    <TextBlock Text="{DynamicResource L_FieldKeyFile}" Style="{StaticResource FieldLabel}" />
                     <Grid ColumnDefinitions="*,8,Auto">
                         <TextBox x:Name="KeyPathBox" Grid.Column="0" />
                         <Button Grid.Column="2"
                                 Style="{StaticResource GhostButton}"
-                                Content="Browse"
+                                Content="{DynamicResource L_Browse}"
                                 Padding="12,6"
                                 Click="Browse_Click" />
                     </Grid>
-                    <TextBlock Text="PASSPHRASE" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
+                    <TextBlock Text="{DynamicResource L_FieldPassphrase}" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
                     <PasswordBox x:Name="PassphraseField" />
                 </StackPanel>
 
                 <!-- tunnels -->
                 <Grid ColumnDefinitions="*,Auto" Margin="0,18,0,6">
                     <TextBlock Grid.Column="0"
-                               Text="TUNNELS"
+                               Text="{DynamicResource L_FieldTunnels}"
                                Style="{StaticResource FieldLabel}"
                                VerticalAlignment="Center"
                                Margin="0" />
@@ -136,7 +136,7 @@
                             Content="&#xE710;"
                             Width="22" Height="22"
                             Click="AddForward_Click"
-                            ToolTip="Add a tunnel" />
+                            ToolTip="{DynamicResource L_AddTunnelTip}" />
                 </Grid>
 
                 <ItemsControl x:Name="ForwardList">
@@ -164,7 +164,7 @@
                                              Padding="6,4"
                                              FontSize="11"
                                              Text="{Binding BoundPortText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Local port to listen on" />
+                                             ToolTip="{DynamicResource L_TunnelLocalPortTip}" />
                                     <TextBlock Grid.Column="2"
                                                Text="→"
                                                Foreground="{DynamicResource TextFaint}"
@@ -177,7 +177,7 @@
                                              FontSize="11"
                                              Text="{Binding DestinationHost, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              Visibility="{Binding NeedsDestination, Converter={StaticResource BoolToVis}}"
-                                             ToolTip="Destination host, as the far end sees it" />
+                                             ToolTip="{DynamicResource L_TunnelDestHostTip}" />
                                     <TextBox Grid.Column="4"
                                              Width="62"
                                              Margin="6,0,0,0"
@@ -185,14 +185,14 @@
                                              FontSize="11"
                                              Text="{Binding DestinationPortText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              Visibility="{Binding NeedsDestination, Converter={StaticResource BoolToVis}}"
-                                             ToolTip="Destination port" />
+                                             ToolTip="{DynamicResource L_TunnelDestPortTip}" />
                                     <Button Grid.Column="6"
                                             Style="{StaticResource IconButton}"
                                             Content="&#xE74D;"
                                             Width="22" Height="22"
                                             Click="RemoveForward_Click"
                                             Tag="{Binding}"
-                                            ToolTip="Remove" />
+                                            ToolTip="{DynamicResource L_Remove}" />
                                 </Grid>
                             </Border>
                         </DataTemplate>
@@ -200,10 +200,10 @@
                 </ItemsControl>
 
                 <!-- connection behaviour -->
-                <TextBlock Text="CONNECTION" Style="{StaticResource FieldLabel}" Margin="0,18,0,7" />
+                <TextBlock Text="{DynamicResource L_FieldConnection}" Style="{StaticResource FieldLabel}" Margin="0,18,0,7" />
                 <CheckBox x:Name="AutoReconnectBox"
-                          Content="Reconnect automatically if the connection drops" />
-                <TextBlock Text="Retries with a growing delay, up to five times. A session that stays up for a minute resets the count."
+                          Content="{DynamicResource L_AutoReconnect}" />
+                <TextBlock Text="{DynamicResource L_AutoReconnectNote}"
                            Foreground="{DynamicResource TextFaint}"
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="10.5"
@@ -225,12 +225,12 @@
                         HorizontalAlignment="Right"
                         Margin="20,20,20,18">
                 <Button Style="{StaticResource GhostButton}"
-                        Content="Cancel"
+                        Content="{DynamicResource L_Cancel}"
                         Margin="0,0,8,0"
                         IsCancel="True"
                         Click="Cancel_Click" />
                 <Button Style="{StaticResource AccentButton}"
-                        Content="Save"
+                        Content="{DynamicResource L_Save}"
                         IsDefault="True"
                         Click="Save_Click" />
             </StackPanel>

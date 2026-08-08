@@ -57,12 +57,12 @@
         <!-- header -->
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="28,22,28,14">
             <StackPanel Grid.Column="0">
-                <TextBlock Text="Appearance"
+                <TextBlock Text="{DynamicResource L_Appearance}"
                            Foreground="{DynamicResource TextPrimary}"
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="19"
                            FontWeight="SemiBold" />
-                <TextBlock Text="Changes apply immediately and are saved as you go."
+                <TextBlock Text="{DynamicResource L_AppearanceNote}"
                            Foreground="{DynamicResource TextFaint}"
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="11.5"
@@ -70,7 +70,7 @@
             </StackPanel>
             <Button Grid.Column="1"
                     Style="{StaticResource GhostButton}"
-                    Content="Reset to defaults"
+                    Content="{DynamicResource L_ResetDefaults}"
                     VerticalAlignment="Center"
                     Click="Reset_Click" />
         </Grid>
@@ -81,110 +81,120 @@
                       Padding="28,0,28,28">
             <StackPanel MaxWidth="900" HorizontalAlignment="Left">
 
+                <!-- ============ language ============ -->
+                <TextBlock Text="{DynamicResource L_Language}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_LanguageNote}" Style="{StaticResource SectionNote}" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                    <RadioButton x:Name="LangEn" Style="{StaticResource SegmentedRadio}"
+                                 Content="English" Margin="0,0,8,0" Checked="Language_Changed" />
+                    <RadioButton x:Name="LangRu" Style="{StaticResource SegmentedRadio}"
+                                 Content="Русский" Checked="Language_Changed" />
+                </StackPanel>
+
                 <!-- ============ terminal text ============ -->
-                <TextBlock Text="Terminal text" Style="{StaticResource SectionTitle}" />
-                <TextBlock Text="Only fixed-width fonts are listed — a proportional font would break column alignment."
+                <TextBlock Text="{DynamicResource L_TerminalText}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_TerminalTextNote}"
                            Style="{StaticResource SectionNote}" />
 
                 <Grid ColumnDefinitions="150,240,20,Auto" Margin="0,0,0,9">
-                    <TextBlock Grid.Column="0" Text="Font" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_Font}" Style="{StaticResource RowLabel}" />
                     <ComboBox x:Name="FontBox"
                               Grid.Column="1"
                               SelectionChanged="Font_SelectionChanged" />
                 </Grid>
 
                 <Grid ColumnDefinitions="150,110,20,150,110" Margin="0,0,0,9">
-                    <TextBlock Grid.Column="0" Text="Size" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_Size}" Style="{StaticResource RowLabel}" />
                     <TextBox x:Name="FontSizeBox" Grid.Column="1" Padding="7,4"
                              TextChanged="FontSize_TextChanged" />
-                    <TextBlock Grid.Column="3" Text="Line height" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="3" Text="{DynamicResource L_LineHeight}" Style="{StaticResource RowLabel}" />
                     <TextBox x:Name="LineHeightBox" Grid.Column="4" Padding="7,4"
                              TextChanged="LineHeight_TextChanged" />
                 </Grid>
 
                 <Grid ColumnDefinitions="150,240,20,Auto" Margin="0,0,0,9">
-                    <TextBlock Grid.Column="0" Text="Cursor" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_Cursor}" Style="{StaticResource RowLabel}" />
                     <ComboBox x:Name="CursorBox" Grid.Column="1" SelectionChanged="Cursor_SelectionChanged">
-                        <ComboBoxItem Content="Bar" />
-                        <ComboBoxItem Content="Block" />
-                        <ComboBoxItem Content="Underline" />
+                        <ComboBoxItem Content="{DynamicResource L_CursorBar}" />
+                        <ComboBoxItem Content="{DynamicResource L_CursorBlock}" />
+                        <ComboBoxItem Content="{DynamicResource L_CursorUnderline}" />
                     </ComboBox>
                     <CheckBox x:Name="BlinkBox"
                               Grid.Column="3"
-                              Content="Blink"
+                              Content="{DynamicResource L_Blink}"
                               VerticalAlignment="Center"
                               Checked="Blink_Changed"
                               Unchecked="Blink_Changed" />
                 </Grid>
 
                 <Grid ColumnDefinitions="150,110" Margin="0,0,0,20">
-                    <TextBlock Grid.Column="0" Text="Scrollback" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_Scrollback}" Style="{StaticResource RowLabel}" />
                     <TextBox x:Name="ScrollbackBox" Grid.Column="1" Padding="7,4"
                              TextChanged="Scrollback_TextChanged" />
                 </Grid>
 
                 <!-- ============ background picture ============ -->
-                <TextBlock Text="Background picture" Style="{StaticResource SectionTitle}" />
-                <TextBlock Text="One picture behind the whole window, or a separate one per panel."
+                <TextBlock Text="{DynamicResource L_BackgroundPicture}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_BackgroundPictureNote}"
                            Style="{StaticResource SectionNote}" />
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                     <RadioButton x:Name="BgNone" Style="{StaticResource SegmentedRadio}"
-                                 Content="None" Margin="0,0,8,0" Checked="BackgroundMode_Changed" />
+                                 Content="{DynamicResource L_BgNone}" Margin="0,0,8,0" Checked="BackgroundMode_Changed" />
                     <RadioButton x:Name="BgWindow" Style="{StaticResource SegmentedRadio}"
-                                 Content="Whole window" Margin="0,0,8,0" Checked="BackgroundMode_Changed" />
+                                 Content="{DynamicResource L_BgWindow}" Margin="0,0,8,0" Checked="BackgroundMode_Changed" />
                     <RadioButton x:Name="BgRegions" Style="{StaticResource SegmentedRadio}"
-                                 Content="Per panel" Margin="0,0,8,0" Checked="BackgroundMode_Changed" />
+                                 Content="{DynamicResource L_BgRegions}" Margin="0,0,8,0" Checked="BackgroundMode_Changed" />
                     <RadioButton x:Name="BgLive" Style="{StaticResource SegmentedRadio}"
-                                 Content="Live wallpaper" Checked="BackgroundMode_Changed" />
+                                 Content="{DynamicResource L_BgLive}" Checked="BackgroundMode_Changed" />
                 </StackPanel>
 
                 <StackPanel x:Name="LivePanel" Visibility="Collapsed" Margin="0,0,0,16">
-                    <TextBlock Text="Shows the desktop wallpaper itself, animation included — Wallpaper Engine scenes work. Blur, overlay and opacity below still apply."
+                    <TextBlock Text="{DynamicResource L_LiveNote}"
                                Style="{StaticResource SectionNote}" Margin="0,0,0,8" />
                     <Grid ColumnDefinitions="150,Auto" Margin="0,0,0,10">
-                        <TextBlock Grid.Column="0" Text="Layout" Style="{StaticResource RowLabel}" />
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_Layout}" Style="{StaticResource RowLabel}" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <RadioButton x:Name="WpAligned" Style="{StaticResource SegmentedRadio}"
-                                         Content="Follow the desktop" Margin="0,0,8,0"
+                                         Content="{DynamicResource L_FollowDesktop}" Margin="0,0,8,0"
                                          Checked="WallpaperDisplay_Changed" />
                             <RadioButton x:Name="WpFit" Style="{StaticResource SegmentedRadio}"
-                                         Content="Fit inside the window"
+                                         Content="{DynamicResource L_FitInsideWindow}"
                                          Checked="WallpaperDisplay_Changed" />
                         </StackPanel>
                     </Grid>
-                    <TextBlock Text="Following the desktop shows the slice the window covers, as if it were see-through. Fitting draws the whole wallpaper inside the window, so moving it changes nothing."
+                    <TextBlock Text="{DynamicResource L_LayoutNote}"
                                Style="{StaticResource SectionNote}" Margin="150,0,0,10" />
 
                     <Grid ColumnDefinitions="150,200,10,90">
-                        <TextBlock Grid.Column="0" Text="Frame rate" Style="{StaticResource RowLabel}" />
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_FrameRate}" Style="{StaticResource RowLabel}" />
                         <Slider x:Name="FpsSlider" Grid.Column="1" Minimum="1" Maximum="120"
                                 IsSnapToTickEnabled="True" TickFrequency="1"
                                 ValueChanged="Fps_Changed" />
                         <TextBlock x:Name="FpsText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                     </Grid>
-                    <TextBlock Text="Each frame costs CPU. Capture pauses automatically when the window is minimised or in the background."
+                    <TextBlock Text="{DynamicResource L_FrameNote}"
                                Style="{StaticResource SectionNote}" Margin="150,6,0,10" />
 
-                    <TextBlock Text="Trim edges — desktop icons are drawn into the same surface as the wallpaper and cannot be separated from it, so trimming is what keeps them out of shot. Mostly useful when fitting inside the window."
+                    <TextBlock Text="{DynamicResource L_TrimNote}"
                                Style="{StaticResource SectionNote}" Margin="0,0,0,8" />
                     <Grid ColumnDefinitions="150,180,10,60" Margin="0,0,0,5">
-                        <TextBlock Grid.Column="0" Text="Left" Style="{StaticResource RowLabel}" />
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_Left}" Style="{StaticResource RowLabel}" />
                         <Slider x:Name="CropLeftSlider" Grid.Column="1" Minimum="0" Maximum="0.45" ValueChanged="Crop_Changed" />
                         <TextBlock x:Name="CropLeftText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                     </Grid>
                     <Grid ColumnDefinitions="150,180,10,60" Margin="0,0,0,5">
-                        <TextBlock Grid.Column="0" Text="Right" Style="{StaticResource RowLabel}" />
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_Right}" Style="{StaticResource RowLabel}" />
                         <Slider x:Name="CropRightSlider" Grid.Column="1" Minimum="0" Maximum="0.45" ValueChanged="Crop_Changed" />
                         <TextBlock x:Name="CropRightText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                     </Grid>
                     <Grid ColumnDefinitions="150,180,10,60" Margin="0,0,0,5">
-                        <TextBlock Grid.Column="0" Text="Top" Style="{StaticResource RowLabel}" />
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_Top}" Style="{StaticResource RowLabel}" />
                         <Slider x:Name="CropTopSlider" Grid.Column="1" Minimum="0" Maximum="0.45" ValueChanged="Crop_Changed" />
                         <TextBlock x:Name="CropTopText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                     </Grid>
                     <Grid ColumnDefinitions="150,180,10,60">
-                        <TextBlock Grid.Column="0" Text="Bottom" Style="{StaticResource RowLabel}" />
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_Bottom}" Style="{StaticResource RowLabel}" />
                         <Slider x:Name="CropBottomSlider" Grid.Column="1" Minimum="0" Maximum="0.45" ValueChanged="Crop_Changed" />
                         <TextBlock x:Name="CropBottomText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                     </Grid>
@@ -212,26 +222,26 @@
                                                  Text="{Binding ImagePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                  FontSize="11.5" Padding="7,5" />
                                         <Button Grid.Column="2" Style="{StaticResource GhostButton}"
-                                                Content="Browse" Padding="12,6"
+                                                Content="{DynamicResource L_Browse}" Padding="12,6"
                                                 Click="BrowseImage_Click" Tag="{Binding}" />
                                         <Button Grid.Column="4" Style="{StaticResource GhostButton}"
-                                                Content="Clear" Padding="12,6"
+                                                Content="{DynamicResource L_Clear}" Padding="12,6"
                                                 Click="ClearImage_Click" Tag="{Binding}" />
                                     </Grid>
 
                                     <Grid ColumnDefinitions="120,180,10,Auto" Margin="0,0,0,7">
-                                        <TextBlock Grid.Column="0" Text="Fit" Style="{StaticResource RowLabel}" />
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource L_Fit}" Style="{StaticResource RowLabel}" />
                                         <ComboBox Grid.Column="1"
                                                   SelectedIndex="{Binding StretchIndex, Mode=TwoWay}">
-                                            <ComboBoxItem Content="Fill the panel (crop)" />
-                                            <ComboBoxItem Content="Fit inside" />
-                                            <ComboBoxItem Content="Stretch to fill" />
-                                            <ComboBoxItem Content="Original size" />
+                                            <ComboBoxItem Content="{DynamicResource L_FitFillCrop}" />
+                                            <ComboBoxItem Content="{DynamicResource L_FitInside}" />
+                                            <ComboBoxItem Content="{DynamicResource L_FitStretch}" />
+                                            <ComboBoxItem Content="{DynamicResource L_FitOriginal}" />
                                         </ComboBox>
                                     </Grid>
 
                                     <Grid ColumnDefinitions="120,180,10,60" Margin="0,0,0,5">
-                                        <TextBlock Grid.Column="0" Text="Picture blur" Style="{StaticResource RowLabel}" />
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource L_PictureBlur}" Style="{StaticResource RowLabel}" />
                                         <Slider Grid.Column="1" Minimum="0" Maximum="60"
                                                 Value="{Binding ImageBlur, Mode=TwoWay}" />
                                         <TextBlock Grid.Column="3" Text="{Binding ImageBlur, StringFormat={}{0:0}}"
@@ -239,7 +249,7 @@
                                     </Grid>
 
                                     <Grid ColumnDefinitions="120,180,10,60" Margin="0,0,0,5">
-                                        <TextBlock Grid.Column="0" Text="Picture opacity" Style="{StaticResource RowLabel}" />
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource L_PictureOpacity}" Style="{StaticResource RowLabel}" />
                                         <Slider Grid.Column="1" Minimum="0" Maximum="1"
                                                 Value="{Binding ImageOpacity, Mode=TwoWay}" />
                                         <TextBlock Grid.Column="3" Text="{Binding ImageOpacity, StringFormat={}{0:P0}}"
@@ -247,7 +257,7 @@
                                     </Grid>
 
                                     <Grid ColumnDefinitions="120,Auto,10,110" Margin="0,9,0,5">
-                                        <TextBlock Grid.Column="0" Text="Overlay colour" Style="{StaticResource RowLabel}" />
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource L_OverlayColour}" Style="{StaticResource RowLabel}" />
                                         <Border Grid.Column="1" Width="30" Height="26" CornerRadius="5"
                                                 Background="{Binding OverlaySwatch}"
                                                 BorderBrush="{DynamicResource Divider}" BorderThickness="1" />
@@ -258,7 +268,7 @@
                                     </Grid>
 
                                     <Grid ColumnDefinitions="120,180,10,60" Margin="0,0,0,5">
-                                        <TextBlock Grid.Column="0" Text="Overlay opacity" Style="{StaticResource RowLabel}" />
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource L_OverlayOpacity}" Style="{StaticResource RowLabel}" />
                                         <Slider Grid.Column="1" Minimum="0" Maximum="1"
                                                 Value="{Binding OverlayOpacity, Mode=TwoWay}" />
                                         <TextBlock Grid.Column="3" Text="{Binding OverlayOpacity, StringFormat={}{0:P0}}"
@@ -266,7 +276,7 @@
                                     </Grid>
 
                                     <Grid ColumnDefinitions="120,180,10,60">
-                                        <TextBlock Grid.Column="0" Text="Overlay blur" Style="{StaticResource RowLabel}" />
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource L_OverlayBlur}" Style="{StaticResource RowLabel}" />
                                         <Slider Grid.Column="1" Minimum="0" Maximum="60"
                                                 Value="{Binding OverlayBlur, Mode=TwoWay}" />
                                         <TextBlock Grid.Column="3" Text="{Binding OverlayBlur, StringFormat={}{0:0}}"
@@ -279,53 +289,53 @@
                 </ItemsControl>
 
                 <!-- ============ window behaviour ============ -->
-                <TextBlock Text="Window" Style="{StaticResource SectionTitle}" />
-                <TextBlock Text="How the window sits among the others." Style="{StaticResource SectionNote}" />
+                <TextBlock Text="{DynamicResource L_Window}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_WindowNote}" Style="{StaticResource SectionNote}" />
                 <CheckBox x:Name="AlwaysOnTopBox"
-                          Content="Keep the window above all others"
+                          Content="{DynamicResource L_AlwaysOnTop}"
                           Margin="0,0,0,20"
                           Checked="AlwaysOnTop_Changed"
                           Unchecked="AlwaysOnTop_Changed" />
 
                 <!-- ============ see-through ============ -->
-                <TextBlock Text="See-through" Style="{StaticResource SectionTitle}" />
-                <TextBlock Text="The window slider fades everything including the desktop behind it. The panel sliders only thin each panel's own colour, letting the background picture show through."
+                <TextBlock Text="{DynamicResource L_SeeThrough}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_SeeThroughNote}"
                            Style="{StaticResource SectionNote}" />
 
                 <Grid ColumnDefinitions="150,200,10,60" Margin="0,0,0,6">
-                    <TextBlock Grid.Column="0" Text="Whole window" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_WholeWindow}" Style="{StaticResource RowLabel}" />
                     <Slider x:Name="WindowOpacitySlider" Grid.Column="1" Minimum="0.2" Maximum="1"
                             ValueChanged="Opacity_Changed" />
                     <TextBlock x:Name="WindowOpacityText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                 </Grid>
                 <Grid ColumnDefinitions="150,200,10,60" Margin="0,0,0,6">
-                    <TextBlock Grid.Column="0" Text="Sidebar" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_Sidebar}" Style="{StaticResource RowLabel}" />
                     <Slider x:Name="SidebarOpacitySlider" Grid.Column="1" Minimum="0" Maximum="1"
                             ValueChanged="Opacity_Changed" />
                     <TextBlock x:Name="SidebarOpacityText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                 </Grid>
                 <Grid ColumnDefinitions="150,200,10,60" Margin="0,0,0,6">
-                    <TextBlock Grid.Column="0" Text="Tab bar" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_TabBar}" Style="{StaticResource RowLabel}" />
                     <Slider x:Name="TabBarOpacitySlider" Grid.Column="1" Minimum="0" Maximum="1"
                             ValueChanged="Opacity_Changed" />
                     <TextBlock x:Name="TabBarOpacityText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                 </Grid>
                 <Grid ColumnDefinitions="150,200,10,60" Margin="0,0,0,20">
-                    <TextBlock Grid.Column="0" Text="Terminal" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_Terminal}" Style="{StaticResource RowLabel}" />
                     <Slider x:Name="TerminalOpacitySlider" Grid.Column="1" Minimum="0" Maximum="1"
                             ValueChanged="Opacity_Changed" />
                     <TextBlock x:Name="TerminalOpacityText" Grid.Column="3" Style="{StaticResource RowLabel}" />
                 </Grid>
 
                 <!-- ============ terminal colours ============ -->
-                <TextBlock Text="Terminal colours" Style="{StaticResource SectionTitle}" />
-                <TextBlock Text="Accepts #RGB, #RRGGBB, #AARRGGBB or a colour name."
+                <TextBlock Text="{DynamicResource L_TerminalColours}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_TerminalColoursNote}"
                            Style="{StaticResource SectionNote}" />
                 <ItemsControl x:Name="TerminalColors" ItemTemplate="{StaticResource ColorRow}" Margin="0,0,0,20" />
 
                 <!-- ============ ANSI palette ============ -->
-                <TextBlock Text="ANSI palette" Style="{StaticResource SectionTitle}" />
-                <TextBlock Text="The sixteen colours programs address by name — ls, git and friends."
+                <TextBlock Text="{DynamicResource L_AnsiPalette}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_AnsiNote}"
                            Style="{StaticResource SectionNote}" />
                 <ItemsControl x:Name="AnsiColors" ItemTemplate="{StaticResource ColorRow}" Margin="0,0,0,20">
                     <ItemsControl.ItemsPanel>
@@ -336,20 +346,20 @@
                 </ItemsControl>
 
                 <!-- ============ application ============ -->
-                <TextBlock Text="Application" Style="{StaticResource SectionTitle}" />
-                <TextBlock Text="The window chrome: tab strip, sidebar, dialogs."
+                <TextBlock Text="{DynamicResource L_Application}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_ApplicationNote}"
                            Style="{StaticResource SectionNote}" />
 
                 <Grid ColumnDefinitions="150,240" Margin="0,0,0,12">
-                    <TextBlock Grid.Column="0" Text="Interface font" Style="{StaticResource RowLabel}" />
+                    <TextBlock Grid.Column="0" Text="{DynamicResource L_InterfaceFont}" Style="{StaticResource RowLabel}" />
                     <ComboBox x:Name="UiFontBox" Grid.Column="1" SelectionChanged="UiFont_SelectionChanged" />
                 </Grid>
 
                 <ItemsControl x:Name="AppColors" ItemTemplate="{StaticResource ColorRow}" />
 
                 <!-- ============ preview ============ -->
-                <TextBlock Text="Preview" Style="{StaticResource SectionTitle}" Margin="0,22,0,3" />
-                <TextBlock Text="How the palette reads against the terminal background."
+                <TextBlock Text="{DynamicResource L_Preview}" Style="{StaticResource SectionTitle}" Margin="0,22,0,3" />
+                <TextBlock Text="{DynamicResource L_PreviewNote}"
                            Style="{StaticResource SectionNote}" />
                 <Border x:Name="PreviewSurface"
                         CornerRadius="7"

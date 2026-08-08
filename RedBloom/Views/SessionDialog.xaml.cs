@@ -26,7 +26,7 @@ public partial class SessionDialog : Window
             _forwards.Add(new PortForwardRow(forward));
         }
 
-        HeaderText.Text = isNew ? "New SSH session" : "Edit SSH session";
+        HeaderText.Text = LocalizationService.T(isNew ? "L_NewSshSessionHeader" : "L_EditSshSessionHeader");
         NameBox.Text = session.Name;
         HostBox.Text = session.Host;
         PortBox.Text = session.Port.ToString();
@@ -110,19 +110,19 @@ public partial class SessionDialog : Window
         }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or OutOfMemoryException)
         {
-            ShowError("Could not read the clipboard.");
+            ShowError(LocalizationService.T("L_ErrClipboardRead"));
             return;
         }
 
         if (text.Length == 0)
         {
-            ShowError("The clipboard is empty. Copy an ssh command first.");
+            ShowError(LocalizationService.T("L_ErrClipboardEmpty"));
             return;
         }
 
         if (!SshCommandParser.TryParse(text, out var parsed, out var error))
         {
-            ShowError(error ?? "That does not look like an ssh command.");
+            ShowError(error ?? LocalizationService.T("L_ErrNotSshCommand"));
             return;
         }
 
@@ -151,7 +151,7 @@ public partial class SessionDialog : Window
         var host = HostBox.Text.Trim();
         if (host.Length == 0)
         {
-            ShowError("Host is required.");
+            ShowError(LocalizationService.T("L_ErrHostRequired"));
             HostBox.Focus();
             return;
         }
@@ -159,14 +159,14 @@ public partial class SessionDialog : Window
         var user = UserBox.Text.Trim();
         if (user.Length == 0)
         {
-            ShowError("Username is required.");
+            ShowError(LocalizationService.T("L_ErrUserRequired"));
             UserBox.Focus();
             return;
         }
 
         if (!int.TryParse(PortBox.Text.Trim(), out var port) || port is < 1 or > 65535)
         {
-            ShowError("Port must be between 1 and 65535.");
+            ShowError(LocalizationService.T("L_ErrPortRange"));
             PortBox.Focus();
             return;
         }
@@ -177,13 +177,13 @@ public partial class SessionDialog : Window
             var keyPath = KeyPathBox.Text.Trim();
             if (keyPath.Length == 0)
             {
-                ShowError("Choose a private key file.");
+                ShowError(LocalizationService.T("L_ErrChooseKey"));
                 return;
             }
 
             if (!File.Exists(keyPath))
             {
-                ShowError("That private key file does not exist.");
+                ShowError(LocalizationService.T("L_ErrKeyMissing"));
                 return;
             }
 
@@ -200,7 +200,7 @@ public partial class SessionDialog : Window
         {
             if (!row.TryBuild(out var forward, out var forwardError))
             {
-                ShowError(forwardError ?? "A tunnel is incomplete.");
+                ShowError(forwardError ?? LocalizationService.T("L_ErrTunnelIncomplete"));
                 return;
             }
 
@@ -212,7 +212,8 @@ public partial class SessionDialog : Window
             .FirstOrDefault(g => g.Count() > 1);
         if (duplicate is not null)
         {
-            ShowError($"Two tunnels both listen on {duplicate.Key.BoundHost}:{duplicate.Key.BoundPort}.");
+            ShowError(string.Format(LocalizationService.T("L_ErrTunnelDuplicate"),
+                $"{duplicate.Key.BoundHost}:{duplicate.Key.BoundPort}"));
             return;
         }
 
