@@ -78,8 +78,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var handle = new WindowInteropHelper(this).Handle;
 
-        // "RoundSmall" keeps the corners subtle; DWM leaves a maximized window square on its own.
-        Interop.Dwm.SetCornerPreference(handle, Interop.Dwm.CornerPreference.RoundSmall);
+        // DWM offers only three fixed corner sizes; "Round" is the larger of the two rounded
+        // ones (~8px against RoundSmall's ~4px). A maximized window stays square on its own.
+        Interop.Dwm.SetCornerPreference(handle, Interop.Dwm.CornerPreference.Round);
         Interop.MaximizeBounds.Attach(handle);
 
         HookWallpaperCapture();
