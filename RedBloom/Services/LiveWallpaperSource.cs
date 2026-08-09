@@ -15,7 +15,13 @@ public sealed class LiveWallpaperSource : IDisposable
 {
     private readonly WallpaperCapture _desktop = new();
     private readonly WallpaperEngineCapture _engine = new();
+
+    // Which source is live, and whether frames are wanted at all. Both are read from the
+    // engine source's capture thread when it reports a failure, so they are only touched
+    // under this lock.
+    private readonly object _gate = new();
     private object? _active;
+    private bool _wanted;
 
     public event Action<WallpaperCapture.DesktopFrame>? FrameReady;
 
@@ -33,44 +39,80 @@ public sealed class LiveWallpaperSource : IDisposable
     }
 
     /// <summary>True when the current frames come from Wallpaper Engine, icon-free.</summary>
-    public bool UsingEngine => ReferenceEquals(_active, _engine);
+    public bool UsingEngine
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return ReferenceEquals(_active, _engine);
+            }
+        }
+    }
 
     public LiveWallpaperSource()
     {
         _desktop.FrameReady += OnFrame;
         _engine.FrameReady += OnFrame;
+        _engine.Unavailable += OnEngineUnavailable;
     }
 
     public void Start()
     {
-        // Prefer the engine hook. If Wallpaper Engine is not running, or the hook cannot be
-        // injected, it stops itself and the desktop capture takes over on the next tick — but
-        // deciding up front avoids injecting for nothing.
-        if (WallpaperEngineCapture.IsEngineRunning())
+        lock (_gate)
         {
-            Switch(_engine);
-            _engine.Start();
+            _wanted = true;
 
-            // The engine source turns itself off when injection is impossible (for example the
-            // engine runs elevated and we do not); fall back rather than show nothing.
-            if (!_engine.IsRunning)
+            // Prefer the engine hook; deciding up front avoids injecting for nothing.
+            if (WallpaperEngineCapture.IsEngineRunning())
+            {
+                Switch(_engine);
+                _engine.Start();
+            }
+            else
             {
                 Switch(_desktop);
                 _desktop.Start();
             }
         }
-        else
-        {
-            Switch(_desktop);
-            _desktop.Start();
-        }
     }
 
     public void Stop()
     {
-        _engine.Stop();
-        _desktop.Stop();
-        _active = null;
+        lock (_gate)
+        {
+            _wanted = false;
+            _engine.Stop();
+            _desktop.Stop();
+            _active = null;
+        }
+    }
+
+    /// <summary>
+    /// Takes over with the whole-desktop capture when the hook cannot be used after all.
+    /// </summary>
+    /// <remarks>
+    /// Injection runs on the engine source's own thread and takes a moment, so <see cref="Start"/>
+    /// cannot know whether it worked — asking there only ever saw the flag the source had just
+    /// raised, which is why an engine running at a higher integrity level than us used to leave
+    /// the background frozen instead of falling back. The answer arrives here instead, whenever
+    /// it is ready. Frames then carry the desktop icons, which is the point of preferring the
+    /// hook, but that beats showing nothing.
+    /// </remarks>
+    private void OnEngineUnavailable()
+    {
+        lock (_gate)
+        {
+            // A stop, or a switch someone made in the meantime, settles it: the run that failed
+            // is no longer the one anybody is waiting on.
+            if (!_wanted || !ReferenceEquals(_active, _engine))
+            {
+                return;
+            }
+
+            Switch(_desktop);
+            _desktop.Start();
+        }
     }
 
     private void Switch(object source)
@@ -98,6 +140,9 @@ public sealed class LiveWallpaperSource : IDisposable
 
     public void Dispose()
     {
+        _engine.Unavailable -= OnEngineUnavailable;
+        _engine.FrameReady -= OnFrame;
+        _desktop.FrameReady -= OnFrame;
         _engine.Dispose();
         _desktop.Dispose();
     }

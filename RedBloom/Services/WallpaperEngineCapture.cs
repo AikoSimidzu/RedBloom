@@ -42,8 +42,6 @@ public sealed class WallpaperEngineCapture : IDisposable
     private const int OffIntervalMs = 32;
     private const int OffReaderTickMs = 40;
 
-    private MemoryMappedFile? _map;
-    private MemoryMappedViewAccessor? _view;
     private Thread? _worker;
     private volatile bool _running;
     private int _generation;
@@ -55,6 +53,17 @@ public sealed class WallpaperEngineCapture : IDisposable
     private int _bufferIndex;
 
     public event Action<WallpaperCapture.DesktopFrame>? FrameReady;
+
+    /// <summary>
+    /// Raised when this source gives up on the run it was asked for: the hook could not be
+    /// injected, or the block it publishes into went away with a restarted Wallpaper Engine.
+    /// </summary>
+    /// <remarks>
+    /// Injection happens on the capture thread and takes a moment, so whether it worked is not
+    /// known when <see cref="Start"/> returns — this is how the answer comes back. It is raised
+    /// on the capture thread, at most once per run, and never for an ordinary <see cref="Stop"/>.
+    /// </remarks>
+    public event Action? Unavailable;
 
     public bool IsRunning => _running;
 
@@ -87,54 +96,77 @@ public sealed class WallpaperEngineCapture : IDisposable
         Interlocked.Increment(ref _generation);
     }
 
-    public void Dispose()
-    {
-        Stop();
-        _view?.Dispose();
-        _map?.Dispose();
-        _view = null;
-        _map = null;
-    }
+    /// <remarks>
+    /// The mapping is not touched here: it belongs to the capture thread, which releases it on
+    /// the way out. Stopping is enough to get rid of it, and doing it from here instead would
+    /// mean pulling the view out from under a read already in progress.
+    /// </remarks>
+    public void Dispose() => Stop();
 
     private void Loop(int generation)
     {
         // Nothing to capture until the hook is in and the shared block is up. Both can fail
         // for ordinary reasons — the engine is not running, or it is running at a higher
         // integrity level than us — so a failure here just means no live frames, never a crash.
-        if (!EnsureInjected() || !EnsureMapped())
+        if (!EnsureInjected() || !TryMap(out var map, out var view))
         {
             _running = false;
+            RaiseUnavailable(generation);
             return;
         }
 
-        while (_running && generation == Volatile.Read(ref _generation))
+        // Held as locals, not fields: a stop followed straight away by a start — every other
+        // alt-tab does that — leaves this thread winding down while the next one is already
+        // mapping its own view, and shared fields would have the two disposing each other's.
+        try
         {
-            var started = Environment.TickCount64;
+            var failed = false;
 
-            try
+            while (_running && generation == Volatile.Read(ref _generation))
             {
-                PublishLatest();
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // The mapping can vanish if the engine is restarted; the next Start rebuilds it.
-                break;
+                var started = Environment.TickCount64;
+
+                try
+                {
+                    PublishLatest(view);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // The mapping can vanish if the engine is restarted; say so, and whoever is
+                    // listening decides whether to start over or fall back to another source.
+                    failed = true;
+                    break;
+                }
+
+                var budget = 1000 / Math.Clamp(FramesPerSecond, 1, 120);
+                var spent = (int)(Environment.TickCount64 - started);
+                Thread.Sleep(Math.Max(5, budget - spent));
             }
 
-            var budget = 1000 / Math.Clamp(FramesPerSecond, 1, 120);
-            var spent = (int)(Environment.TickCount64 - started);
-            Thread.Sleep(Math.Max(5, budget - spent));
+            if (failed)
+            {
+                _running = false;
+                RaiseUnavailable(generation);
+            }
+        }
+        finally
+        {
+            view.Dispose();
+            map.Dispose();
         }
     }
 
-    private void PublishLatest()
+    /// <summary>Reports a failed run, unless a newer run has already superseded this one.</summary>
+    private void RaiseUnavailable(int generation)
     {
-        var view = _view;
-        if (view is null)
+        if (generation == Volatile.Read(ref _generation))
         {
-            return;
+            Unavailable?.Invoke();
         }
+    }
 
+    private void PublishLatest(MemoryMappedViewAccessor view)
+    {
         if (view.ReadUInt32(OffMagic) != Magic)
         {
             return;
@@ -199,25 +231,30 @@ public sealed class WallpaperEngineCapture : IDisposable
         FrameReady?.Invoke(new WallpaperCapture.DesktopFrame(buffer, width, height, stride, 0, 0));
     }
 
-    /// <summary>Opens the block the hook publishes into, retrying briefly while it starts up.</summary>
-    private bool EnsureMapped()
+    /// <summary>
+    /// Opens the block the hook publishes into, retrying briefly while it starts up. On success
+    /// the mapping belongs to the caller, which must dispose it.
+    /// </summary>
+    private bool TryMap(
+        out MemoryMappedFile map,
+        out MemoryMappedViewAccessor view)
     {
         for (var attempt = 0; attempt < 25 && _running; attempt++)
         {
+            MemoryMappedFile? opened = null;
+            MemoryMappedViewAccessor? accessor = null;
+
             try
             {
-                _map = MemoryMappedFile.OpenExisting(MapName, MemoryMappedFileRights.ReadWrite);
-                _view = _map.CreateViewAccessor(0, 0, MemoryMappedFileAccess.ReadWrite);
+                opened = MemoryMappedFile.OpenExisting(MapName, MemoryMappedFileRights.ReadWrite);
+                accessor = opened.CreateViewAccessor(0, 0, MemoryMappedFileAccess.ReadWrite);
 
-                if (_view.ReadUInt32(OffMagic) == Magic)
+                if (accessor.ReadUInt32(OffMagic) == Magic)
                 {
+                    map = opened;
+                    view = accessor;
                     return true;
                 }
-
-                _view.Dispose();
-                _map.Dispose();
-                _view = null;
-                _map = null;
             }
             catch (FileNotFoundException)
             {
@@ -225,12 +262,20 @@ public sealed class WallpaperEngineCapture : IDisposable
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                return false;
+                accessor?.Dispose();
+                opened?.Dispose();
+                break;
             }
+
+            // Either the header is not stamped yet or opening threw: keep neither half.
+            accessor?.Dispose();
+            opened?.Dispose();
 
             Thread.Sleep(80);
         }
 
+        map = null!;
+        view = null!;
         return false;
     }
 
