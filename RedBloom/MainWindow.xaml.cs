@@ -306,11 +306,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         };
 
         view.AcceleratorPressed += OnAcceleratorPressed;
+        view.SshCommandTyped += (_, session) => OnSshCommandTyped(session);
     }
 
     // A split pane does not drive the tab's title or ended state — the tab still stands for its
-    // first pane — so it only needs the shortcut hook to grow or close further panes.
-    private void WireSplitPane(TerminalView view) => view.AcceleratorPressed += OnAcceleratorPressed;
+    // first pane — so it only needs the shortcut hook and the typed-ssh offer.
+    private void WireSplitPane(TerminalView view)
+    {
+        view.AcceleratorPressed += OnAcceleratorPressed;
+        view.SshCommandTyped += (_, session) => OnSshCommandTyped(session);
+    }
 
     private void SelectTab(TerminalTab tab)
     {
@@ -601,6 +606,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
+    /// <summary>Opens the colour picker over the tab-card swatch, holding the card popup open.</summary>
+    private void TabCardSwatch_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: TabCardStyle card })
+        {
+            return;
+        }
+
+        // The card popup closes on any click outside itself; the picker is a separate popup, so
+        // pin the card popup open while the picker is up and release it when the picker closes.
+        var initial = string.IsNullOrWhiteSpace(card.Color) ? "#2A2A2A" : card.Color;
+        TabCardPopup.StaysOpen = true;
+        Controls.ColorPickerPopup.Show(
+            (UIElement)sender,
+            initial,
+            hex => card.Color = hex,
+            onClosed: () => TabCardPopup.StaysOpen = false);
+        e.Handled = true;
+    }
+
     private void TabCardReset_Click(object sender, RoutedEventArgs e)
     {
         if (TabCardPopup.DataContext is TabCardStyle card)
@@ -738,6 +763,145 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OpenSshTab(session, secret);
     }
 
+    // ================= "save this SSH?" from a typed console command =================
+
+    /// <summary>
+    /// The terminal noticed the user run an <c>ssh …</c> command at a local shell. Offer to keep
+    /// it as a saved session, unless that host is already in the sidebar.
+    /// </summary>
+    private void OnSshCommandTyped(SshSession session)
+    {
+        if (IsAlreadySaved(session))
+        {
+            return;
+        }
+
+        _toastSession = session;
+        ShowToast(
+            LocalizationService.T("L_SaveThisSession"),
+            LocalizationService.T("L_Save"),
+            SaveTypedSession);
+    }
+
+    private bool IsAlreadySaved(SshSession candidate) =>
+        _store.Sessions.Any(existing =>
+            string.Equals(existing.Host, candidate.Host, StringComparison.OrdinalIgnoreCase)
+            && existing.Port == candidate.Port
+            && string.Equals(existing.Username, candidate.Username, StringComparison.OrdinalIgnoreCase));
+
+    private void SaveTypedSession()
+    {
+        var session = _toastSession;
+        _toastSession = null;
+        if (session is null)
+        {
+            return;
+        }
+
+        if (!IsAlreadySaved(session))
+        {
+            _store.Sessions.Add(session);
+            _store.Save();
+            SessionList.SelectedItem = session;
+        }
+
+        ShowToast(
+            string.Format(LocalizationService.T("L_SaveToastSaved"), session.Name),
+            actionLabel: null,
+            onAction: null);
+    }
+
+    // ================= bottom-left toast =================
+
+    private SshSession? _toastSession;
+    private Action? _toastAction;
+
+    // Bumped whenever the toast is shown, hovered or hidden, so a fade that was already running
+    // knows it is stale and does not hide a toast the user has since brought back.
+    private int _toastGeneration;
+
+    private void ShowToast(string text, string? actionLabel, Action? onAction)
+    {
+        SaveToastText.Text = text;
+        _toastAction = onAction;
+
+        if (actionLabel is null)
+        {
+            SaveToastButtons.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            SaveToastButtons.Visibility = Visibility.Visible;
+            SaveToastAction.Content = actionLabel;
+        }
+
+        SaveToast.Visibility = Visibility.Visible;
+        BeginToastFade();
+    }
+
+    private void BeginToastFade()
+    {
+        var generation = ++_toastGeneration;
+
+        SaveToast.BeginAnimation(OpacityProperty, null);
+        SaveToast.Opacity = 1;
+
+        var fade = new DoubleAnimation
+        {
+            From = 1,
+            To = 0,
+            Duration = TimeSpan.FromSeconds(10),
+            FillBehavior = FillBehavior.HoldEnd,
+        };
+        fade.Completed += (_, _) =>
+        {
+            // Only fold it away if this very fade ran to the end untouched.
+            if (generation == _toastGeneration)
+            {
+                HideToast();
+            }
+        };
+
+        SaveToast.BeginAnimation(OpacityProperty, fade);
+    }
+
+    private void SaveToast_MouseEnter(object sender, MouseEventArgs e)
+    {
+        _toastGeneration++;
+        SaveToast.BeginAnimation(OpacityProperty, null);
+        SaveToast.Opacity = 1;
+    }
+
+    private void SaveToast_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (SaveToast.Visibility == Visibility.Visible)
+        {
+            BeginToastFade();
+        }
+    }
+
+    private void SaveToastAction_Click(object sender, RoutedEventArgs e)
+    {
+        var action = _toastAction;
+        _toastAction = null;
+        HideToast();
+        action?.Invoke();
+    }
+
+    private void SaveToastDismiss_Click(object sender, RoutedEventArgs e)
+    {
+        _toastSession = null;
+        HideToast();
+    }
+
+    private void HideToast()
+    {
+        _toastGeneration++;
+        SaveToast.BeginAnimation(OpacityProperty, null);
+        SaveToast.Opacity = 1;
+        SaveToast.Visibility = Visibility.Collapsed;
+    }
+
     // ================= live wallpaper =================
 
     private readonly LiveWallpaperSource _capture = new();
@@ -838,6 +1002,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             WindowBackdrop.PushFrame(frame.Pixels, frame.Width, frame.Height, frame.Stride, _frameScale);
             UpdateLiveLayout();
+
+            // The settings preview, if open, draws the same frame — no second capture needed.
+            LiveWallpaperBroker.Publish(frame);
         });
 
     // ================= sidebar =================

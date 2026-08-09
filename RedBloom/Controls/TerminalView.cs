@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using RedBloom.Models;
 using RedBloom.Services;
 using RedBloom.Terminal;
 
@@ -36,6 +37,9 @@ public sealed class TerminalView : UserControl, IDisposable
     private readonly Func<int, int, CancellationToken, Task<ITerminalBackend>> _connectAsync;
     private readonly WebView2 _webView = new();
     private readonly StringBuilder _pendingOutput = new();
+
+    /// <summary>Reconstructs the current command line at a local shell, to spot a typed ssh call.</summary>
+    private readonly StringBuilder _typedLine = new();
     private readonly DispatcherTimer _flushTimer;
     private readonly CancellationTokenSource _lifetime = new();
 
@@ -58,7 +62,7 @@ public sealed class TerminalView : UserControl, IDisposable
     {
         _connectAsync = connectAsync;
 
-        _webView.DefaultBackgroundColor = System.Drawing.Color.Transparent;
+        ApplyWebViewBackground();
         Content = _webView;
 
         _flushTimer = new DispatcherTimer(DispatcherPriority.Render)
@@ -84,6 +88,12 @@ public sealed class TerminalView : UserControl, IDisposable
     /// WebView2 never lets those keys reach WPF. 'T' new, 'W' close, 'N'/'P' next/previous.
     /// </summary>
     public event EventHandler<char>? AcceleratorPressed;
+
+    /// <summary>
+    /// Raised when the user runs an <c>ssh …</c> command at a local shell, parsed from what they
+    /// typed, so the app can offer to keep it as a saved session.
+    /// </summary>
+    public event EventHandler<SshSession>? SshCommandTyped;
 
     public bool IsConnected => _backend?.IsRunning == true;
 
@@ -176,6 +186,7 @@ public sealed class TerminalView : UserControl, IDisposable
         {
             case 'i':
                 _backend?.Write(body);
+                TrackTypedInput(body);
                 break;
 
             case 'r':
@@ -227,6 +238,78 @@ public sealed class TerminalView : UserControl, IDisposable
         _backend?.Resize(columns, rows);
     }
 
+    /// <summary>
+    /// Follows what the user types at a local shell so an <c>ssh …</c> command can be offered for
+    /// saving. Only a rough reconstruction: printable keys build the line, Enter submits it,
+    /// Backspace trims it, and anything that makes the real line ambiguous — an escape sequence
+    /// from an arrow key, a line-kill, a recalled history entry — just resets the buffer, so the
+    /// worst case is a missed offer, never a wrong one. Skipped entirely inside an SSH session,
+    /// where a typed ssh would be a jump host rather than a connection this app can save.
+    /// </summary>
+    private void TrackTypedInput(string input)
+    {
+        if (_backend is null or SshBackend)
+        {
+            _typedLine.Clear();
+            return;
+        }
+
+        foreach (var ch in input)
+        {
+            switch (ch)
+            {
+                case '\r' or '\n':
+                    SubmitTypedLine();
+                    _typedLine.Clear();
+                    break;
+
+                case '\b' or (char)0x7f:
+                    if (_typedLine.Length > 0)
+                    {
+                        _typedLine.Length--;
+                    }
+
+                    break;
+
+                // Escape (arrows, history), Ctrl+C, Ctrl+U (kill line): the line is no longer
+                // something we can trust, so stop trying to read this one.
+                case (char)0x1b or (char)0x03 or (char)0x15:
+                    _typedLine.Clear();
+                    break;
+
+                default:
+                    if (!char.IsControl(ch))
+                    {
+                        _typedLine.Append(ch);
+                    }
+
+                    break;
+            }
+        }
+
+        // A prompt line this long is not an ssh command being typed; drop it rather than grow.
+        if (_typedLine.Length > 512)
+        {
+            _typedLine.Clear();
+        }
+    }
+
+    private void SubmitTypedLine()
+    {
+        var line = _typedLine.ToString().Trim();
+
+        // Only the ssh form is of interest, and only when it resolves to a real host.
+        if (!line.StartsWith("ssh ", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (SshCommandParser.TryParse(line, out var session, out _))
+        {
+            SshCommandTyped?.Invoke(this, session);
+        }
+    }
+
     private async void OnPageReady()
     {
         if (_pageReady)
@@ -243,6 +326,28 @@ public sealed class TerminalView : UserControl, IDisposable
         await ConnectAsync().ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// Chooses what the WebView paints where the page is transparent — which is also what shows
+    /// during the brief gap while a windowed WebView2 catches up with a move or resize.
+    /// </summary>
+    /// <remarks>
+    /// With a picture or the live wallpaper behind the terminal, that opaque layer fills the gap,
+    /// so the WebView stays see-through (transparent, but tinted to the terminal colour so any
+    /// residual flash matches instead of showing the browser's blue). With no picture there is
+    /// nothing behind to hide the flash, so the WebView is made opaque in the terminal colour —
+    /// the blue simply cannot appear. Cheap to call again whenever the theme or mode changes.
+    /// </remarks>
+    private void ApplyWebViewBackground()
+    {
+        var s = ThemeService.Settings;
+        var bg = ThemeService.ParseColor(s.TerminalBackground, System.Windows.Media.Colors.Black);
+
+        var seeThrough = s.BackgroundMode != BackgroundMode.None;
+        _webView.DefaultBackgroundColor = seeThrough
+            ? System.Drawing.Color.FromArgb(0, bg.R, bg.G, bg.B)
+            : System.Drawing.Color.FromArgb(255, bg.R, bg.G, bg.B);
+    }
+
     /// <summary>Sends the current appearance settings to the page.</summary>
     private void PushAppearance()
     {
@@ -250,6 +355,8 @@ public sealed class TerminalView : UserControl, IDisposable
         {
             return;
         }
+
+        ApplyWebViewBackground();
 
         var s = ThemeService.Settings;
         var payload = JsonSerializer.Serialize(new

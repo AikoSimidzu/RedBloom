@@ -59,6 +59,16 @@ public partial class SessionDialog : Window
         Loaded += (_, _) => NameBox.Focus();
     }
 
+    /// <summary>Opens the colour picker over the tab-card colour swatch.</summary>
+    private void CardSwatch_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: TabCardStyle card })
+        {
+            var initial = string.IsNullOrWhiteSpace(card.Color) ? "#2A2A2A" : card.Color;
+            Controls.ColorPickerPopup.Show((UIElement)sender, initial, hex => card.Color = hex);
+        }
+    }
+
     private void CardFit_Changed(object sender, SelectionChangedEventArgs e)
     {
         _session.TabCard.Stretch = CardFitBox.SelectedIndex switch

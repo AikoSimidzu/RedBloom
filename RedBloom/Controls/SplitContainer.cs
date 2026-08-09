@@ -9,18 +9,28 @@ namespace RedBloom.Controls;
 /// tab, two split it left and right, three put two on top and one across the bottom, four make
 /// quarters. Draggable splitters sit between the rows and columns.
 /// </summary>
+/// <remarks>
+/// Each pane keeps a permanent wrapper that is never re-parented — only its grid position
+/// changes on a relayout. Re-parenting a WebView2 recreates its surface and flashes it blue, so
+/// moving the panes rather than rebuilding them is what keeps a split clean.
+/// </remarks>
 public sealed class SplitContainer : Grid, IDisposable
 {
     /// <summary>Four panes is the ceiling: past that the cells are too small to be useful.</summary>
     public const int MaxPanes = 4;
 
+    private const double HeaderHeight = 22;
+
     private readonly List<TerminalView> _panes = [];
+    private readonly Dictionary<TerminalView, Grid> _hosts = [];
+    private readonly List<GridSplitter> _splitters = [];
 
     public SplitContainer(TerminalView first)
     {
-        _panes.Add(first);
+        BuildColumnsAndRows();
+        AddInternal(first);
         ActiveView = first;
-        Rebuild();
+        Layout();
     }
 
     public IReadOnlyList<TerminalView> Panes => _panes;
@@ -51,9 +61,9 @@ public sealed class SplitContainer : Grid, IDisposable
             return;
         }
 
-        _panes.Add(view);
+        AddInternal(view);
         ActiveView = view;
-        Rebuild();
+        Layout();
     }
 
     /// <summary>Removes a pane and disposes it. Never removes the last — a tab keeps one pane.</summary>
@@ -64,114 +74,139 @@ public sealed class SplitContainer : Grid, IDisposable
             return;
         }
 
+        if (_hosts.Remove(view, out var host))
+        {
+            host.Children.Clear();
+            Children.Remove(host);
+        }
+
         if (ReferenceEquals(ActiveView, view))
         {
             ActiveView = _panes[^1];
         }
 
-        Rebuild();
+        Layout();
         (view as IDisposable).Dispose();
     }
 
-    // Grid geometry: columns [*, splitter, *], rows [*, splitter, *]. Panes live in the star
-    // columns/rows (0 and 2); the auto tracks (1) carry the splitters.
-    private void Rebuild()
+    private void AddInternal(TerminalView view)
     {
-        // Detach the panes from the wrappers they were in, or re-parenting them below throws.
-        foreach (var host in Children.OfType<Grid>())
-        {
-            host.Children.Clear();
-        }
+        _panes.Add(view);
 
-        Children.Clear();
-        ColumnDefinitions.Clear();
-        RowDefinitions.Clear();
+        var host = new Grid();
+        host.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
+        var header = BuildHeader(view);
+        SetRow(header, 0);
+        SetRow(view, 1);
+        host.Children.Add(header);
+        host.Children.Add(view);
+
+        _hosts[view] = host;
+        Children.Add(host);
+    }
+
+    // Columns [*, splitter, *] and rows [*, splitter, *]; panes live in the star tracks (0, 2).
+    private void BuildColumnsAndRows()
+    {
         ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+    }
+
+    private void Layout()
+    {
+        // Only the splitters are torn down and rebuilt; the pane wrappers stay put so their
+        // WebView2 surfaces are never recreated.
+        foreach (var splitter in _splitters)
+        {
+            Children.Remove(splitter);
+        }
+
+        _splitters.Clear();
 
         var count = _panes.Count;
 
-        // (column, row, columnSpan) for each pane at each population.
-        (int Col, int Row, int Span) Slot(int index) => count switch
+        // (column, row, columnSpan, rowSpan) for each pane at each population. Two panes run the
+        // full height as left and right; three put two on top and one across the bottom; four
+        // make quarters.
+        (int Col, int Row, int ColSpan, int RowSpan) Slot(int index) => count switch
         {
-            1 => (0, 0, 3),
-            2 => index == 0 ? (0, 0, 1) : (2, 0, 1),
-            3 => index switch { 0 => (0, 0, 1), 1 => (2, 0, 1), _ => (0, 2, 3) },
-            _ => index switch { 0 => (0, 0, 1), 1 => (2, 0, 1), 2 => (0, 2, 1), _ => (2, 2, 1) },
+            1 => (0, 0, 3, 3),
+            2 => index == 0 ? (0, 0, 1, 3) : (2, 0, 1, 3),
+            3 => index switch { 0 => (0, 0, 1, 1), 1 => (2, 0, 1, 1), _ => (0, 2, 3, 1) },
+            _ => index switch { 0 => (0, 0, 1, 1), 1 => (2, 0, 1, 1), 2 => (0, 2, 1, 1), _ => (2, 2, 1, 1) },
         };
 
         for (var i = 0; i < count; i++)
         {
-            var (col, row, span) = Slot(i);
-            var host = BuildPaneHost(_panes[i]);
+            var host = _hosts[_panes[i]];
+            var (col, row, colSpan, rowSpan) = Slot(i);
             SetColumn(host, col);
             SetRow(host, row);
-            SetColumnSpan(host, span);
-            Children.Add(host);
+            SetColumnSpan(host, colSpan);
+            SetRowSpan(host, rowSpan);
+
+            // The per-pane header (with its close button) only appears once the tab is split.
+            host.RowDefinitions[0].Height = count > 1 ? new GridLength(HeaderHeight) : new GridLength(0);
         }
 
-        // Vertical splitter between the two columns. Full height for quarters; only the top row
-        // otherwise, so it never lands on the full-width bottom pane of a three-way split.
         if (count >= 2)
         {
-            var vertical = new GridSplitter
-            {
-                Width = 4,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                ResizeDirection = GridResizeDirection.Columns,
-                ResizeBehavior = GridResizeBehavior.PreviousAndNext,
-                ShowsPreview = false,
-            };
-            vertical.SetResourceReference(BackgroundProperty, "Divider");
-            SetColumn(vertical, 1);
-            SetRow(vertical, 0);
-            SetRowSpan(vertical, count >= 4 ? 3 : 1);
-            Children.Add(vertical);
+            // Full height between the columns for two panes and for quarters; only the top row
+            // for a three-way split, where the bottom is a single full-width pane.
+            AddSplitter(GridResizeDirection.Columns, column: 1, row: 0, rowSpan: count == 3 ? 1 : 3, columnSpan: 1);
         }
 
-        // Horizontal splitter between the two rows, once there is a bottom row.
         if (count >= 3)
         {
-            var horizontal = new GridSplitter
-            {
-                Height = 4,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Center,
-                ResizeDirection = GridResizeDirection.Rows,
-                ResizeBehavior = GridResizeBehavior.PreviousAndNext,
-                ShowsPreview = false,
-            };
-            horizontal.SetResourceReference(BackgroundProperty, "Divider");
-            SetColumn(horizontal, 0);
-            SetColumnSpan(horizontal, 3);
-            SetRow(horizontal, 1);
-            Children.Add(horizontal);
+            AddSplitter(GridResizeDirection.Rows, column: 0, row: 1, rowSpan: 1, columnSpan: 3);
         }
     }
 
-    /// <summary>
-    /// Wraps a pane with a slim header carrying a close button. The header only shows once the
-    /// tab is actually split — a lone terminal keeps the whole cell. The header is WPF above the
-    /// terminal rather than over it, since a WebView2 surface cannot be drawn on top of.
-    /// </summary>
-    private FrameworkElement BuildPaneHost(TerminalView view)
+    private void AddSplitter(GridResizeDirection direction, int column, int row, int rowSpan, int columnSpan)
     {
-        if (_panes.Count < 2)
+        var splitter = new GridSplitter
         {
-            return view;
+            ResizeDirection = direction,
+            ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+            ShowsPreview = false,
+        };
+
+        if (direction == GridResizeDirection.Columns)
+        {
+            splitter.Width = 4;
+            splitter.HorizontalAlignment = HorizontalAlignment.Center;
+            splitter.VerticalAlignment = VerticalAlignment.Stretch;
+        }
+        else
+        {
+            splitter.Height = 4;
+            splitter.HorizontalAlignment = HorizontalAlignment.Stretch;
+            splitter.VerticalAlignment = VerticalAlignment.Center;
         }
 
-        var host = new Grid();
-        host.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        splitter.SetResourceReference(BackgroundProperty, "Divider");
+        SetColumn(splitter, column);
+        SetRow(splitter, row);
+        SetColumnSpan(splitter, columnSpan);
+        SetRowSpan(splitter, rowSpan);
 
-        var header = new Border { Height = 22 };
+        _splitters.Add(splitter);
+        Children.Add(splitter);
+    }
+
+    /// <summary>
+    /// The slim header carrying a close button, collapsed until the tab is split. It is WPF
+    /// above the terminal rather than over it, since a WebView2 surface cannot be drawn on top of.
+    /// </summary>
+    private Border BuildHeader(TerminalView view)
+    {
+        var header = new Border { Height = HeaderHeight };
         header.SetResourceReference(BackgroundProperty, "TabBacking");
 
         var close = new Button
@@ -190,11 +225,7 @@ public sealed class SplitContainer : Grid, IDisposable
         close.Click += (_, _) => PaneCloseRequested?.Invoke(view);
         header.Child = close;
 
-        SetRow(header, 0);
-        SetRow(view, 1);
-        host.Children.Add(header);
-        host.Children.Add(view);
-        return host;
+        return header;
     }
 
     public void Dispose()
@@ -205,6 +236,8 @@ public sealed class SplitContainer : Grid, IDisposable
         }
 
         _panes.Clear();
+        _hosts.Clear();
+        _splitters.Clear();
         Children.Clear();
     }
 }

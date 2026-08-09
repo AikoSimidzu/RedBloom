@@ -581,6 +581,8 @@
                                  FontFamily="Cascadia Mono, Consolas, monospace"
                                  FontSize="11.5" Padding="7,4" />
                         <Border Grid.Column="2" Width="30" Height="26" CornerRadius="5"
+                                Cursor="Hand"
+                                MouseLeftButtonUp="TabCardSwatch_Click"
                                 Background="{Binding Color, Converter={StaticResource HexToBrush}}"
                                 BorderBrush="{DynamicResource Divider}" BorderThickness="1" />
                     </Grid>
@@ -618,6 +620,45 @@
                 </StackPanel>
             </Border>
         </Popup>
+
+        <!-- Bottom-left toast: offers to save a quick-connect session, then fades over ~10s.
+             Hovering it brings it back to full; it never steals focus from the terminal. -->
+        <Border x:Name="SaveToast"
+                Grid.Row="1" Grid.Column="1"
+                HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                Margin="16,0,0,20"
+                MaxWidth="300"
+                Visibility="Collapsed"
+                Background="{DynamicResource Chrome}"
+                BorderBrush="{DynamicResource Divider}"
+                BorderThickness="1"
+                CornerRadius="9"
+                Padding="14,12"
+                MouseEnter="SaveToast_MouseEnter"
+                MouseLeave="SaveToast_MouseLeave">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20" ShadowDepth="5" Opacity="0.5" Color="Black" />
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock x:Name="SaveToastText"
+                           Foreground="{DynamicResource TextPrimary}"
+                           FontFamily="{DynamicResource UiFont}"
+                           FontSize="12.5"
+                           TextWrapping="Wrap" />
+                <StackPanel x:Name="SaveToastButtons" Orientation="Horizontal" Margin="0,10,0,0">
+                    <Button x:Name="SaveToastAction"
+                            Style="{StaticResource GhostButton}"
+                            Content="{DynamicResource L_Save}"
+                            Padding="14,5"
+                            Click="SaveToastAction_Click" />
+                    <Button Style="{StaticResource GhostButton}"
+                            Content="{DynamicResource L_Dismiss}"
+                            Padding="12,5"
+                            Margin="8,0,0,0"
+                            Click="SaveToastDismiss_Click" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>
 

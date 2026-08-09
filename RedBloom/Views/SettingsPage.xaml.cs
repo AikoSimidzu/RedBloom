@@ -31,10 +31,12 @@ public partial class SettingsPage : UserControl
 
         ThemeService.Applied += OnThemeApplied;
         LocalizationService.Changed += OnLanguageChanged;
+        LiveWallpaperBroker.Frame += OnPreviewFrame;
         Unloaded += (_, _) =>
         {
             ThemeService.Applied -= OnThemeApplied;
             LocalizationService.Changed -= OnLanguageChanged;
+            LiveWallpaperBroker.Frame -= OnPreviewFrame;
         };
 
         _loading = false;
@@ -233,11 +235,34 @@ public partial class SettingsPage : UserControl
         RefreshPreview();
     }
 
-    /// <summary>Draws a few sample lines using the configured terminal font and palette.</summary>
+    /// <summary>
+    /// Draws a few sample lines over the actual background: the configured picture (or a live
+    /// wallpaper's overlay) shows through the terminal's own translucency, so the palette can be
+    /// judged the way it will really look.
+    /// </summary>
     private void RefreshPreview()
     {
+        // The solid terminal colour sits at the very back, for the "no picture" case.
         PreviewSurface.Background = new SolidColorBrush(
             ThemeService.ParseColor(_settings.TerminalBackground, Colors.Black));
+
+        // The background layer that applies to the terminal at the current mode.
+        var (layer, active, live) = _settings.BackgroundMode switch
+        {
+            BackgroundMode.Window => (_settings.WindowBackdrop, true, false),
+            BackgroundMode.Regions => (_settings.TerminalBackdrop, true, false),
+            BackgroundMode.LiveWallpaper => (_settings.WindowBackdrop, true, true),
+            _ => (new BackgroundLayer(), false, false),
+        };
+        PreviewBackdrop.Apply(layer, active, live);
+
+        // The terminal's own fill over the picture — its alpha is exactly what lets the picture
+        // (or desktop) read through in the real window.
+        PreviewFill.Background = new SolidColorBrush(
+            ThemeService.ParseColor(_settings.TerminalBackground, Colors.Black))
+        {
+            Opacity = Math.Clamp(_settings.TerminalOpacity, 0, 1),
+        };
 
         PreviewLines.Children.Clear();
 
@@ -261,6 +286,30 @@ public partial class SettingsPage : UserControl
                 Margin = new Thickness(0, 1, 0, 1),
             });
         }
+    }
+
+    /// <summary>
+    /// Feeds the live wallpaper into the preview when that mode is selected. The frames are the
+    /// window's own capture, relayed through <see cref="LiveWallpaperBroker"/>, and the whole
+    /// wallpaper is fitted into the small preview so it reads at a glance.
+    /// </summary>
+    private void OnPreviewFrame(WallpaperCapture.DesktopFrame frame)
+    {
+        if (_settings.BackgroundMode != BackgroundMode.LiveWallpaper)
+        {
+            return;
+        }
+
+        var screenWidth = SystemParameters.PrimaryScreenWidth;
+        var scale = screenWidth > 1 ? frame.Width / screenWidth : 1;
+
+        PreviewBackdrop.PushFrame(frame.Pixels, frame.Width, frame.Height, frame.Stride, scale);
+        PreviewBackdrop.SetLiveLayout(
+            aligned: false,
+            offsetX: 0,
+            offsetY: 0,
+            fitStretch: Stretch.UniformToFill,
+            crop: new Thickness(0));
     }
 
     // ================= handlers =================
@@ -335,6 +384,24 @@ public partial class SettingsPage : UserControl
         if (!_loading)
         {
             _settings.Language = LangRu.IsChecked == true ? AppLanguage.Russian : AppLanguage.English;
+        }
+    }
+
+    /// <summary>Opens the colour picker under a terminal / ANSI / app swatch.</summary>
+    private void Swatch_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: ColorEntry entry })
+        {
+            Controls.ColorPickerPopup.Show((UIElement)sender, entry.Hex, hex => entry.Hex = hex);
+        }
+    }
+
+    /// <summary>Opens the colour picker under a background-layer overlay-tint swatch.</summary>
+    private void OverlaySwatch_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: BackdropEntry entry })
+        {
+            Controls.ColorPickerPopup.Show((UIElement)sender, entry.OverlayColor, hex => entry.OverlayColor = hex);
         }
     }
 

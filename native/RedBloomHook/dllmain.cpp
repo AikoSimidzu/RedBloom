@@ -12,6 +12,16 @@
 // The one place the wallpaper exists on its own is inside Wallpaper Engine's swap chain,
 // before the desktop is composed. So we sit in that process and copy the back buffer as it
 // is presented. This is the same mechanism OBS uses for game capture.
+//
+// Keeping Wallpaper Engine responsive: the earlier version did the downscale and the CPU
+// read-back on Wallpaper Engine's own render thread, inside Present. That loaded its render
+// thread and its GPU queue, and under load stalled it - which showed up as explorer.exe
+// hanging cross-process on wallpaper64.exe. This version does almost nothing on that thread:
+// it copies the back buffer into one shared texture, guarded by a keyed mutex, and returns.
+// A second D3D device we own, driven by our own thread, opens that shared texture and does
+// all the mip downscale, the staging copy and the (now freely blocking) Map. Wallpaper
+// Engine's thread pays for one GPU copy and two keyed-mutex calls per captured frame and
+// nothing else.
 
 #include <windows.h>
 #include <d3d11.h>
@@ -109,22 +119,7 @@ namespace
         return true;
     }
 
-    // ---- capture ----
-
-    ID3D11Texture2D* g_mipTexture = nullptr;
-    ID3D11ShaderResourceView* g_mipView = nullptr;
-    ID3D11Texture2D* g_staging = nullptr;
-    D3D11_TEXTURE2D_DESC g_sourceDesc = {};
-    UINT g_mipLevel = 0;
-    ULONGLONG g_lastCopyMs = 0;
-
-    void ReleaseTextures()
-    {
-        if (g_mipView) { g_mipView->Release(); g_mipView = nullptr; }
-        if (g_mipTexture) { g_mipTexture->Release(); g_mipTexture = nullptr; }
-        if (g_staging) { g_staging->Release(); g_staging = nullptr; }
-        g_sourceDesc = {};
-    }
+    void Publish(const D3D11_MAPPED_SUBRESOURCE& mapped, UINT width, UINT height, DXGI_FORMAT format);
 
     /// <summary>Strips the sRGB variant, which cannot be used for a shader resource view here.</summary>
     DXGI_FORMAT ViewFormat(DXGI_FORMAT format)
@@ -150,56 +145,179 @@ namespace
         }
     }
 
-    bool EnsureTextures(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& source)
+    // ---- our own device (does the heavy lifting, off Wallpaper Engine's thread) ----
+
+    ID3D11Device* g_ownDevice = nullptr;
+    ID3D11DeviceContext* g_ownContext = nullptr;
+
+    // The one texture Wallpaper Engine's thread writes; the same surface, opened on our device,
+    // is what our thread reads. A keyed mutex hands it back and forth so the two GPUs' work
+    // never overlaps on it.
+    ID3D11Texture2D* g_sharedWrite = nullptr;   // on Wallpaper Engine's device
+    IDXGIKeyedMutex* g_writeMutex = nullptr;
+    ID3D11Texture2D* g_sharedRead = nullptr;    // same surface, on our device
+    IDXGIKeyedMutex* g_readMutex = nullptr;
+
+    // Our downscale chain, entirely on our own device.
+    ID3D11Texture2D* g_mipTexture = nullptr;
+    ID3D11ShaderResourceView* g_mipView = nullptr;
+    ID3D11Texture2D* g_staging = nullptr;
+    UINT g_mipLevel = 0;
+
+    // What the shared surface is currently built for, so it is only rebuilt on a real change.
+    ID3D11Device* g_builtForDevice = nullptr;
+    UINT g_builtWidth = 0;
+    UINT g_builtHeight = 0;
+    DXGI_FORMAT g_builtFormat = DXGI_FORMAT_UNKNOWN;
+
+    ULONGLONG g_lastCopyMs = 0;
+
+    // Serialises the rare rebuild against the reader thread. The present thread only ever
+    // *tries* to take it, so Wallpaper Engine never waits on us.
+    CRITICAL_SECTION g_lock;
+    bool g_lockReady = false;
+
+    void ReleaseSharedTextures()
     {
-        if (g_staging != nullptr
-            && source.Width == g_sourceDesc.Width
-            && source.Height == g_sourceDesc.Height
-            && source.Format == g_sourceDesc.Format)
+        if (g_mipView) { g_mipView->Release(); g_mipView = nullptr; }
+        if (g_mipTexture) { g_mipTexture->Release(); g_mipTexture = nullptr; }
+        if (g_staging) { g_staging->Release(); g_staging = nullptr; }
+        if (g_readMutex) { g_readMutex->Release(); g_readMutex = nullptr; }
+        if (g_sharedRead) { g_sharedRead->Release(); g_sharedRead = nullptr; }
+        if (g_writeMutex) { g_writeMutex->Release(); g_writeMutex = nullptr; }
+        if (g_sharedWrite) { g_sharedWrite->Release(); g_sharedWrite = nullptr; }
+
+        g_builtForDevice = nullptr;
+        g_builtWidth = 0;
+        g_builtHeight = 0;
+        g_builtFormat = DXGI_FORMAT_UNKNOWN;
+    }
+
+    bool CreateOwnDevice()
+    {
+        if (g_ownDevice != nullptr)
         {
             return true;
         }
 
-        ReleaseTextures();
-        g_sourceDesc = source;
+        // BGRA support so a B8G8R8A8 swap chain (the common one) can be handled; the adapter is
+        // left to DXGI, which picks the same default one Wallpaper Engine renders on, so the
+        // shared surface opens.
+        const D3D_FEATURE_LEVEL wanted[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
+        const HRESULT hr = D3D11CreateDevice(
+            nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            wanted, ARRAYSIZE(wanted), D3D11_SDK_VERSION, &g_ownDevice, nullptr, &g_ownContext);
 
-        // Downscale by picking a mip rather than running a shader: no pipeline state to save
-        // and restore, which matters when the render loop belongs to somebody else.
+        Log("own device hr=0x%08X device=%p", hr, g_ownDevice);
+        return SUCCEEDED(hr) && g_ownDevice != nullptr;
+    }
+
+    /// <summary>
+    /// Builds (or rebuilds) the shared surface and our downscale chain for one back-buffer
+    /// shape. Runs on Wallpaper Engine's thread but only on a real change, which is rare, and
+    /// under the lock so the reader never sees a half-swapped set of textures.
+    /// </summary>
+    bool EnsureSharedTextures(ID3D11Device* weDevice, const D3D11_TEXTURE2D_DESC& back)
+    {
+        const DXGI_FORMAT viewFormat = ViewFormat(back.Format);
+
+        if (g_sharedWrite != nullptr
+            && weDevice == g_builtForDevice
+            && back.Width == g_builtWidth
+            && back.Height == g_builtHeight
+            && viewFormat == g_builtFormat)
+        {
+            return true;
+        }
+
+        ReleaseSharedTextures();
+
+        if (!CreateOwnDevice())
+        {
+            return false;
+        }
+
+        // The shared surface, created on Wallpaper Engine's device with a keyed mutex so our
+        // device can open and synchronise with it.
+        D3D11_TEXTURE2D_DESC shared = {};
+        shared.Width = back.Width;
+        shared.Height = back.Height;
+        shared.MipLevels = 1;
+        shared.ArraySize = 1;
+        shared.Format = viewFormat;
+        shared.SampleDesc.Count = 1;
+        shared.Usage = D3D11_USAGE_DEFAULT;
+        shared.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        shared.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+
+        if (FAILED(weDevice->CreateTexture2D(&shared, nullptr, &g_sharedWrite)))
+        {
+            Log("CreateTexture2D(shared) failed");
+            ReleaseSharedTextures();
+            return false;
+        }
+
+        // Hand the surface to our device by its shared handle.
+        IDXGIResource* resource = nullptr;
+        HANDLE handle = nullptr;
+        if (SUCCEEDED(g_sharedWrite->QueryInterface(__uuidof(IDXGIResource), reinterpret_cast<void**>(&resource))))
+        {
+            resource->GetSharedHandle(&handle);
+            resource->Release();
+        }
+
+        if (handle == nullptr
+            || FAILED(g_ownDevice->OpenSharedResource(handle, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&g_sharedRead))))
+        {
+            Log("OpenSharedResource failed (handle=%p)", handle);
+            ReleaseSharedTextures();
+            return false;
+        }
+
+        if (FAILED(g_sharedWrite->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void**>(&g_writeMutex)))
+            || FAILED(g_sharedRead->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void**>(&g_readMutex))))
+        {
+            Log("keyed mutex query failed");
+            ReleaseSharedTextures();
+            return false;
+        }
+
+        // Our downscale chain: a mip texture we generate down, then a staging copy to read.
         g_mipLevel = 0;
-        while ((source.Width >> g_mipLevel) > REDBLOOM_MAX_WIDTH
-               || (source.Height >> g_mipLevel) > REDBLOOM_MAX_HEIGHT)
+        while ((back.Width >> g_mipLevel) > REDBLOOM_MAX_WIDTH
+               || (back.Height >> g_mipLevel) > REDBLOOM_MAX_HEIGHT)
         {
             g_mipLevel++;
         }
 
-        const UINT width = max(1u, source.Width >> g_mipLevel);
-        const UINT height = max(1u, source.Height >> g_mipLevel);
+        const UINT width = max(1u, back.Width >> g_mipLevel);
+        const UINT height = max(1u, back.Height >> g_mipLevel);
 
         D3D11_TEXTURE2D_DESC mip = {};
-        mip.Width = source.Width;
-        mip.Height = source.Height;
+        mip.Width = back.Width;
+        mip.Height = back.Height;
         mip.MipLevels = g_mipLevel + 1;
         mip.ArraySize = 1;
-        mip.Format = ViewFormat(source.Format);
+        mip.Format = viewFormat;
         mip.SampleDesc.Count = 1;
         mip.Usage = D3D11_USAGE_DEFAULT;
         mip.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
         mip.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 
-        if (FAILED(device->CreateTexture2D(&mip, nullptr, &g_mipTexture)))
+        if (FAILED(g_ownDevice->CreateTexture2D(&mip, nullptr, &g_mipTexture)))
         {
-            ReleaseTextures();
+            ReleaseSharedTextures();
             return false;
         }
 
         D3D11_SHADER_RESOURCE_VIEW_DESC view = {};
-        view.Format = mip.Format;
+        view.Format = viewFormat;
         view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         view.Texture2D.MipLevels = mip.MipLevels;
 
-        if (FAILED(device->CreateShaderResourceView(g_mipTexture, &view, &g_mipView)))
+        if (FAILED(g_ownDevice->CreateShaderResourceView(g_mipTexture, &view, &g_mipView)))
         {
-            ReleaseTextures();
+            ReleaseSharedTextures();
             return false;
         }
 
@@ -208,17 +326,22 @@ namespace
         staging.Height = height;
         staging.MipLevels = 1;
         staging.ArraySize = 1;
-        staging.Format = mip.Format;
+        staging.Format = viewFormat;
         staging.SampleDesc.Count = 1;
         staging.Usage = D3D11_USAGE_STAGING;
         staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 
-        if (FAILED(device->CreateTexture2D(&staging, nullptr, &g_staging)))
+        if (FAILED(g_ownDevice->CreateTexture2D(&staging, nullptr, &g_staging)))
         {
-            ReleaseTextures();
+            ReleaseSharedTextures();
             return false;
         }
 
+        g_builtForDevice = weDevice;
+        g_builtWidth = back.Width;
+        g_builtHeight = back.Height;
+        g_builtFormat = viewFormat;
+        Log("shared surface built %ux%u mip=%u -> %ux%u", back.Width, back.Height, g_mipLevel, width, height);
         return true;
     }
 
@@ -266,9 +389,11 @@ namespace
         return wcscmp(className, L"WPEDesktopDX11Window") == 0;
     }
 
+    // ---- the tiny part that runs on Wallpaper Engine's thread ----
+
     void Capture(IDXGISwapChain* swapChain)
     {
-        if (!OpenSharedMemory())
+        if (!g_lockReady || !OpenSharedMemory())
         {
             return;
         }
@@ -294,50 +419,132 @@ namespace
             return;
         }
 
-        ID3D11Texture2D* backBuffer = nullptr;
-        if (FAILED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer))))
+        // Never wait on the reader. If it is mid-frame, skip this present - Wallpaper Engine's
+        // render thread must not block on us, which is the whole point of this rewrite.
+        if (!TryEnterCriticalSection(&g_lock))
         {
             return;
         }
 
-        D3D11_TEXTURE2D_DESC desc = {};
-        backBuffer->GetDesc(&desc);
-
-        ID3D11Device* device = nullptr;
-        backBuffer->GetDevice(&device);
-
-        ID3D11DeviceContext* context = nullptr;
-        if (device != nullptr)
+        __try
         {
-            device->GetImmediateContext(&context);
+            ID3D11Device* device = nullptr;
+            ID3D11DeviceContext* context = nullptr;
+            swapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device));
+            if (device != nullptr)
+            {
+                device->GetImmediateContext(&context);
+            }
+
+            if (device == nullptr || context == nullptr)
+            {
+                if (context) context->Release();
+                if (device) device->Release();
+                __leave;
+            }
+
+            ID3D11Texture2D* backBuffer = nullptr;
+            if (SUCCEEDED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer))))
+            {
+                D3D11_TEXTURE2D_DESC desc = {};
+                backBuffer->GetDesc(&desc);
+
+                if (desc.SampleDesc.Count == 1 && IsSupported(desc.Format) && EnsureSharedTextures(device, desc))
+                {
+                    // Take the surface with key 0. If the reader still holds it (key 1), skip -
+                    // we will get the next present.
+                    if (g_writeMutex->AcquireSync(0, 0) == WAIT_OBJECT_0)
+                    {
+                        context->CopyResource(g_sharedWrite, backBuffer);
+                        g_writeMutex->ReleaseSync(1); // hand to the reader
+                        g_lastCopyMs = now;
+                    }
+                }
+
+                backBuffer->Release();
+            }
+
+            context->Release();
+            device->Release();
+        }
+        __finally
+        {
+            LeaveCriticalSection(&g_lock);
+        }
+    }
+
+    // ---- the reader thread: everything heavy, on our own device ----
+
+    volatile bool g_readerRunning = false;
+
+    void ReadOneFrame()
+    {
+        if (!TryEnterCriticalSection(&g_lock))
+        {
+            return;
         }
 
-        if (device != nullptr && context != nullptr && desc.SampleDesc.Count == 1 && IsSupported(desc.Format)
-            && EnsureTextures(device, desc))
+        __try
         {
-            context->CopySubresourceRegion(g_mipTexture, 0, 0, 0, 0, backBuffer, 0, nullptr);
+            if (g_readMutex == nullptr || g_sharedRead == nullptr || g_ownContext == nullptr)
+            {
+                __leave;
+            }
+
+            // Take the surface only if the writer has handed it over (key 1). Non-blocking, so a
+            // stretch with no new frame just falls through and the loop sleeps.
+            if (g_readMutex->AcquireSync(1, 0) != WAIT_OBJECT_0)
+            {
+                __leave;
+            }
+
+            // Copy the shared surface into our own mip texture, then let the writer have the
+            // surface straight back - everything past here is on textures we own alone.
+            g_ownContext->CopySubresourceRegion(g_mipTexture, 0, 0, 0, 0, g_sharedRead, 0, nullptr);
+            g_readMutex->ReleaseSync(0);
 
             if (g_mipLevel > 0)
             {
-                context->GenerateMips(g_mipView);
+                g_ownContext->GenerateMips(g_mipView);
             }
 
-            context->CopySubresourceRegion(g_staging, 0, 0, 0, 0, g_mipTexture, g_mipLevel, nullptr);
+            g_ownContext->CopySubresourceRegion(g_staging, 0, 0, 0, 0, g_mipTexture, g_mipLevel, nullptr);
 
+            // Blocking Map is fine now: it is our device and our thread, so no one else waits.
             D3D11_MAPPED_SUBRESOURCE mapped = {};
-            if (SUCCEEDED(context->Map(g_staging, 0, D3D11_MAP_READ, 0, &mapped)))
+            if (SUCCEEDED(g_ownContext->Map(g_staging, 0, D3D11_MAP_READ, 0, &mapped)))
             {
                 D3D11_TEXTURE2D_DESC stagingDesc = {};
                 g_staging->GetDesc(&stagingDesc);
-                Publish(mapped, stagingDesc.Width, stagingDesc.Height, desc.Format);
-                context->Unmap(g_staging, 0);
-                g_lastCopyMs = now;
+                Publish(mapped, stagingDesc.Width, stagingDesc.Height, stagingDesc.Format);
+                g_ownContext->Unmap(g_staging, 0);
             }
         }
+        __finally
+        {
+            LeaveCriticalSection(&g_lock);
+        }
+    }
 
-        if (context) context->Release();
-        if (device) device->Release();
-        backBuffer->Release();
+    DWORD WINAPI ReaderThread(LPVOID)
+    {
+        Log("reader thread running");
+        while (g_readerRunning)
+        {
+            __try
+            {
+                ReadOneFrame();
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                Log("reader EXCEPTION 0x%08X - swallowed", GetExceptionCode());
+            }
+
+            // Idle politely; the writer's interval throttles the real rate anyway.
+            const uint32_t interval = (g_header && g_header->IntervalMs) ? g_header->IntervalMs : 33;
+            Sleep(max(5u, interval / 2));
+        }
+        return 0;
     }
 
     // ---- vtable hook ----
@@ -521,8 +728,17 @@ namespace
     {
         Log("startup thread running");
 
+        InitializeCriticalSection(&g_lock);
+        g_lockReady = true;
+
         const bool shared = OpenSharedMemory();
         Log("shared memory: %d", shared ? 1 : 0);
+
+        // Our own device and the reader thread come up before the hook, so the first captured
+        // present already has somewhere to hand its copy.
+        CreateOwnDevice();
+        g_readerRunning = true;
+        CloseHandle(CreateThread(nullptr, 0, ReaderThread, nullptr, 0, nullptr));
 
         SafeInstallHook();
         return 0;
@@ -542,6 +758,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         break;
 
     case DLL_PROCESS_DETACH:
+        // Stop the reader before anything it touches goes away.
+        g_readerRunning = false;
+
         if (g_vtable != nullptr && g_originalPresent != nullptr)
         {
             void* discard = nullptr;

@@ -8,6 +8,7 @@
         Title="SSH session"
         Width="420"
         SizeToContent="Height"
+        MaxHeight="540"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="NoResize"
@@ -65,8 +66,12 @@
                 </StackPanel>
             </Grid>
 
-            <!-- fields -->
-            <StackPanel Grid.Row="1" Margin="20,14,20,0">
+            <!-- fields — scrollable so the whole form stays a sensible height -->
+            <ScrollViewer Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="0,0,4,0">
+            <StackPanel Margin="20,14,16,0">
 
                 <TextBlock Text="{DynamicResource L_FieldName}" Style="{StaticResource FieldLabel}" />
                 <TextBox x:Name="NameBox" />
@@ -219,6 +224,8 @@
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_CardColor}" Style="{StaticResource FieldLabel}"
                                    VerticalAlignment="Center" Margin="0" />
                         <Border Grid.Column="1" Width="28" Height="24" CornerRadius="5"
+                                Cursor="Hand"
+                                MouseLeftButtonUp="CardSwatch_Click"
                                 Background="{Binding Color, Converter={StaticResource HexToBrush}}"
                                 BorderBrush="{DynamicResource Divider}" BorderThickness="1" />
                         <TextBox Grid.Column="3"
@@ -274,6 +281,7 @@
                            Margin="1,12,0,0"
                            Visibility="Collapsed" />
             </StackPanel>
+            </ScrollViewer>
 
             <!-- footer -->
             <StackPanel Grid.Row="2"
