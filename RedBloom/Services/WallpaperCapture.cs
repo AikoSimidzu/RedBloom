@@ -43,6 +43,12 @@ public sealed class WallpaperCapture : IDisposable
     /// would tie the visible region to the capture rate, so dragging the window would drag a
     /// stale background behind it. Whoever displays it picks the region instead, which costs
     /// nothing and tracks the window exactly.
+    /// <para>
+    /// <see cref="Pixels"/> belongs to the capture source, not to the handler: it is one of a
+    /// couple of buffers in rotation and is rewritten in place a frame or two later. A handler
+    /// that wants to keep the picture — to draw it on another thread, say — must copy it before
+    /// returning, or it will end up drawing a half-rewritten one.
+    /// </para>
     /// </remarks>
     public readonly record struct DesktopFrame(
         byte[] Pixels,

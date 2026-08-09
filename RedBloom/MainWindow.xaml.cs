@@ -988,9 +988,72 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void OnWallpaperFrame(WallpaperCapture.DesktopFrame frame) =>
-        Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+    // The newest frame, copied out of the capture source's own buffer, plus the gate that keeps
+    // the capture thread and the UI thread off it at the same time.
+    private readonly object _frameGate = new();
+    private byte[]? _framePixels;
+    private WallpaperCapture.DesktopFrame _frame;
+    private bool _framePosted;
+
+    /// <summary>
+    /// Takes one captured frame, on the capture thread, and asks the UI thread to draw it.
+    /// </summary>
+    /// <remarks>
+    /// The frame is copied here rather than handed on as it stands, because a capture source's
+    /// buffer only belongs to the handler for the length of the call: both sources rotate two
+    /// buffers and rewrite each one a frame or two later, and the engine source additionally
+    /// swaps red and blue in place over it, since Wallpaper Engine presents RGBA. Drawing that
+    /// buffer later — which is what posting it to the dispatcher did — meant the UI thread read
+    /// it while the capture thread was rewriting and re-swizzling it, so part of the picture
+    /// came out with red and blue exchanged: the blue flicker over the live wallpaper. At the
+    /// top of the frame-rate range the two threads overlapped nearly every frame.
+    /// </remarks>
+    private void OnWallpaperFrame(WallpaperCapture.DesktopFrame frame)
+    {
+        bool post;
+
+        lock (_frameGate)
         {
+            var length = frame.Stride * frame.Height;
+            if (length <= 0 || length > frame.Pixels.Length)
+            {
+                return;
+            }
+
+            if (_framePixels is null || _framePixels.Length != length)
+            {
+                _framePixels = new byte[length];
+            }
+
+            Buffer.BlockCopy(frame.Pixels, 0, _framePixels, 0, length);
+            _frame = frame with { Pixels = _framePixels };
+
+            // One pending draw at a time. Capture can outrun the UI thread, and at the top of the
+            // frame-rate range it does, so queueing an operation per frame would only build a
+            // backlog of stale pictures in front of whatever the user is actually waiting on.
+            post = !_framePosted;
+            _framePosted = true;
+        }
+
+        if (post)
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, DrawLatestFrame);
+        }
+    }
+
+    /// <summary>Draws the newest frame received since the last time this ran.</summary>
+    private void DrawLatestFrame()
+    {
+        lock (_frameGate)
+        {
+            _framePosted = false;
+
+            if (_framePixels is null)
+            {
+                return;
+            }
+
+            var frame = _frame;
             _desktopOriginX = frame.OriginX;
             _desktopOriginY = frame.OriginY;
 
@@ -1001,11 +1064,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _frameScale = screenWidth > 1 ? frame.Width / screenWidth : 1;
 
             WindowBackdrop.PushFrame(frame.Pixels, frame.Width, frame.Height, frame.Stride, _frameScale);
-            UpdateLiveLayout();
 
             // The settings preview, if open, draws the same frame — no second capture needed.
+            // Inside the gate as well: it reads the same buffer.
             LiveWallpaperBroker.Publish(frame);
-        });
+        }
+
+        UpdateLiveLayout();
+    }
 
     // ================= sidebar =================
 

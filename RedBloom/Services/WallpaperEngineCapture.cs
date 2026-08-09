@@ -179,8 +179,11 @@ public sealed class WallpaperEngineCapture : IDisposable
         view.ReadArray(HeaderBytes + latest * BufferBytes, buffer, 0, length);
 
         // The surface hands us BGRA (0) or RGBA (1); the bitmap on the far side is BGRA, so an
-        // RGBA frame has its red and blue swapped back here rather than inside someone else's
-        // render loop.
+        // RGBA frame — which is what Wallpaper Engine presents — has its red and blue swapped
+        // back here rather than inside someone else's render loop. In place, so this buffer is
+        // briefly half swizzled: anything that reads it outside the handler below sees those
+        // rows with red and blue exchanged, which is why the frame is only on loan for the
+        // length of the call (see WallpaperCapture.DesktopFrame).
         if (channels == 1)
         {
             for (var i = 0; i + 2 < length; i += 4)
