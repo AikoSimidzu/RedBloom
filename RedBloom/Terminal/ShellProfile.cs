@@ -18,6 +18,16 @@ public sealed class ShellProfile
     public string BuildCommandLine() =>
         string.IsNullOrWhiteSpace(Arguments) ? $"\"{Executable}\"" : $"\"{Executable}\" {Arguments}";
 
+    /// <summary>A copy of this profile that starts in a particular folder.</summary>
+    public ShellProfile WithStartingDirectory(string directory) => new()
+    {
+        Name = Name,
+        Executable = Executable,
+        Arguments = Arguments,
+        StartingDirectory = directory,
+        Glyph = Glyph,
+    };
+
     /// <summary>
     /// Enumerates the shells actually present on this machine. Command Prompt comes first
     /// because it is the default for a plain new tab.

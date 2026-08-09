@@ -31,12 +31,17 @@
             <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="VerticalAlignment" Value="Center" />
+            <!-- Longer Russian labels ellipsize instead of sliding under the next control. -->
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         </Style>
 
-        <!-- swatch + hex field, used for every colour on the page -->
+        <!-- swatch + hex field, used for every colour on the page. The label column is wide
+             enough for the longer Russian names, which used to slide under the swatch. -->
         <DataTemplate x:Key="ColorRow">
-            <Grid Margin="0,0,0,7" ColumnDefinitions="150,Auto,10,110">
-                <TextBlock Grid.Column="0" Text="{Binding Label}" Style="{StaticResource RowLabel}" />
+            <Grid Margin="0,0,0,7" ColumnDefinitions="210,Auto,10,110">
+                <TextBlock Grid.Column="0" Text="{Binding Label}"
+                           TextTrimming="CharacterEllipsis"
+                           Style="{StaticResource RowLabel}" />
                 <Border Grid.Column="1"
                         Width="30" Height="26"
                         CornerRadius="5"
@@ -90,6 +95,15 @@
                     <RadioButton x:Name="LangRu" Style="{StaticResource SegmentedRadio}"
                                  Content="Русский" Checked="Language_Changed" />
                 </StackPanel>
+
+                <!-- ============ integration ============ -->
+                <TextBlock Text="{DynamicResource L_Integration}" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_IntegrationNote}" Style="{StaticResource SectionNote}" />
+                <CheckBox x:Name="ShellIntegrationBox"
+                          Content="{DynamicResource L_OpenHereToggle}"
+                          Margin="0,0,0,20"
+                          Checked="ShellIntegration_Changed"
+                          Unchecked="ShellIntegration_Changed" />
 
                 <!-- ============ terminal text ============ -->
                 <TextBlock Text="{DynamicResource L_TerminalText}" Style="{StaticResource SectionTitle}" />
@@ -357,20 +371,41 @@
 
                 <ItemsControl x:Name="AppColors" ItemTemplate="{StaticResource ColorRow}" />
 
-                <!-- ============ preview ============ -->
-                <TextBlock Text="{DynamicResource L_Preview}" Style="{StaticResource SectionTitle}" Margin="0,22,0,3" />
-                <TextBlock Text="{DynamicResource L_PreviewNote}"
-                           Style="{StaticResource SectionNote}" />
+                <!-- Room at the bottom so the floating preview never sits over the last rows. -->
+                <Border Height="150" Background="Transparent" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ============ floating preview ============ -->
+        <!-- Pinned bottom-right, over the scrolling settings, so the palette can be judged
+             against the terminal while any control is in reach. Click-through, so it never
+             blocks the settings underneath it. -->
+        <Border Grid.Row="1"
+                x:Name="FloatingPreview"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,28,24"
+                MaxWidth="360"
+                IsHitTestVisible="False"
+                Background="{DynamicResource Chrome}"
+                BorderBrush="{DynamicResource Divider}"
+                BorderThickness="1"
+                CornerRadius="9"
+                Padding="14,12">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="22" ShadowDepth="5" Opacity="0.5" Color="Black" />
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="{DynamicResource L_Preview}" Style="{StaticResource SectionTitle}" Margin="0,0,0,8" />
                 <Border x:Name="PreviewSurface"
                         CornerRadius="7"
                         BorderBrush="{DynamicResource Divider}"
                         BorderThickness="1"
-                        Padding="16,13"
-                        Margin="0,0,0,10">
+                        Padding="14,11">
                     <StackPanel x:Name="PreviewLines" />
                 </Border>
             </StackPanel>
-        </ScrollViewer>
+        </Border>
     </Grid>
 </UserControl>
 

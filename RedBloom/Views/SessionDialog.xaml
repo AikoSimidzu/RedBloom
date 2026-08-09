@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:RedBloom"
         mc:Ignorable="d"
         Title="SSH session"
         Width="420"
@@ -18,6 +19,7 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <local:HexToBrushConverter x:Key="HexToBrush" />
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
             <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
@@ -209,6 +211,60 @@
                            FontSize="10.5"
                            TextWrapping="Wrap"
                            Margin="25,5,0,0" />
+
+                <!-- tab card look; bound to the draft session's TabCard in code -->
+                <TextBlock Text="{DynamicResource L_TabCard}" Style="{StaticResource FieldLabel}" Margin="0,18,0,7" />
+                <StackPanel x:Name="CardPanel">
+                    <Grid ColumnDefinitions="90,Auto,10,*,6,Auto" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_CardColor}" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Center" Margin="0" />
+                        <Border Grid.Column="1" Width="28" Height="24" CornerRadius="5"
+                                Background="{Binding Color, Converter={StaticResource HexToBrush}}"
+                                BorderBrush="{DynamicResource Divider}" BorderThickness="1" />
+                        <TextBox Grid.Column="3"
+                                 Text="{Binding Color, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 FontFamily="Cascadia Mono, Consolas, monospace" FontSize="11.5" Padding="7,4" />
+                        <TextBox Grid.Column="5" x:Name="CardGlyphBox" Width="52"
+                                 Text="{Binding Glyph, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 FontFamily="{StaticResource IconFont}" FontSize="12" Padding="6,4"
+                                 ToolTip="{DynamicResource L_CardIcon}" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="90,*,10,50" Margin="0,0,0,6">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_CardOpacity}" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Center" Margin="0" />
+                        <Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding Opacity, Mode=TwoWay}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="3" Text="{Binding Opacity, StringFormat={}{0:P0}}" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Center" Margin="0" />
+                    </Grid>
+                    <Grid ColumnDefinitions="90,*,10,50" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_CardBlur}" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Center" Margin="0" />
+                        <Slider Grid.Column="1" Minimum="0" Maximum="60" Value="{Binding Blur, Mode=TwoWay}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="3" Text="{Binding Blur, StringFormat={}{0:0}}" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Center" Margin="0" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="*,8,Auto,6,Auto" Margin="0,0,0,7">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding ImagePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 FontSize="11.5" Padding="7,5" />
+                        <Button Grid.Column="2" Style="{StaticResource GhostButton}"
+                                Content="{DynamicResource L_Browse}" Padding="12,6" Click="BrowseCardImage_Click" />
+                        <Button Grid.Column="4" Style="{StaticResource GhostButton}"
+                                Content="{DynamicResource L_Clear}" Padding="12,6" Click="ClearCardImage_Click" />
+                    </Grid>
+                    <Grid ColumnDefinitions="90,180">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_Fit}" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Center" Margin="0" />
+                        <ComboBox Grid.Column="1" x:Name="CardFitBox" SelectionChanged="CardFit_Changed">
+                            <ComboBoxItem Content="{DynamicResource L_FitFillCrop}" />
+                            <ComboBoxItem Content="{DynamicResource L_FitInside}" />
+                            <ComboBoxItem Content="{DynamicResource L_FitStretch}" />
+                            <ComboBoxItem Content="{DynamicResource L_FitOriginal}" />
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
 
                 <TextBlock x:Name="ErrorText"
                            Foreground="{DynamicResource Accent}"

@@ -218,6 +218,38 @@
             </Setter>
         </Style>
 
+        <!-- ==== themed tooltip ==== -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+            <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Background" Value="{DynamicResource Chrome}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Divider}" />
+            <!-- Off, so the system popup shadow does not stack with the one drawn below. -->
+            <Setter Property="HasDropShadow" Value="False" />
+            <Setter Property="Placement" Value="Bottom" />
+            <Setter Property="VerticalOffset" Value="2" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Padding="9,5"
+                                Margin="4">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.45" Color="Black" />
+                            </Border.Effect>
+                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"
+                                              TextElement.FontFamily="{TemplateBinding FontFamily}"
+                                              TextElement.FontSize="{TemplateBinding FontSize}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- ==== compact dark combo box ==== -->
         <Style TargetType="ComboBoxItem">
             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />

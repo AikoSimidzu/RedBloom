@@ -221,6 +221,26 @@
           send(event.shiftKey ? "kP" : "kN");
           return false;
         }
+
+        // Split panes, handled by the host. Ctrl+Alt+A/D adds another shell on the same SSH
+        // connection; Ctrl+Shift+A/D opens — or closes — a new session neighbour. A goes to
+        // the left, D to the right.
+        if (event.ctrlKey && event.altKey && !event.shiftKey && event.code === "KeyA") {
+          send("ka");
+          return false;
+        }
+        if (event.ctrlKey && event.altKey && !event.shiftKey && event.code === "KeyD") {
+          send("kd");
+          return false;
+        }
+        if (ctrl && event.shiftKey && event.code === "KeyA") {
+          send("kA");
+          return false;
+        }
+        if (ctrl && event.shiftKey && event.code === "KeyD") {
+          send("kD");
+          return false;
+        }
         // Ctrl+<letter> is turned into its control byte here rather than left to xterm.
         // xterm derives that byte from event.keyCode, which is not dependable once a
         // non-Latin keyboard layout is active — on a Russian layout Ctrl+C could end up

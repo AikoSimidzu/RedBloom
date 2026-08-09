@@ -87,6 +87,12 @@ public sealed class TerminalView : UserControl, IDisposable
 
     public bool IsConnected => _backend?.IsRunning == true;
 
+    /// <summary>
+    /// The live SSH connection behind this terminal, or null for a local shell or a session
+    /// that is not up. A split can open another shell on it without logging in again.
+    /// </summary>
+    public SshConnection? SshConnection => (_backend as SshBackend)?.Connection;
+
     /// <summary>Reopen the session by itself when the far end drops it.</summary>
     public bool AutoReconnect { get; set; }
 

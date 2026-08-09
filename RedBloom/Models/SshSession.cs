@@ -78,6 +78,9 @@ public sealed class SshSession : INotifyPropertyChanged
     /// </summary>
     public bool AutoReconnect { get; set; }
 
+    /// <summary>How this session's tab looks: colour, translucency, blur, picture and icon.</summary>
+    public TabCardStyle TabCard { get; set; } = new();
+
     [JsonIgnore]
     public bool UsesPassword => AuthKind == SshAuthKind.Password;
 
@@ -119,6 +122,7 @@ public sealed class SshSession : INotifyPropertyChanged
         ProtectedSecret = ProtectedSecret,
         Forwards = Forwards.Select(f => f.Clone()).ToList(),
         AutoReconnect = AutoReconnect,
+        TabCard = TabCard.Clone(),
     };
 
     public void CopyFrom(SshSession other)
@@ -132,6 +136,7 @@ public sealed class SshSession : INotifyPropertyChanged
         ProtectedSecret = other.ProtectedSecret;
         Forwards = other.Forwards.Select(f => f.Clone()).ToList();
         AutoReconnect = other.AutoReconnect;
+        TabCard.CopyFrom(other.TabCard);
         OnPropertyChanged(nameof(DisplayTarget));
         OnPropertyChanged(nameof(ForwardSummary));
     }

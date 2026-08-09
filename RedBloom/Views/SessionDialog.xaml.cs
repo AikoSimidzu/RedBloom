@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using Microsoft.Win32;
 using RedBloom.Models;
@@ -45,8 +46,48 @@ public partial class SessionDialog : Window
             PasswordField.Password = session.Secret ?? string.Empty;
         }
 
+        // The card controls bind straight to the draft's TabCard; a Cancel discards the draft.
+        CardPanel.DataContext = session.TabCard;
+        CardFitBox.SelectedIndex = session.TabCard.Stretch switch
+        {
+            "Uniform" => 1,
+            "Fill" => 2,
+            "None" => 3,
+            _ => 0,
+        };
+
         Loaded += (_, _) => NameBox.Focus();
     }
+
+    private void CardFit_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        _session.TabCard.Stretch = CardFitBox.SelectedIndex switch
+        {
+            1 => "Uniform",
+            2 => "Fill",
+            3 => "None",
+            _ => "UniformToFill",
+        };
+    }
+
+    private void BrowseCardImage_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = LocalizationService.T("L_CardImage"),
+            CheckFileExists = true,
+            Filter = "Images (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp"
+                     + "|All files (*.*)|*.*",
+        };
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            _session.TabCard.ImagePath = dialog.FileName;
+        }
+    }
+
+    private void ClearCardImage_Click(object sender, RoutedEventArgs e) =>
+        _session.TabCard.ImagePath = string.Empty;
 
     /// <summary>Shows the dialog and writes the edits back into <paramref name="session"/>.</summary>
     /// <returns><c>true</c> if the user saved.</returns>

@@ -198,6 +198,7 @@ public partial class SettingsPage : UserControl
         AlwaysOnTopBox.IsChecked = _settings.AlwaysOnTop;
         LangEn.IsChecked = _settings.Language == AppLanguage.English;
         LangRu.IsChecked = _settings.Language == AppLanguage.Russian;
+        ShellIntegrationBox.IsChecked = ShellIntegration.IsRegistered;
         FpsSlider.Value = _settings.WallpaperFps;
         FpsText.Text = string.Format(LocalizationService.T("L_Fps"), _settings.WallpaperFps);
         WpAligned.IsChecked = _settings.WallpaperDisplay == WallpaperDisplay.AlignedToDesktop;
@@ -334,6 +335,25 @@ public partial class SettingsPage : UserControl
         if (!_loading)
         {
             _settings.Language = LangRu.IsChecked == true ? AppLanguage.Russian : AppLanguage.English;
+        }
+    }
+
+    private void ShellIntegration_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        // A system registration, not an app setting, so it is applied straight away and not
+        // written to settings.json.
+        if (ShellIntegrationBox.IsChecked == true)
+        {
+            ShellIntegration.Register();
+        }
+        else
+        {
+            ShellIntegration.Unregister();
         }
     }
 

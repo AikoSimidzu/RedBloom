@@ -26,6 +26,7 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <local:HexToBrushConverter x:Key="HexToBrush" />
 
         <!-- ===== a tab in the strip ===== -->
         <DataTemplate x:Key="TabTemplate" DataType="{x:Type local:TerminalTab}">
@@ -33,19 +34,31 @@
                     Background="{DynamicResource TabBacking}"
                     CornerRadius="6,6,0,0"
                     Margin="0,4,2,0"
-                    Padding="10,0,6,0"
                     Height="32"
                     MinWidth="120"
                     MaxWidth="220"
+                    ClipToBounds="True"
                     MouseLeftButtonDown="Tab_MouseLeftButtonDown"
                     MouseDown="Tab_MouseDown"
+                    MouseRightButtonUp="Tab_RightClick"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True">
                 <Border.ToolTip>
                     <ToolTip Content="{Binding ToolTip}" />
                 </Border.ToolTip>
-                <Grid ColumnDefinitions="Auto,*,Auto">
+                <Grid>
+                    <!-- The card's own colour or picture, drawn behind the tab's label. Its blur
+                         and translucency are its own; when it is present the plate above steps
+                         aside (a trigger below) so this is what shows. -->
+                    <Border x:Name="CardOverlay"
+                            CornerRadius="6,6,0,0"
+                            Background="{Binding CardBackground}"
+                            Opacity="{Binding CardOpacity}"
+                            Effect="{Binding CardBlur}"
+                            Visibility="{Binding CardOverlayVisibility}" />
+
+                    <Grid ColumnDefinitions="Auto,*,Auto" Margin="10,0,6,0">
                     <TextBlock Grid.Column="0"
-                               Text="{Binding Glyph}"
+                               Text="{Binding CardGlyph}"
                                FontFamily="{StaticResource IconFont}"
                                FontSize="11"
                                Foreground="{DynamicResource TextFaint}"
@@ -69,6 +82,7 @@
                             Click="CloseTab_Click"
                             Tag="{Binding}"
                             ToolTip="{DynamicResource L_CloseTabTip}" />
+                    </Grid>
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
@@ -85,6 +99,11 @@
                 <DataTrigger Binding="{Binding HasEnded}" Value="True">
                     <Setter TargetName="TabTitle" Property="Foreground" Value="{DynamicResource TextFaint}" />
                     <Setter TargetName="TabTitle" Property="FontStyle" Value="Italic" />
+                </DataTrigger>
+                <!-- A tab with its own colour or picture drops the shared plate so its own
+                     translucency governs — last, so it wins over the selected state's fill. -->
+                <DataTrigger Binding="{Binding HasCardBackground}" Value="True">
+                    <Setter TargetName="TabRoot" Property="Background" Value="Transparent" />
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -248,6 +267,23 @@
                                 Width="18" Height="26"
                                 Click="ShellMenu_Click"
                                 ToolTip="{DynamicResource L_ChooseShell}" />
+
+                        <!-- Add a split to the current tab: same SSH connection, or a new session. -->
+                        <Button x:Name="SplitSameButton"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE8A9;"
+                                FontSize="12"
+                                Width="26" Height="26"
+                                Margin="2,0,0,0"
+                                Click="SplitSame_Click"
+                                ToolTip="{DynamicResource L_SplitSameTip}" />
+                        <Button x:Name="SplitNewButton"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE8AD;"
+                                FontSize="12"
+                                Width="26" Height="26"
+                                Click="SplitNew_Click"
+                                ToolTip="{DynamicResource L_SplitNewTip}" />
                     </StackPanel>
                 </StackPanel>
 
@@ -255,6 +291,12 @@
                 <StackPanel Grid.Column="1"
                             Orientation="Horizontal"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button x:Name="TrayButton"
+                            Style="{StaticResource CaptionButton}"
+                            Content="&#xE896;"
+                            FontSize="12"
+                            Click="MinimizeToTray_Click"
+                            ToolTip="{DynamicResource L_MinimizeToTray}" />
                     <Button Style="{StaticResource CaptionButton}"
                             Content="&#xE921;"
                             Click="Minimize_Click"
@@ -350,6 +392,11 @@
         </Border>
 
         <!-- ============ terminal surface ============ -->
+        <!-- The terminal fills the whole cell and keeps its own fill; the split content inside
+             is what is held clear of the window's right and bottom resize borders (see
+             AddTerminalTab). That way the resize grip is reachable — the WebView2 child window
+             would otherwise swallow the mouse there — while the exposed strip carries the same
+             terminal fill as the rest, rather than the bare background picture. -->
         <Grid x:Name="TerminalHost" Grid.Row="1" Grid.Column="1" Background="{DynamicResource TerminalFill}">
             <StackPanel x:Name="EmptyState"
                         VerticalAlignment="Center"
@@ -464,6 +511,110 @@
                                    VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
+
+                <!-- Only shown when the app is not already elevated. -->
+                <Button x:Name="ElevateMenuButton" Click="RestartElevated_Click" Cursor="Hand"
+                        HorizontalContentAlignment="Left" Visibility="Collapsed">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Root" Background="Transparent" CornerRadius="4" Padding="10,7">
+                                <ContentPresenter />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Root" Property="Background" Value="{DynamicResource ChromeHover}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <StackPanel Orientation="Horizontal" MinWidth="170">
+                        <TextBlock Text="&#xE7EF;"
+                                   FontFamily="{StaticResource IconFont}"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource Accent}"
+                                   VerticalAlignment="Center"
+                                   Width="20" />
+                        <TextBlock Text="{DynamicResource L_RestartAdmin}"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                </StackPanel>
+            </Border>
+        </Popup>
+
+        <!-- ============ tab card editor (right-click a tab) ============ -->
+        <Popup x:Name="TabCardPopup"
+               Placement="Bottom"
+               VerticalOffset="2"
+               StaysOpen="False"
+               AllowsTransparency="True"
+               PopupAnimation="Fade"
+               Closed="TabCardPopup_Closed">
+            <Border Background="{DynamicResource Chrome}"
+                    BorderBrush="{DynamicResource Divider}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="14,12"
+                    Margin="0,0,10,10"
+                    Width="290">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.5" Color="Black" />
+                </Border.Effect>
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource L_TabCard}"
+                               Foreground="{DynamicResource TextPrimary}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="13"
+                               FontWeight="SemiBold" />
+
+                    <TextBlock Text="{DynamicResource L_CardColor}"
+                               Foreground="{DynamicResource TextMuted}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="11"
+                               Margin="0,12,0,4" />
+                    <Grid ColumnDefinitions="*,8,30">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding Color, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 FontFamily="Cascadia Mono, Consolas, monospace"
+                                 FontSize="11.5" Padding="7,4" />
+                        <Border Grid.Column="2" Width="30" Height="26" CornerRadius="5"
+                                Background="{Binding Color, Converter={StaticResource HexToBrush}}"
+                                BorderBrush="{DynamicResource Divider}" BorderThickness="1" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="*,46" Margin="0,12,0,0">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_CardOpacity}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   FontFamily="{DynamicResource UiFont}" FontSize="11"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding Opacity, StringFormat={}{0:P0}}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   FontFamily="{DynamicResource UiFont}" FontSize="11"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <Slider Minimum="0" Maximum="1" Value="{Binding Opacity, Mode=TwoWay}" Margin="0,2,0,0" />
+
+                    <Grid ColumnDefinitions="*,46" Margin="0,10,0,0">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_CardBlur}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   FontFamily="{DynamicResource UiFont}" FontSize="11"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding Blur, StringFormat={}{0:0}}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   FontFamily="{DynamicResource UiFont}" FontSize="11"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <Slider Minimum="0" Maximum="60" Value="{Binding Blur, Mode=TwoWay}" Margin="0,2,0,0" />
+
+                    <Button Style="{StaticResource GhostButton}"
+                            Content="{DynamicResource L_CardReset}"
+                            HorizontalAlignment="Left"
+                            Padding="12,5"
+                            Margin="0,14,0,0"
+                            Click="TabCardReset_Click" />
                 </StackPanel>
             </Border>
         </Popup>

@@ -68,8 +68,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (DefaultProfile is { } profile)
         {
-            OpenLocalTab(profile);
+            // Launched from the Explorer "Open RedBloom here" entry, the folder arrives as an
+            // argument; the first tab then opens the shell right there.
+            var startIn = StartupDirectory();
+            OpenLocalTab(startIn is null ? profile : profile.WithStartingDirectory(startIn));
         }
+    }
+
+    /// <summary>The folder passed on the command line, if it is one that exists.</summary>
+    private static string? StartupDirectory()
+    {
+        foreach (var arg in Environment.GetCommandLineArgs().Skip(1))
+        {
+            var trimmed = arg.Trim().Trim('"');
+            if (trimmed.Length > 0 && System.IO.Directory.Exists(trimmed))
+            {
+                return trimmed;
+            }
+        }
+
+        return null;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -87,6 +105,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ApplyBackdrops();
         ThemeService.Applied += ApplyBackdrops;
         Closed += (_, _) => ThemeService.Applied -= ApplyBackdrops;
+
+        SetupTray();
+
+        // The "restart as administrator" entry is pointless once we already are.
+        ElevateMenuButton.Visibility = Elevation.IsElevated ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>Positions the background pictures and applies the window-wide alpha.</summary>
@@ -139,6 +162,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _capture.FrameReady -= OnWallpaperFrame;
         _capture.Dispose();
+        _tray?.Dispose();
         Tabs.Clear();
         base.OnClosed(e);
     }
@@ -151,25 +175,57 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     // ================= tabs =================
 
+    /// <summary>
+    /// How to spawn another pane like a given one: a local shell reopens the same profile, an
+    /// SSH pane opens a fresh independent connection to the same session.
+    /// </summary>
+    private abstract record PaneSource;
+
+    private sealed record LocalSource(ShellProfile Profile) : PaneSource;
+
+    private sealed record SshSource(SshSession Session, string? Secret) : PaneSource;
+
+    // How each live pane can be reproduced, for the split shortcuts.
+    private readonly Dictionary<TerminalView, PaneSource> _paneSources = [];
+
+    private TerminalView CreateView(PaneSource source) => source switch
+    {
+        LocalSource local => new TerminalView((_, _, _) =>
+            Task.FromResult<ITerminalBackend>(new ConPtyBackend(local.Profile))),
+
+        // Cloned per pane so a later sidebar edit cannot mutate a live connection.
+        SshSource ssh => new TerminalView((_, _, _) => Task.FromResult<ITerminalBackend>(
+            new SshBackend(ssh.Session.Clone(), ssh.Secret, _hostKeyPolicy.IsTrusted, _hostKeyPolicy.ApproveAsync)))
+        {
+            AutoReconnect = ssh.Session.AutoReconnect,
+        },
+
+        _ => throw new ArgumentOutOfRangeException(nameof(source)),
+    };
+
     private void OpenLocalTab(ShellProfile profile)
     {
-        var view = new TerminalView((_, _, _) =>
-            Task.FromResult<ITerminalBackend>(new ConPtyBackend(profile)));
+        var source = new LocalSource(profile);
+        var view = CreateView(source);
+        _paneSources[view] = source;
 
-        AddTab(view, profile.Name, profile.Glyph, profile.Executable);
+        var tab = AddTerminalTab(view, profile.Name, profile.Glyph, profile.Executable);
+
+        // A local tab's card look is runtime-only; there is no saved session to keep it in.
+        tab.Card = new TabCardStyle();
     }
 
     private void OpenSshTab(SshSession session, string? secret)
     {
-        // The session is cloned so later edits in the sidebar cannot mutate a live connection.
-        var snapshot = session.Clone();
-        var view = new TerminalView((_, _, _) => Task.FromResult<ITerminalBackend>(
-            new SshBackend(snapshot, secret, _hostKeyPolicy.IsTrusted, _hostKeyPolicy.ApproveAsync)))
-        {
-            AutoReconnect = snapshot.AutoReconnect,
-        };
+        var source = new SshSource(session.Clone(), secret);
+        var view = CreateView(source);
+        _paneSources[view] = source;
 
-        AddTab(view, session.Name, SshGlyph, snapshot.DisplayTarget);
+        var tab = AddTerminalTab(view, session.Name, SshGlyph, source.Session.DisplayTarget);
+
+        // The tab edits the saved session's own card, so a right-click tweak persists.
+        tab.Session = session;
+        tab.Card = session.TabCard;
     }
 
     /// <summary>Segoe MDL2 "Settings", used for the appearance tab.</summary>
@@ -187,22 +243,48 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        AddTab(new SettingsPage(), "Settings", SettingsGlyph, "Appearance settings");
+        AddTab(new SettingsPage(), LocalizationService.T("L_Settings"), SettingsGlyph,
+            LocalizationService.T("L_Appearance"));
     }
 
+    /// <summary>Adds a page tab such as the appearance settings — anything that is not a terminal.</summary>
     private void AddTab(FrameworkElement content, string title, string glyph, string toolTip)
     {
         var tab = new TerminalTab(content, title, glyph, toolTip);
+        content.Visibility = Visibility.Collapsed;
+        TerminalHost.Children.Add(content);
+        Tabs.Add(tab);
+        SelectTab(tab);
+    }
 
-        if (content is not TerminalView view)
+    /// <summary>Adds a terminal tab, wrapping the first pane in a split container it can grow into.</summary>
+    private TerminalTab AddTerminalTab(TerminalView view, string title, string glyph, string toolTip)
+    {
+        var container = new SplitContainer(view)
         {
-            content.Visibility = Visibility.Collapsed;
-            TerminalHost.Children.Add(content);
-            Tabs.Add(tab);
-            SelectTab(tab);
-            return;
-        }
+            // Keep the panes (WebView2 surfaces) off the window's right and bottom resize
+            // borders so the grip stays reachable. The gap lands over the host's terminal fill,
+            // so it matches the console edge instead of flashing the background picture.
+            Margin = new Thickness(0, 0, 6, 6),
+        };
+        var tab = new TerminalTab(container, title, glyph, toolTip);
 
+        // The close button drawn on a split routes back here to close that pane, or the tab
+        // when it was the last one.
+        container.PaneCloseRequested += pane => ClosePaneOrTab(tab, container, pane);
+
+        WireOriginPane(tab, view, toolTip);
+
+        container.Visibility = Visibility.Collapsed;
+        TerminalHost.Children.Add(container);
+        Tabs.Add(tab);
+        SelectTab(tab);
+        return tab;
+    }
+
+    /// <summary>Wires the pane that speaks for the tab: its title, tooltip and ended state.</summary>
+    private void WireOriginPane(TerminalTab tab, TerminalView view, string toolTip)
+    {
         view.TitleChanged += (_, newTitle) =>
         {
             if (!string.IsNullOrWhiteSpace(newTitle))
@@ -224,12 +306,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         };
 
         view.AcceleratorPressed += OnAcceleratorPressed;
-
-        view.Visibility = Visibility.Collapsed;
-        TerminalHost.Children.Add(view);
-        Tabs.Add(tab);
-        SelectTab(tab);
     }
+
+    // A split pane does not drive the tab's title or ended state — the tab still stands for its
+    // first pane — so it only needs the shortcut hook to grow or close further panes.
+    private void WireSplitPane(TerminalView view) => view.AcceleratorPressed += OnAcceleratorPressed;
 
     private void SelectTab(TerminalTab tab)
     {
@@ -253,9 +334,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var wasSelected = tab.IsSelected;
 
-        if (tab.View is { } view)
+        if (tab.Panes is { } container)
         {
-            view.AcceleratorPressed -= OnAcceleratorPressed;
+            foreach (var pane in container.Panes.ToList())
+            {
+                pane.AcceleratorPressed -= OnAcceleratorPressed;
+                _paneSources.Remove(pane);
+            }
         }
 
         Tabs.RemoveAt(index);
@@ -307,7 +392,128 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             case 'B':
                 SetSidebarCollapsed(!_sidebarCollapsed);
                 break;
+
+            // D adds a split, A closes the focused one. Alt keeps the same SSH connection
+            // (another shell on it); Shift opens a new independent session.
+            case 'd':
+                AddSplit(sender, sameConnection: true);
+                break;
+            case 'D':
+                AddSplit(sender, sameConnection: false);
+                break;
+            case 'a':
+            case 'A':
+                CloseFocusedPane(sender);
+                break;
         }
+    }
+
+    /// <summary>Finds the tab and split holder a pane lives in, and marks the pane active.</summary>
+    private (TerminalTab Tab, SplitContainer Container)? LocatePane(object? sender)
+    {
+        if (sender is not TerminalView view)
+        {
+            return null;
+        }
+
+        foreach (var tab in Tabs)
+        {
+            if (tab.Panes is { } container && container.Panes.Contains(view))
+            {
+                container.SetActive(view);
+                return (tab, container);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Adds a split to the tab the pane belongs to, up to the four-pane ceiling.</summary>
+    private void AddSplit(object? sender, bool sameConnection) =>
+        AddSplitTo(LocatePane(sender), sameConnection);
+
+    /// <summary>Adds a split to a located tab. <paramref name="sameConnection"/> reuses the SSH login.</summary>
+    private void AddSplitTo((TerminalTab Tab, SplitContainer Container)? located, bool sameConnection)
+    {
+        if (located is not { } target || target.Container.ActiveView is not { } active)
+        {
+            return;
+        }
+
+        if (!target.Container.CanAdd)
+        {
+            System.Media.SystemSounds.Beep.Play();
+            return;
+        }
+
+        TerminalView pane;
+        if (sameConnection)
+        {
+            var connection = active.SshConnection;
+            if (connection is null || !connection.IsConnected)
+            {
+                // Only a live SSH pane has a connection to share.
+                System.Media.SystemSounds.Beep.Play();
+                return;
+            }
+
+            pane = new TerminalView((_, _, _) =>
+                Task.FromResult<ITerminalBackend>(new SshBackend(connection)));
+
+            if (_paneSources.TryGetValue(active, out var source))
+            {
+                _paneSources[pane] = source;
+            }
+        }
+        else
+        {
+            if (!_paneSources.TryGetValue(active, out var source))
+            {
+                return;
+            }
+
+            pane = CreateView(source);
+            _paneSources[pane] = source;
+        }
+
+        WireSplitPane(pane);
+        target.Container.Add(pane);
+        pane.FocusTerminal();
+    }
+
+    /// <summary>Closes the focused pane, or the whole tab when it is the only one left.</summary>
+    private void CloseFocusedPane(object? sender)
+    {
+        if (LocatePane(sender) is not { } located)
+        {
+            return;
+        }
+
+        ClosePaneOrTab(located.Tab, located.Container, sender as TerminalView ?? located.Container.ActiveView);
+    }
+
+    private void ClosePaneOrTab(TerminalTab tab, SplitContainer container, TerminalView? view)
+    {
+        if (view is null)
+        {
+            return;
+        }
+
+        if (container.Count <= 1)
+        {
+            CloseTab(tab);
+            return;
+        }
+
+        ClosePane(container, view);
+        container.ActiveView?.FocusTerminal();
+    }
+
+    private void ClosePane(SplitContainer container, TerminalView view)
+    {
+        view.AcceleratorPressed -= OnAcceleratorPressed;
+        _paneSources.Remove(view);
+        container.Remove(view);
     }
 
     // ================= tab strip handlers =================
@@ -326,6 +532,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     private void ShellMenu_Click(object sender, RoutedEventArgs e) => ShellPopup.IsOpen = true;
+
+    private void SplitSame_Click(object sender, RoutedEventArgs e) =>
+        AddSplitTo(SelectedTerminalTab(), sameConnection: true);
+
+    private void SplitNew_Click(object sender, RoutedEventArgs e) =>
+        AddSplitTo(SelectedTerminalTab(), sameConnection: false);
+
+    /// <summary>The selected tab paired with its split holder, or null if it is a page tab.</summary>
+    private (TerminalTab Tab, SplitContainer Container)? SelectedTerminalTab()
+    {
+        var tab = Tabs.FirstOrDefault(t => t.IsSelected);
+        return tab?.Panes is { } container ? (tab, container) : null;
+    }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
@@ -359,6 +578,48 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             CloseTab(tab);
         }
+    }
+
+    // ================= tab card editor =================
+
+    private TerminalTab? _cardEditTab;
+
+    private void Tab_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: TerminalTab tab })
+        {
+            return;
+        }
+
+        SelectTab(tab);
+        tab.Card ??= new TabCardStyle();
+
+        _cardEditTab = tab;
+        TabCardPopup.DataContext = tab.Card;
+        TabCardPopup.PlacementTarget = (UIElement)sender;
+        TabCardPopup.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void TabCardReset_Click(object sender, RoutedEventArgs e)
+    {
+        if (TabCardPopup.DataContext is TabCardStyle card)
+        {
+            card.Color = string.Empty;
+            card.Opacity = 1.0;
+            card.Blur = 0;
+        }
+    }
+
+    private void TabCardPopup_Closed(object sender, EventArgs e)
+    {
+        // A right-click tweak to a saved session's card is written straight back to disk.
+        if (_cardEditTab?.Session is not null)
+        {
+            _store.Save();
+        }
+
+        _cardEditTab = null;
     }
 
     private void CloseTab_Click(object sender, RoutedEventArgs e)
@@ -825,6 +1086,50 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     // ================= window chrome =================
 
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    // ================= tray & elevation =================
+
+    private TrayManager? _tray;
+
+    private void SetupTray()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe))
+        {
+            return;
+        }
+
+        _tray = new TrayManager(exe, offerElevation: !Elevation.IsElevated);
+        _tray.ShowRequested += RestoreFromTray;
+        _tray.RestartElevatedRequested += Elevation.RestartElevated;
+        _tray.ExitRequested += Close;
+    }
+
+    private void MinimizeToTray_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tray is null)
+        {
+            WindowState = WindowState.Minimized;
+            return;
+        }
+
+        _tray.ShowIcon();
+        Hide();
+    }
+
+    private void RestoreFromTray()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+        _tray?.HideIcon();
+    }
+
+    private void RestartElevated_Click(object sender, RoutedEventArgs e)
+    {
+        ShellPopup.IsOpen = false;
+        Elevation.RestartElevated();
+    }
 
     private bool _filledScreen;
     private Rect _boundsBeforeFill;
