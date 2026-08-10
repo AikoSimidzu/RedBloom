@@ -72,6 +72,10 @@ public static class LocalizationService
         ["L_AiAvatar"] = "Avatar",
         ["L_AiNameColor"] = "Name colour",
         ["L_AiMaxTokens"] = "Reply limit (tokens)",
+        ["L_AiContextWindow"] = "Context window (tokens)",
+        ["L_AiContextWindowNote"] = "How much the model can hold at once. Drives the gauge under the "
+                                    + "chat, and the point at which the earlier part of a conversation "
+                                    + "is folded into a summary.",
         ["L_AiEffort"] = "Effort",
         ["L_AiThinking"] = "Let the model think first",
         ["L_AiThinkingNote"] = "Adaptive: the model decides per question how much thought it is worth. "
@@ -350,6 +354,9 @@ public static class LocalizationService
         ["L_AiAvatar"] = "Аватар",
         ["L_AiNameColor"] = "Цвет ника",
         ["L_AiMaxTokens"] = "Предел ответа (токены)",
+        ["L_AiContextWindow"] = "Окно контекста (токены)",
+        ["L_AiContextWindowNote"] = "Сколько модель держит за раз. От этого зависит шкала под чатом "
+                                    + "и момент, когда ранняя часть переписки сворачивается в конспект.",
         ["L_AiEffort"] = "Усилие",
         ["L_AiThinking"] = "Разрешить модели подумать",
         ["L_AiThinkingNote"] = "Адаптивно: модель сама решает, сколько размышлений стоит вопрос. "

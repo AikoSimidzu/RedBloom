@@ -149,11 +149,7 @@ public sealed class AnthropicTransport : IAgentTransport
             yield break;
         }
 
-        var messages = new List<MessageParam>(conversation.Select(m => new MessageParam
-        {
-            Role = m.Role == AgentRole.User ? Role.User : Role.Assistant,
-            Content = m.Text,
-        }));
+        var messages = new List<MessageParam>(conversation.Select(ToParam));
 
         for (var step = 0; step < MaxToolSteps; step++)
         {
@@ -383,11 +379,54 @@ public sealed class AnthropicTransport : IAgentTransport
     }
 
     private MessageCreateParams BuildRequest(IReadOnlyList<AgentMessage> conversation) =>
-        BuildRequest([.. conversation.Select(m => new MessageParam
+        BuildRequest([.. conversation.Select(ToParam)]);
+
+    /// <summary>
+    /// One turn in the shape this API wants: a plain string when there is only text, a list of
+    /// blocks when pictures came with it.
+    /// </summary>
+    /// <remarks>
+    /// Pictures go before the text because the sentence about them almost always follows them —
+    /// "what is wrong in this screenshot" reads as a question about the block above it.
+    /// </remarks>
+    private static MessageParam ToParam(AgentMessage message)
+    {
+        var role = message.Role == AgentRole.User ? Role.User : Role.Assistant;
+
+        if (message.Images is not { Count: > 0 } images)
         {
-            Role = m.Role == AgentRole.User ? Role.User : Role.Assistant,
-            Content = m.Text,
-        })]);
+            return new MessageParam { Role = role, Content = message.Text };
+        }
+
+        var content = new List<ContentBlockParam>();
+
+        foreach (var image in images)
+        {
+            content.Add(new ImageBlockParam
+            {
+                Source = new Base64ImageSource
+                {
+                    Data = image.Base64,
+                    MediaType = MediaFor(image.MediaType),
+                },
+            });
+        }
+
+        if (message.Text.Length > 0)
+        {
+            content.Add(new TextBlockParam { Text = message.Text });
+        }
+
+        return new MessageParam { Role = role, Content = content };
+    }
+
+    private static MediaType MediaFor(string media) => media switch
+    {
+        "image/jpeg" => MediaType.ImageJpeg,
+        "image/gif" => MediaType.ImageGif,
+        "image/webp" => MediaType.ImageWebP,
+        _ => MediaType.ImagePng,
+    };
 
     private MessageCreateParams BuildRequest(List<MessageParam> messages)
     {

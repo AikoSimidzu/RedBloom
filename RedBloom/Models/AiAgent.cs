@@ -35,6 +35,7 @@ public sealed class AiAgent : INotifyPropertyChanged
     private string _model = DefaultAnthropicModel;
     private string _systemPrompt = string.Empty;
     private int _maxTokens = 16000;
+    private int _contextWindow = 200000;
     private string _effort = "high";
     private bool _thinking = true;
     private string _avatarPath = string.Empty;
@@ -69,6 +70,20 @@ public sealed class AiAgent : INotifyPropertyChanged
 
     /// <summary>Ceiling on one reply. Counts thinking as well as visible text.</summary>
     public int MaxTokens { get => _maxTokens; set => Set(ref _maxTokens, Math.Clamp(value, 256, 128000)); }
+
+    /// <summary>
+    /// How much the model can hold at once, used for the gauge and for deciding when to compact.
+    /// </summary>
+    /// <remarks>
+    /// A setting rather than something read from the endpoint: the models endpoint reports it
+    /// only on Anthropic's own API, and a proxy in front of a model is free to allow less than
+    /// the model itself would.
+    /// </remarks>
+    public int ContextWindow
+    {
+        get => _contextWindow;
+        set => Set(ref _contextWindow, Math.Clamp(value, 8000, 2_000_000));
+    }
 
     /// <summary>
     /// How much thinking and work a turn is worth: low, medium, high, xhigh or max. Anthropic
@@ -214,6 +229,7 @@ public sealed class AiAgent : INotifyPropertyChanged
         Model = other.Model;
         SystemPrompt = other.SystemPrompt;
         MaxTokens = other.MaxTokens;
+        ContextWindow = other.ContextWindow;
         Effort = other.Effort;
         Thinking = other.Thinking;
         AvatarPath = other.AvatarPath;

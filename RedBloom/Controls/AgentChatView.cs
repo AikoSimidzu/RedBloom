@@ -44,7 +44,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     private readonly ChatSession _chat;
     private readonly IAgentTransport _transport;
     private readonly WebView2 _webView = new();
-    private readonly List<AgentMessage> _history = [];
+    private readonly List<ChatTurn> _history = [];
+
+    /// <summary>Attached in the composer and not yet sent.</summary>
+    private readonly List<string> _pending = [];
 
     /// <summary>The reply being streamed, re-rendered as it grows.</summary>
     private readonly StringBuilder _reply = new();
@@ -67,12 +70,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         // A reopened chat starts with its own past, so the model picks up where it left off
         // rather than meeting the user again.
-        foreach (var saved in chat.Turns)
-        {
-            _history.Add(new AgentMessage(
-                saved.Role == "assistant" ? AgentRole.Assistant : AgentRole.User,
-                saved.Text));
-        }
+        _history.AddRange(chat.Turns);
 
         ApplyWebViewBackground();
         Content = _webView;
@@ -87,6 +85,43 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
     /// <summary>Re-sends the avatar, after the chat or the agent has been given a new one.</summary>
     public void RefreshAvatar() => Post(new { t = "avatar", src = AvatarDataUri() });
+
+    private void AttachFiles()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Multiselect = true, CheckFileExists = true };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            Attach(dialog.FileNames);
+        }
+    }
+
+    private void AttachFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog();
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            Attach([dialog.FolderName]);
+        }
+    }
+
+    private void Attach(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            if (!_pending.Contains(path, StringComparer.OrdinalIgnoreCase))
+            {
+                _pending.Add(path);
+            }
+        }
+
+        PushPending();
+    }
+
+    /// <summary>Shows what is pinned to the composer but not yet sent.</summary>
+    private void PushPending() =>
+        Post(new { t = "pending", files = _pending.Select(Attachments.Describe) });
 
     /// <summary>Raised once the session ends, with a reason to show on the tab.</summary>
     public event EventHandler<string>? SessionEnded;
@@ -174,6 +209,33 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             case "send" when message.TryGetProperty("text", out var text):
                 Submit(text.GetString() ?? string.Empty);
+                break;
+
+            case "attach":
+                AttachFiles();
+                break;
+
+            case "attachFolder":
+                AttachFolder();
+                break;
+
+            case "detach" when message.TryGetProperty("path", out var drop):
+                _pending.Remove(drop.GetString() ?? string.Empty);
+                PushPending();
+                break;
+
+            case "openAttachment" when message.TryGetProperty("path", out var target):
+                var path = target.GetString() ?? string.Empty;
+
+                if (message.TryGetProperty("how", out var how) && how.GetString() == "reveal")
+                {
+                    Attachments.Reveal(path);
+                }
+                else
+                {
+                    Attachments.Open(path);
+                }
+
                 break;
 
             case "approve" when message.TryGetProperty("answer", out var answer):
@@ -334,28 +396,131 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             }
             else
             {
-                Post(new { t = "user", html = Markdown.ToHtml(turn.Text) });
+                Post(new
+                {
+                    t = "user",
+                    html = Markdown.ToHtml(turn.Text),
+                    files = turn.Attachments.Select(Attachments.Describe),
+                });
             }
 
             Post(new { t = "endTurn" });
         }
 
         Post(new { t = "status", text = _agent.ResolvedBaseUrl, busy = false });
+        PushContext();
+    }
+
+    /// <summary>Tells the page how full the context is, and lists the attachments.</summary>
+    private void PushContext()
+    {
+        var used = UsedTokens();
+
+        Post(new { t = "context", used, window = _agent.ContextWindow });
+    }
+
+    /// <summary>
+    /// Folds the older part of the conversation into a summary when it is filling the window.
+    /// </summary>
+    /// <remarks>
+    /// Done here rather than by the endpoint: the server-side feature exists only on Anthropic's
+    /// own API, and half the agents here point at something else. The summary is asked for
+    /// through a transport with no tools bound, so summarising can never run a command.
+    /// The last few turns are kept verbatim — those are the ones the next question is usually
+    /// about, and a summary of them would lose exactly the detail still in play.
+    /// </remarks>
+    private async Task CompactIfFullAsync(CancellationToken cancellationToken)
+    {
+        const int KeepVerbatim = 6;
+
+        var used = UsedTokens();
+
+        if (used < _agent.ContextWindow * 0.7 || _history.Count <= KeepVerbatim + 2)
+        {
+            return;
+        }
+
+        Post(new { t = "status", text = "summarising the earlier part of the chat…", busy = true });
+
+        // Keep the tail, and make sure it starts on a question: both APIs expect the roles to
+        // alternate, and a tail beginning with a reply would sit next to the summary's own.
+        var start = _history.Count - KeepVerbatim;
+
+        while (start < _history.Count && _history[start].Role != "user")
+        {
+            start++;
+        }
+
+        if (start >= _history.Count)
+        {
+            return;
+        }
+
+        var transcript = new StringBuilder();
+
+        for (var i = 0; i < start; i++)
+        {
+            transcript.Append(_history[i].Role == "user" ? "User: " : "Assistant: ")
+                .AppendLine(_history[i].Text);
+        }
+
+        var summary = new StringBuilder();
+
+        try
+        {
+            using var plain = AgentTransports.For(_agent);
+
+            var ask = new List<AgentMessage>
+            {
+                new(AgentRole.User,
+                    "Summarise the conversation below so it can stand in for the full text. Keep "
+                    + "decisions, facts, names, paths and anything still unresolved; drop "
+                    + "pleasantries. Write it as notes, not as a reply to me.\n\n"
+                    + transcript),
+            };
+
+            await foreach (var item in plain.SendAsync(ask, cancellationToken).ConfigureAwait(true))
+            {
+                if (item.Kind == AgentEventKind.Text)
+                {
+                    summary.Append(item.Text);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A failed summary is not worth failing the turn over — the conversation simply
+            // goes out at full length and the endpoint decides what to do about it.
+            Post(new { t = "note", html = Markdown.Escape($"Could not compact the chat: {ex.Message}") });
+            return;
+        }
+
+        if (summary.Length == 0)
+        {
+            return;
+        }
+
+        var tail = _history.Skip(start).ToList();
+        _history.Clear();
+        _history.Add(new ChatTurn { Role = "user", Text = "Here is where we had got to:\n\n" + summary });
+        _history.Add(new ChatTurn { Role = "assistant", Text = "Understood — carrying on from there." });
+        _history.AddRange(tail);
+
+        Post(new
+        {
+            t = "note",
+            html = Markdown.Escape("The earlier part of this chat was summarised to make room."),
+        });
+
+        Persist();
     }
 
     /// <summary>Writes the conversation back to the chat it belongs to.</summary>
     private void Persist()
     {
-        _chat.Turns =
-        [
-            .. _history.Select(m => new ChatTurn
-            {
-                Role = m.Role == AgentRole.Assistant ? "assistant" : "user",
-                Text = m.Text,
-            }),
-        ];
+        _chat.Turns = [.. _history];
 
-        if (_chat.Title.Length == 0 && _history.FirstOrDefault() is { Role: AgentRole.User } first)
+        if (_chat.Title.Length == 0 && _history.FirstOrDefault() is { Role: "user" } first)
         {
             _chat.Title = ChatSession.TitleFrom(first.Text);
         }
@@ -375,10 +540,57 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             return;
         }
 
-        Post(new { t = "user", html = Markdown.ToHtml(question) });
-        _history.Add(new AgentMessage(AgentRole.User, question));
+        // The attachments travel with the message they were pinned for, and the composer is
+        // cleared: a pin that stayed put would silently re-send the file on every later turn.
+        var turn = new ChatTurn { Role = "user", Text = question, Attachments = [.. _pending] };
+        _pending.Clear();
+
+        Post(new
+        {
+            t = "user",
+            html = Markdown.ToHtml(question),
+            files = turn.Attachments.Select(Attachments.Describe),
+        });
+
+        _history.Add(turn);
+        PushPending();
         _ = RunTurnAsync();
     }
+
+    /// <summary>
+    /// What actually goes to the model: the attachments, then the conversation.
+    /// </summary>
+    /// <remarks>
+    /// The attachment block is a leading turn built fresh each time rather than something kept
+    /// in the history, so editing an attached file between questions changes what the model
+    /// sees, and the saved chat stays a record of what was said rather than of what was read.
+    /// </remarks>
+    /// <param name="pictures">
+    /// False when the result is only going to be measured. Encoding the attached images is the
+    /// expensive part of building this, and the estimate charges a flat rate per picture anyway.
+    /// </param>
+    private List<AgentMessage> Conversation(bool pictures = true)
+    {
+        var conversation = new List<AgentMessage>(_history.Count);
+
+        foreach (var turn in _history)
+        {
+            var role = turn.Role == "assistant" ? AgentRole.Assistant : AgentRole.User;
+            var context = ChatContext.Build(turn.Attachments);
+
+            conversation.Add(new AgentMessage(
+                role,
+                context is null ? turn.Text : turn.Text + "\n\n" + context,
+                pictures ? ChatContext.Images(turn.Attachments) : null));
+        }
+
+        return conversation;
+    }
+
+    /// <summary>Roughly how much of the model's window this conversation now takes up.</summary>
+    private int UsedTokens() =>
+        ChatContext.EstimateTokens(Conversation(pictures: false).Select(m => m.Text))
+        + (_history.Sum(turn => ChatContext.CountImages(turn.Attachments)) * ChatContext.TokensPerImage);
 
     private async Task RunTurnAsync()
     {
@@ -387,10 +599,13 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         _reply.Clear();
         Post(new { t = "status", text = "working…", busy = true });
+        Post(new { t = "thinking", on = true, label = _agent.Name });
 
         try
         {
-            await foreach (var item in _transport.SendAsync(_history, turn.Token).ConfigureAwait(true))
+            await CompactIfFullAsync(turn.Token).ConfigureAwait(true);
+
+            await foreach (var item in _transport.SendAsync(Conversation(), turn.Token).ConfigureAwait(true))
             {
                 Handle(item);
             }
@@ -412,7 +627,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         if (_reply.Length > 0)
         {
-            _history.Add(new AgentMessage(AgentRole.Assistant, _reply.ToString()));
+            _history.Add(new ChatTurn { Role = "assistant", Text = _reply.ToString() });
         }
         else
         {
@@ -422,6 +637,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         }
 
         Persist();
+        PushContext();
     }
 
     private void Handle(AgentEvent item)

@@ -137,6 +137,7 @@ public partial class AiSettingsPage : UserControl
             AvatarBox.Text = agent.AvatarPath;
             NameColorBox.Text = string.IsNullOrWhiteSpace(agent.NameColor) ? _settings.Accent : agent.NameColor;
             MaxTokensBox.Text = agent.MaxTokens.ToString(CultureInfo.InvariantCulture);
+            ContextWindowBox.Text = agent.ContextWindow.ToString(CultureInfo.InvariantCulture);
             EffortBox.SelectedIndex = EffortIndex(agent.Effort);
             ThinkingBox.IsChecked = agent.Thinking;
             AllowCommandsBox.IsChecked = agent.AllowCommands;
@@ -270,6 +271,11 @@ public partial class AiSettingsPage : UserControl
         if (int.TryParse(MaxTokensBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var maxTokens))
         {
             agent.MaxTokens = maxTokens;
+        }
+
+        if (int.TryParse(ContextWindowBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var window))
+        {
+            agent.ContextWindow = window;
         }
 
         Persist();

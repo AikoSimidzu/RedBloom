@@ -72,11 +72,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
 
         foreach (var message in conversation)
         {
-            messages.Add(new
-            {
-                role = message.Role == AgentRole.User ? "user" : "assistant",
-                content = message.Text,
-            });
+            messages.Add(ToMessage(message));
         }
 
         for (var step = 0; step < MaxToolSteps; step++)
@@ -449,11 +445,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
 
         foreach (var message in conversation)
         {
-            messages.Add(new
-            {
-                role = message.Role == AgentRole.User ? "user" : "assistant",
-                content = message.Text,
-            });
+            messages.Add(ToMessage(message));
         }
 
         return JsonSerializer.Serialize(new
@@ -463,6 +455,43 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             stream,
             messages,
         });
+    }
+
+    /// <summary>
+    /// One turn in the shape this format wants: a plain string when there is only text, a list of
+    /// parts when pictures came with it.
+    /// </summary>
+    /// <remarks>
+    /// Pictures ride as <c>data:</c> URLs rather than links: the files are on the user's machine,
+    /// so there is nothing for the endpoint to fetch, and uploading them somewhere first would
+    /// put the user's screenshots on a third host to save a few kilobytes on the wire.
+    /// </remarks>
+    private static object ToMessage(AgentMessage message)
+    {
+        var role = message.Role == AgentRole.User ? "user" : "assistant";
+
+        if (message.Images is not { Count: > 0 } images)
+        {
+            return new { role, content = message.Text };
+        }
+
+        var parts = new List<object>();
+
+        foreach (var image in images)
+        {
+            parts.Add(new
+            {
+                type = "image_url",
+                image_url = new { url = $"data:{image.MediaType};base64,{image.Base64}" },
+            });
+        }
+
+        if (message.Text.Length > 0)
+        {
+            parts.Add(new { type = "text", text = message.Text });
+        }
+
+        return new { role, content = parts };
     }
 
     /// <summary>Pulls the text fragment out of one streamed chunk, if it carries one.</summary>

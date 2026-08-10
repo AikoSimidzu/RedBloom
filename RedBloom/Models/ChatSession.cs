@@ -10,6 +10,16 @@ public sealed class ChatTurn
     public string Role { get; set; } = "user";
 
     public string Text { get; set; } = string.Empty;
+
+    /// <summary>
+    /// What was attached to this message, by path.
+    /// </summary>
+    /// <remarks>
+    /// Attachments belong to the message they were sent with rather than to the chat: that is
+    /// where they were meant, and it keeps the transcript a record of what was actually said
+    /// and shown at the time.
+    /// </remarks>
+    public List<string> Attachments { get; set; } = [];
 }
 
 /// <summary>
@@ -55,6 +65,15 @@ public sealed class ChatSession : INotifyPropertyChanged
     /// identical.
     /// </remarks>
     public string AvatarPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Files and folders the agent should see from the start of this chat.
+    /// </summary>
+    /// <remarks>
+    /// Paths only. Their contents are read fresh on every send, so an edit between turns
+    /// reaches the model, and a large file never ends up copied into the saved conversation.
+    /// </remarks>
+    public List<string> Attachments { get; set; } = [];
 
     /// <summary>Nothing has been said yet, so the chat is not worth listing or saving.</summary>
     [JsonIgnore]

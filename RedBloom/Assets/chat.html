@@ -46,7 +46,14 @@
     overflow-x: hidden;
     padding: 16px 18px 8px;
     scroll-behavior: smooth;
+
+    /* Chromium rubber-bands the whole surface when a scroll runs past the end, which in a
+       hosted WebView reads as the control itself sliding about. Contained scrolling keeps the
+       gesture inside this box and stops it bouncing. */
+    overscroll-behavior: contain;
   }
+
+  html, body { overscroll-behavior: none; }
 
   /* A turn is a row: the agent's runs from the left behind its avatar, the user's from the
      right. The text inside each stays left-aligned — right-aligned prose is hard to read once
@@ -213,6 +220,63 @@
     white-space: pre-wrap;
   }
 
+  /* A turn eases in rather than appearing whole, so a long transcript reads as something
+     arriving instead of jumping. Kept short — this sits between the question and the answer. */
+  .turn, .act, .ask, details.out {
+    animation: arrive .22s ease-out;
+  }
+
+  @keyframes arrive {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* While the reply is still coming, a caret sits at the end of it. The whole answer is
+     re-rendered on each repaint, so the caret rides the last element rather than being a
+     node of its own that would have to be found and moved. */
+  .body.streaming > :last-child::after {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: var(--nick);
+    animation: caret 1s steps(1) infinite;
+  }
+
+  @keyframes caret { 0%, 50% { opacity: 1 } 50.01%, 100% { opacity: 0 } }
+
+  /* Movement is decoration; anyone who has asked the system to stop it gets none. */
+  @media (prefers-reduced-motion: reduce) {
+    .turn, .act, .ask, details.out { animation: none; }
+    .body.streaming > :last-child::after,
+    .thinking i { animation: none; }
+  }
+
+  /* ---- the agent is working ---- */
+
+  /* Shown from the moment a turn starts until its first words land, so the gap between asking
+     and reading is something happening rather than nothing. */
+  .thinking { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+
+  .thinking i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--nick);
+    opacity: .3;
+    animation: think 1.2s ease-in-out infinite;
+  }
+
+  .thinking i:nth-child(2) { animation-delay: .18s; }
+  .thinking i:nth-child(3) { animation-delay: .36s; }
+
+  @keyframes think {
+    0%, 80%, 100% { opacity: .25; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-3px); }
+  }
+
   /* ---- approval ---- */
 
   .ask {
@@ -252,7 +316,129 @@
     background: var(--bar);
   }
 
-  #status { font-size: 11.5px; color: var(--faint); min-height: 15px; margin-bottom: 5px; }
+  #meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 5px;
+  }
+
+  #status { font-size: 11.5px; color: var(--faint); min-height: 15px; min-width: 0; }
+
+  /* How full the window is. An estimate, so it is a bar rather than a number pretending to
+     be exact — it earns its place by warning before a limit, not by being audited. */
+  #gauge { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+
+  #track {
+    width: 90px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--chrome);
+    overflow: hidden;
+  }
+
+  #fill { height: 100%; width: 0; background: var(--accent-dim); transition: width .3s ease; }
+  #gauge.high #fill { background: var(--accent); }
+  #gaugeText { font-size: 11px; color: var(--faint); white-space: nowrap; }
+
+  /* ---- attachments ---- */
+
+  #chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
+  #chips:empty { display: none; }
+
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    padding: 3px 6px 3px 9px;
+    border: 1px solid var(--divider);
+    border-radius: 999px;
+    background: var(--bubble);
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  .chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .thumb { width: 20px; height: 20px; border-radius: 4px; object-fit: cover; flex: 0 0 20px; }
+  .glyph { font-family: "Segoe MDL2 Assets"; font-size: 13px; color: var(--faint); flex: 0 0 auto; }
+
+  /* An attachment that has been sent: it lives in the message now, and clicking it offers
+     the two things anyone wants from a path — the thing itself, or where it lives. */
+  .files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+
+  .pin {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 220px;
+    padding: 4px 9px;
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    background: var(--bubble);
+    font-size: 11.5px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .pin:hover { border-color: var(--accent); color: var(--text); }
+  .pin .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pin .thumb { width: 26px; height: 26px; flex: 0 0 26px; }
+
+  .menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    min-width: 150px;
+    padding: 4px;
+    border: 1px solid var(--divider);
+    border-radius: 7px;
+    background: var(--chrome);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .5);
+  }
+
+  .menu button {
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    padding: 6px 9px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .menu button:hover { background: var(--bubble-user); }
+
+  .chip button {
+    font: inherit;
+    font-size: 12px;
+    line-height: 1;
+    border: 0;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .chip button:hover { color: var(--accent); }
+
+  button.attach {
+    font: inherit;
+    font-size: 12px;
+    padding: 9px 11px;
+    border-radius: 7px;
+    border: 1px solid var(--divider);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button.attach:hover { color: var(--text); border-color: var(--accent); }
 
   #row { display: flex; gap: 8px; align-items: flex-end; }
 
@@ -292,8 +478,17 @@
 <body>
   <div id="log"></div>
   <div id="bar">
-    <div id="status"></div>
+    <div id="chips"></div>
+    <div id="meta">
+      <div id="status"></div>
+      <div id="gauge" hidden>
+        <div id="track"><div id="fill"></div></div>
+        <span id="gaugeText"></span>
+      </div>
+    </div>
     <div id="row">
+      <button class="attach" id="attachFile">Attach</button>
+      <button class="attach" id="attachDir">Folder</button>
       <textarea id="input" rows="1" placeholder="Ask the agent…" spellcheck="false"></textarea>
       <button id="send">Send</button>
     </div>
@@ -308,7 +503,15 @@
   const send = document.getElementById("send");
   const status = document.getElementById("status");
 
+  const chips = document.getElementById("chips");
+  const gauge = document.getElementById("gauge");
+  const fill = document.getElementById("fill");
+  const gaugeText = document.getElementById("gaugeText");
+
   const post = (message) => window.chrome.webview.postMessage(JSON.stringify(message));
+
+  /** Token counts, short enough to sit in a status line. */
+  const short = (n) => (n >= 1000 ? Math.round(n / 1000) + "k" : String(n));
 
   let stuckToBottom = true;
   log.addEventListener("scroll", () => {
@@ -328,6 +531,70 @@
 
   let openTurn = null;
   let avatarSrc = "";
+
+  /** The thumbnail for an attachment, or the glyph standing in for its kind. */
+  function face(file) {
+    if (file.Preview) {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      img.src = file.Preview;
+      img.alt = "";
+      return img;
+    }
+
+    const mark = el("span", "glyph", "");
+    mark.textContent = file.Glyph || "";
+    return mark;
+  }
+
+  /** An attachment as it appears inside a sent message, with its menu. */
+  function pin(file) {
+    const node = el("div", "pin");
+    node.title = file.Path;
+    node.appendChild(face(file));
+    node.appendChild(el("span", "name", "")).textContent = file.Name;
+
+    node.onclick = (e) => {
+      e.stopPropagation();
+
+      // Clicking the pin that already has a menu closes it, rather than replacing it with an
+      // identical one.
+      const open = node.querySelector(".menu");
+      closeMenu();
+      if (open) return;
+
+      const menu = el("div", "menu");
+      const add = (label, how) => {
+        const item = el("button", null, label);
+        item.onclick = (event) => {
+          // Without this the click reaches the pin above, which would close the menu and
+          // immediately open a fresh one — so it never looked like it closed at all.
+          event.stopPropagation();
+          post({ t: "openAttachment", path: file.Path, how });
+          closeMenu();
+        };
+        menu.appendChild(item);
+      };
+
+      add(file.Kind === "folder" ? "Open folder" : "Open file", "open");
+      add("Show in Explorer", "reveal");
+
+      node.appendChild(menu);
+    };
+
+    return node;
+  }
+
+  function closeMenu() {
+    for (const m of log.querySelectorAll(".menu")) m.remove();
+  }
+
+  document.addEventListener("click", closeMenu);
+
+  /** Removes the working indicator, wherever it got to. */
+  function stopThinking() {
+    for (const node of log.querySelectorAll('[data-thinking="1"]')) node.remove();
+  }
 
   function avatarFor(who) {
     if (who !== "agent") return null;
@@ -369,19 +636,87 @@
 
     avatar(m) { avatarSrc = m.src || ""; },
 
-    user(m) { openTurn = null; turn("user", "").innerHTML = m.html; follow(); },
+    /// What is pinned to the composer and not yet sent.
+    pending(m) {
+      chips.innerHTML = "";
+      for (const file of m.files || []) {
+        const chip = el("div", "chip");
+        chip.title = file.Path;
+        chip.appendChild(face(file));
+        chip.appendChild(el("span", "name", "")).textContent = file.Name;
+
+        const drop = el("button", null, "×");
+        drop.title = "Remove";
+        drop.onclick = () => post({ t: "detach", path: file.Path });
+        chip.appendChild(drop);
+        chips.appendChild(chip);
+      }
+    },
+
+    context(m) {
+      const window_ = m.window || 0;
+      if (!window_) { gauge.hidden = true; return; }
+
+      const share = Math.min(1, (m.used || 0) / window_);
+      gauge.hidden = false;
+      gauge.classList.toggle("high", share > 0.7);
+      fill.style.width = (share * 100).toFixed(1) + "%";
+      gaugeText.textContent = short(m.used || 0) + " / " + short(window_);
+      gauge.title = "Estimated context in use";
+    },
+
+    user(m) {
+      openTurn = null;
+      const body = turn("user", "");
+
+      if (m.files && m.files.length) {
+        const strip = el("div", "files");
+        for (const file of m.files) strip.appendChild(pin(file));
+        body.appendChild(strip);
+      }
+
+      body.appendChild(el("div", null, m.html));
+      follow();
+    },
 
     // The assistant's text is replaced wholesale each time rather than appended: the sender
     // re-renders the markdown as it grows, and a half-written fence is not valid on its own.
     assistant(m) {
+      stopThinking();
       if (!openTurn) openTurn = turn("agent", m.label || "agent");
       openTurn.innerHTML = m.html;
+      openTurn.classList.add("streaming");
       follow();
     },
 
-    endTurn() { openTurn = null; },
+    endTurn() {
+      if (openTurn) openTurn.classList.remove("streaming");
+      openTurn = null;
+      stopThinking();
+    },
+
+    /// The agent has been asked and has not started writing yet.
+    thinking(m) {
+      stopThinking();
+      if (!m.on) return;
+
+      const node = el("div", "turn agent");
+      node.dataset.thinking = "1";
+      const face = avatarFor("agent");
+      if (face) node.appendChild(face);
+
+      const side = el("div", "side");
+      side.appendChild(el("div", "who", m.label || ""));
+      const dots = el("div", "thinking", "<i></i><i></i><i></i>");
+      side.appendChild(dots);
+      node.appendChild(side);
+
+      log.appendChild(node);
+      follow();
+    },
 
     activity(m) {
+      stopThinking();
       openTurn = null;
       const node = el("div", "act " + (m.state || "running"));
       node.appendChild(el("span", "mark", "▸"));
@@ -488,6 +823,8 @@
   }
 
   send.onclick = submit;
+  document.getElementById("attachFile").onclick = () => post({ t: "attach" });
+  document.getElementById("attachDir").onclick = () => post({ t: "attachFolder" });
 
   input.addEventListener("keydown", (e) => {
     // Enter sends; Shift+Enter is how a multi-line question gets written.

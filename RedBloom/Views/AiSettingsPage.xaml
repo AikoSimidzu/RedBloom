@@ -208,6 +208,14 @@
                         <TextBox Grid.Column="1" x:Name="MaxTokensBox" TextChanged="Field_Changed" />
                     </Grid>
 
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,2">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiContextWindow}" Style="{StaticResource RowLabel}" />
+                        <TextBox Grid.Column="1" x:Name="ContextWindowBox" TextChanged="Field_Changed" />
+                    </Grid>
+                    <TextBlock Text="{DynamicResource L_AiContextWindowNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,10" />
+
                     <Grid x:Name="EffortRow" ColumnDefinitions="150,*" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiEffort}" Style="{StaticResource RowLabel}" />
                         <ComboBox Grid.Column="1" x:Name="EffortBox" SelectionChanged="Field_Changed">

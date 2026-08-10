@@ -9,12 +9,24 @@ public enum AgentRole
     Assistant,
 }
 
+/// <summary>
+/// A picture travelling with a message, already encoded the way both wire formats want it.
+/// </summary>
+/// <remarks>
+/// Base64 rather than a path because a picture cannot be handed over as text at all: read as
+/// UTF-8 a JPEG arrives as mojibake, which is what the model then dutifully tries to describe.
+/// </remarks>
+public readonly record struct AgentImage(string MediaType, string Base64);
+
 /// <summary>One turn of the conversation, as it is replayed to the model.</summary>
 /// <remarks>
 /// The system prompt is not a message here: both wire formats carry it out of band (Anthropic in
 /// a top-level field, the OpenAI shape as a leading message), so each transport places it itself.
 /// </remarks>
-public readonly record struct AgentMessage(AgentRole Role, string Text);
+public readonly record struct AgentMessage(
+    AgentRole Role,
+    string Text,
+    IReadOnlyList<AgentImage>? Images = null);
 
 /// <summary>What a transport reports while a reply is being generated.</summary>
 public enum AgentEventKind
