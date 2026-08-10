@@ -193,11 +193,12 @@ public sealed class AnthropicTransport : IAgentTransport
 
             var results = new List<ContentBlockParam>();
 
-            foreach (var (id, command) in turn.Calls.Select(c => (c.Id, ReadCommand(c.Arguments))))
+            foreach (var (id, command, elevated) in turn.Calls
+                .Select(c => (c.Id, Command: ReadCommand(c.Arguments), Elevated: ReadElevated(c.Arguments))))
             {
                 yield return new AgentEvent(AgentEventKind.ToolCall, command);
 
-                var approved = await _tools!.ApproveAsync(command, cancellationToken).ConfigureAwait(false);
+                var approved = await _tools!.ApproveAsync(command, elevated, cancellationToken).ConfigureAwait(false);
 
                 if (!approved)
                 {
@@ -215,7 +216,7 @@ public sealed class AnthropicTransport : IAgentTransport
                     continue;
                 }
 
-                var output = await _tools.RunAsync(command, cancellationToken).ConfigureAwait(false);
+                var output = await _tools.RunAsync(command, elevated, cancellationToken).ConfigureAwait(false);
                 yield return new AgentEvent(AgentEventKind.ToolResult, output);
 
                 results.Add(new ToolResultBlockParam { ToolUseID = id, Content = output });
@@ -335,6 +336,11 @@ public sealed class AnthropicTransport : IAgentTransport
             ? value.GetString() ?? string.Empty
             : string.Empty;
 
+    /// <summary>Whether the call asked for administrator rights. Absent means no.</summary>
+    private static bool ReadElevated(string json) =>
+        ParseArguments(json).TryGetValue(AgentTransports.Command.Elevated, out var value)
+        && value.ValueKind == JsonValueKind.True;
+
     /// <summary>One read from the stream: whether it moved, what it carried, why it stopped.</summary>
     private readonly record struct Step(bool Moved, string? Text, string? Error);
 
@@ -450,6 +456,12 @@ public sealed class AnthropicTransport : IAgentTransport
                                     {
                                         type = "string",
                                         description = AgentTransports.Command.ParameterDescription,
+                                    }),
+                                [AgentTransports.Command.Elevated] =
+                                    System.Text.Json.JsonSerializer.SerializeToElement(new
+                                    {
+                                        type = "boolean",
+                                        description = AgentTransports.Command.ElevatedDescription,
                                     }),
                             },
                             Required = [AgentTransports.Command.Parameter],

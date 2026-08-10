@@ -99,10 +99,10 @@ public interface IAgentToolHost
     bool Enabled { get; }
 
     /// <summary>Puts the command to the user. False means it must not run.</summary>
-    Task<bool> ApproveAsync(string command, CancellationToken cancellationToken);
+    Task<bool> ApproveAsync(string command, bool elevated, CancellationToken cancellationToken);
 
     /// <summary>Runs an approved command and returns everything it printed.</summary>
-    Task<string> RunAsync(string command, CancellationToken cancellationToken);
+    Task<string> RunAsync(string command, bool elevated, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds the transport an agent's provider calls for.</summary>
@@ -131,5 +131,14 @@ public static class AgentTransports
         public const string Parameter = "command";
 
         public const string ParameterDescription = "The command line to run.";
+
+        public const string Elevated = "as_administrator";
+
+        public const string ElevatedDescription =
+            "Set only when the command genuinely needs administrator rights — writing under "
+            + "Program Files, changing a service, editing HKLM. The first such command asks the "
+            + "user for consent through Windows, and every one of them is shown to the user "
+            + "marked as elevated, so asking for it when it is not needed will get the command "
+            + "refused rather than run.";
     }
 }

@@ -117,8 +117,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         SetupTray();
 
-        // The "restart as administrator" entry is pointless once we already are.
-        ElevateMenuButton.Visibility = Elevation.IsElevated ? Visibility.Collapsed : Visibility.Visible;
+        // The offer is pointless once we already have the rights, however they were got.
+        UpdateElevationMenu();
+        ElevatedHost.StateChanged += () => Dispatcher.Invoke(UpdateElevationMenu);
     }
 
     /// <summary>Positions the background pictures and applies the window-wide alpha.</summary>
@@ -369,6 +370,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         else if (e.Key == Key.Delete)
         {
             RemoveChat(chat);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.F2
+            && ChatList.ItemContainerGenerator.ContainerFromItem(chat) is UIElement row)
+        {
+            OpenCardEditor(chat.Card, row, tab: null, chat);
+            CardNameBox.Focus();
+            CardNameBox.SelectAll();
             e.Handled = true;
         }
     }
@@ -793,19 +802,74 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        _cardEditTab = null;
-        _cardEditChat = chat;
-
-        CardAvatarRow.Visibility = Visibility.Visible;
-        CardAvatarBox.Text = chat.AvatarPath;
-
-        TabCardPopup.DataContext = chat.Card;
-        TabCardPopup.PlacementTarget = (UIElement)sender;
-        TabCardPopup.IsOpen = true;
+        OpenCardEditor(chat.Card, (UIElement)sender, tab: null, chat);
         e.Handled = true;
     }
 
-    private void CardAvatarBrowse_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Shows the card editor over something, for whichever of a tab and a chat it belongs to.
+    /// </summary>
+    /// <remarks>
+    /// One entry point for all three ways in — a tab's right-click, the sidebar list, and F2 —
+    /// so a chat is dressed and named the same way whichever route was taken.
+    /// </remarks>
+    private void OpenCardEditor(TabCardStyle card, UIElement target, TerminalTab? tab, ChatSession? chat)
+    {
+        _cardEditTab = tab;
+        _cardEditChat = chat;
+
+        var forChat = chat is not null ? Visibility.Visible : Visibility.Collapsed;
+
+        CardNameRow.Visibility = forChat;
+        CardNameBox.Text = chat?.Title ?? string.Empty;
+
+        CardAvatarRow.Visibility = forChat;
+        CardAvatarBox.Text = chat?.AvatarPath ?? string.Empty;
+
+        TabCardPopup.DataContext = card;
+        TabCardPopup.PlacementTarget = target;
+        TabCardPopup.IsOpen = true;
+    }
+
+    /// <summary>Enter in the name box applies the new name and shuts the editor.</summary>
+    private void CardName_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            TabCardPopup.IsOpen = false;
+            e.Handled = true;
+        }
+    }
+
+    private void CardImageBrowse_Click(object sender, RoutedEventArgs e)
+    {
+        if (TabCardPopup.DataContext is not TabCardStyle card)
+        {
+            return;
+        }
+
+        if (BrowseForImage() is { } chosen)
+        {
+            card.ImagePath = chosen;
+        }
+    }
+
+    private void CardImageClear_Click(object sender, RoutedEventArgs e)
+    {
+        if (TabCardPopup.DataContext is TabCardStyle card)
+        {
+            card.ImagePath = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Asks for a picture, holding the card editor open while the file dialog is up.
+    /// </summary>
+    /// <remarks>
+    /// The editor closes on any click outside itself, and every click in the file dialog is
+    /// outside it, so without pinning it the editor would vanish the moment browsing began.
+    /// </remarks>
+    private string? BrowseForImage()
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
@@ -813,18 +877,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             CheckFileExists = true,
         };
 
-        // The card popup shuts on any click outside itself, and the file dialog is outside.
         TabCardPopup.StaysOpen = true;
         try
         {
-            if (dialog.ShowDialog(this) == true)
-            {
-                CardAvatarBox.Text = dialog.FileName;
-            }
+            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
         }
         finally
         {
             TabCardPopup.StaysOpen = false;
+        }
+    }
+
+    private void CardAvatarBrowse_Click(object sender, RoutedEventArgs e)
+    {
+        if (BrowseForImage() is { } chosen)
+        {
+            CardAvatarBox.Text = chosen;
         }
     }
 
@@ -841,16 +909,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectTab(tab);
         tab.Card ??= new TabCardStyle();
 
-        _cardEditTab = tab;
-        _cardEditChat = tab.Chat;
-
-        // A chat tab gets the avatar row too, so the same editor serves both routes in.
-        CardAvatarRow.Visibility = tab.Chat is null ? Visibility.Collapsed : Visibility.Visible;
-        CardAvatarBox.Text = tab.Chat?.AvatarPath ?? string.Empty;
-
-        TabCardPopup.DataContext = tab.Card;
-        TabCardPopup.PlacementTarget = (UIElement)sender;
-        TabCardPopup.IsOpen = true;
+        OpenCardEditor(tab.Card, (UIElement)sender, tab, tab.Chat);
         e.Handled = true;
     }
 
@@ -881,6 +940,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             card.Color = string.Empty;
             card.Opacity = 1.0;
             card.Blur = 0;
+            card.ImagePath = string.Empty;
         }
     }
 
@@ -895,12 +955,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (_cardEditChat is { } chat)
         {
             chat.AvatarPath = CardAvatarBox.Text.Trim();
+
+            // An empty name means "go back to being named after the first question", which is
+            // what the chat is called until someone renames it.
+            var named = CardNameBox.Text.Trim();
+            chat.Title = named.Length > 0 ? named
+                : chat.Turns.FirstOrDefault(t => t.Role == "user") is { } first ? ChatSession.TitleFrom(first.Text)
+                : string.Empty;
+
             ChatStore.Save(chat);
 
-            // The open tab, if there is one, is showing the old picture until it is told.
-            if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id)?.Content is AgentChatView view)
+            // The open tab, if there is one, is showing the old name and picture until it is told.
+            if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id) is { } tab)
             {
-                view.RefreshAvatar();
+                tab.Title = chat.Title;
+
+                if (tab.Content is AgentChatView view)
+                {
+                    view.RefreshAvatar();
+                }
             }
         }
 
@@ -1621,11 +1694,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _tray?.HideIcon();
     }
 
-    private void RestartElevated_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Gains administrator rights without going away and coming back.
+    /// </summary>
+    /// <remarks>
+    /// Windows fixes a process's elevation when it starts, so this window can never become
+    /// administrator itself. What it can do is start an elevated helper and send it the work that
+    /// needs the rights — the tabs, connections and scrollback all stay exactly where they are.
+    /// </remarks>
+    private async void Elevate_Click(object sender, RoutedEventArgs e)
     {
         ShellPopup.IsOpen = false;
-        Elevation.RestartElevated();
+
+        var refused = await ElevatedHost.StartAsync();
+
+        ShowToast(
+            refused ?? LocalizationService.T("L_ElevateReady"),
+            actionLabel: null,
+            onAction: null);
+
+        UpdateElevationMenu();
     }
+
+    /// <summary>Hides the offer once there is nothing left to gain by taking it.</summary>
+    private void UpdateElevationMenu() =>
+        ElevateMenuButton.Visibility = Elevation.IsElevated || ElevatedHost.IsRunning
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
     private bool _filledScreen;
     private Rect _boundsBeforeFill;

@@ -23,12 +23,90 @@ public static class ChatStore
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    private static readonly string Folder = Path.Combine(
+    /// <summary>Where chats used to live, and where they still go if the program folder is read-only.</summary>
+    private static readonly string Roaming = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "RedBloom",
         "chats");
 
+    private static readonly string Folder = ChooseFolder();
+
     private static bool _loaded;
+
+    /// <summary>
+    /// A <c>Chats</c> folder beside the program, or the roaming one when that cannot be written.
+    /// </summary>
+    /// <remarks>
+    /// Keeping conversations next to the executable makes the whole thing portable — copy the
+    /// folder to a stick and the chats come along. It only works where the program folder is
+    /// writable, which an installed copy under Program Files is not, so that case quietly keeps
+    /// the old location rather than losing every chat to a permission error.
+    /// </remarks>
+    private static string ChooseFolder()
+    {
+        var beside = Path.Combine(AppContext.BaseDirectory, "Chats");
+
+        try
+        {
+            Directory.CreateDirectory(beside);
+
+            // Creating the folder does not prove a file can be written in it: under Program Files
+            // an existing directory still refuses one, and that only shows up on the first save.
+            var probe = Path.Combine(beside, ".writable");
+            File.WriteAllText(probe, string.Empty);
+            File.Delete(probe);
+
+            Migrate(beside);
+
+            return beside;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Keeping chats in {Roaming}: {beside} is not writable ({ex.Message})");
+
+            return Roaming;
+        }
+    }
+
+    /// <summary>Moves chats saved by an earlier version into the folder beside the program.</summary>
+    private static void Migrate(string destination)
+    {
+        if (!Directory.Exists(Roaming))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(Roaming, "*.json"))
+        {
+            try
+            {
+                var moved = Path.Combine(destination, Path.GetFileName(file));
+
+                // Never overwrite: if both exist the one beside the program is the newer home
+                // and the roaming copy is a leftover.
+                if (!File.Exists(moved))
+                {
+                    File.Move(file, moved);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Debug.WriteLine($"Could not move {file}: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            if (!Directory.EnumerateFileSystemEntries(Roaming).Any())
+            {
+                Directory.Delete(Roaming);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Left {Roaming} in place: {ex.Message}");
+        }
+    }
 
     /// <summary>All known chats, newest first.</summary>
     public static ObservableCollection<ChatSession> Chats { get; } = [];

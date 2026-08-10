@@ -112,16 +112,16 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             // it are what the results below are matched against.
             messages.Add(reply.Clone());
 
-            foreach (var (id, command) in calls)
+            foreach (var (id, command, elevated) in calls)
             {
                 yield return new AgentEvent(AgentEventKind.ToolCall, command);
 
-                var approved = await _tools!.ApproveAsync(command, cancellationToken).ConfigureAwait(false);
+                var approved = await _tools!.ApproveAsync(command, elevated, cancellationToken).ConfigureAwait(false);
                 string output;
 
                 if (approved)
                 {
-                    output = await _tools.RunAsync(command, cancellationToken).ConfigureAwait(false);
+                    output = await _tools.RunAsync(command, elevated, cancellationToken).ConfigureAwait(false);
                     yield return new AgentEvent(AgentEventKind.ToolResult, output);
                 }
                 else
@@ -153,9 +153,9 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         return true;
     }
 
-    private static List<(string Id, string Command)> ReadToolCalls(JsonElement message)
+    private static List<(string Id, string Command, bool Elevated)> ReadToolCalls(JsonElement message)
     {
-        var calls = new List<(string, string)>();
+        var calls = new List<(string, string, bool)>();
 
         if (!message.TryGetProperty("tool_calls", out var toolCalls)
             || toolCalls.ValueKind != JsonValueKind.Array)
@@ -180,7 +180,11 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 if (parsed.RootElement.TryGetProperty(AgentTransports.Command.Parameter, out var command)
                     && command.ValueKind == JsonValueKind.String)
                 {
-                    calls.Add((id.GetString() ?? string.Empty, command.GetString() ?? string.Empty));
+                    var elevated = parsed.RootElement
+                        .TryGetProperty(AgentTransports.Command.Elevated, out var asAdmin)
+                        && asAdmin.ValueKind == JsonValueKind.True;
+
+                    calls.Add((id.GetString() ?? string.Empty, command.GetString() ?? string.Empty, elevated));
                 }
             }
             catch (JsonException)
@@ -244,6 +248,11 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                             {
                                 type = "string",
                                 description = AgentTransports.Command.ParameterDescription,
+                            },
+                            [AgentTransports.Command.Elevated] = new
+                            {
+                                type = "boolean",
+                                description = AgentTransports.Command.ElevatedDescription,
                             },
                         },
                         required = new[] { AgentTransports.Command.Parameter },

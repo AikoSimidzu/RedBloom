@@ -286,6 +286,17 @@
     border-radius: 7px;
     background: var(--raised);
   }
+  /* A command asking for administrator rights is a different question from the usual one, so
+     the card says so before the command and carries a stronger edge. */
+  .ask.admin { border-color: var(--accent); }
+
+  .ask .warn {
+    color: var(--accent);
+    font-size: 11.5px;
+    font-weight: 600;
+    margin-bottom: 7px;
+  }
+
   .ask .cmd {
     font-family: var(--code-font);
     font-size: var(--code-size);
@@ -325,6 +336,28 @@
   }
 
   #status { font-size: 11.5px; color: var(--faint); min-height: 15px; min-width: 0; }
+
+  /* Which model is answering, changeable mid-conversation. Sits in the bar rather than in a
+     settings page because it is a property of this chat, and the reason to change it — a reply
+     that wanted a bigger model, or a cheap follow-up — only becomes apparent while reading. */
+  #modelPick { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+
+  #model, #modelText {
+    font: inherit;
+    font-size: 11px;
+    color: var(--faint);
+    background: var(--chrome);
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 2px 5px;
+    max-width: 190px;
+    cursor: pointer;
+  }
+
+  #model:hover, #modelText:hover { color: var(--text); border-color: var(--divider); }
+  #model:focus, #modelText:focus { outline: none; border-color: var(--accent); color: var(--text); }
+  #modelText { cursor: text; }
+  #model option { background: var(--chrome); color: var(--text); }
 
   /* How full the window is. An estimate, so it is a bar rather than a number pretending to
      be exact — it earns its place by warning before a limit, not by being audited. */
@@ -481,6 +514,10 @@
     <div id="chips"></div>
     <div id="meta">
       <div id="status"></div>
+      <div id="modelPick" hidden>
+        <select id="model" title="Model answering this chat"></select>
+        <input id="modelText" hidden spellcheck="false" placeholder="model name" />
+      </div>
       <div id="gauge" hidden>
         <div id="track"><div id="fill"></div></div>
         <span id="gaugeText"></span>
@@ -504,6 +541,9 @@
   const status = document.getElementById("status");
 
   const chips = document.getElementById("chips");
+  const modelPick = document.getElementById("modelPick");
+  const modelBox = document.getElementById("model");
+  const modelText = document.getElementById("modelText");
   const gauge = document.getElementById("gauge");
   const fill = document.getElementById("fill");
   const gaugeText = document.getElementById("gaugeText");
@@ -531,6 +571,37 @@
 
   let openTurn = null;
   let avatarSrc = "";
+
+  /** Sentinel option: the endpoint's list is never exhaustive, so a name can be typed instead. */
+  const CUSTOM = "__custom__";
+  let current = "";
+
+  modelBox.onchange = () => {
+    if (modelBox.value === CUSTOM) {
+      modelText.hidden = false;
+      modelText.value = current;
+      modelText.focus();
+      modelText.select();
+      return;
+    }
+
+    modelText.hidden = true;
+    post({ t: "model", name: modelBox.value });
+  };
+
+  modelText.onkeydown = (event) => {
+    if (event.key === "Enter") {
+      const name = modelText.value.trim();
+      modelText.hidden = true;
+      if (name) post({ t: "model", name });
+      else modelBox.value = current;
+    } else if (event.key === "Escape") {
+      modelText.hidden = true;
+      modelBox.value = current;
+    }
+
+    event.stopPropagation();
+  };
 
   /** The thumbnail for an attachment, or the glyph standing in for its kind. */
   function face(file) {
@@ -653,6 +724,35 @@
       }
     },
 
+    /** The models this endpoint offers, and which one is answering now. */
+    models(m) {
+      const list = m.list || [];
+      current = m.current || "";
+
+      modelPick.hidden = false;
+      modelText.hidden = true;
+      modelBox.innerHTML = "";
+
+      // The one in use is listed even when the endpoint did not name it: a proxy that serves a
+      // model happily while leaving it out of its catalogue is common, and dropping it from the
+      // list would look like the chat had silently changed model.
+      const names = list.includes(current) || !current ? list.slice() : [current, ...list];
+
+      for (const name of names) {
+        const option = el("option");
+        option.value = name;
+        option.textContent = name;
+        modelBox.appendChild(option);
+      }
+
+      const other = el("option");
+      other.value = CUSTOM;
+      other.textContent = "Other…";
+      modelBox.appendChild(other);
+
+      modelBox.value = current;
+    },
+
     context(m) {
       const window_ = m.window || 0;
       if (!window_) { gauge.hidden = true; return; }
@@ -744,7 +844,12 @@
 
     ask(m) {
       openTurn = null;
-      const box = el("div", "ask");
+      const box = el("div", "ask" + (m.elevated ? " admin" : ""));
+
+      // Elevation is called out above the command, not beside the buttons: it changes what
+      // approving means, and it has to be read before the eye reaches "Run".
+      if (m.elevated) box.appendChild(el("div", "warn", "Asks to run as administrator"));
+
       box.appendChild(el("div", "cmd", m.commandHtml));
       const row = el("div", "row");
 

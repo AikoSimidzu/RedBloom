@@ -47,6 +47,16 @@ public sealed class ChatSession : INotifyPropertyChanged
         set => Set(ref _title, value);
     }
 
+    /// <summary>
+    /// Which model answers here, when it should not be the agent's own. Empty follows the agent.
+    /// </summary>
+    /// <remarks>
+    /// Per chat rather than per agent because the choice belongs to the conversation: switching
+    /// to a bigger model for one hard question should not quietly re-point every other chat, and
+    /// the endpoint and key — the parts that are actually configuration — stay the agent's.
+    /// </remarks>
+    public string Model { get; set; } = string.Empty;
+
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 
     public DateTime UpdatedAt { get; set; } = DateTime.Now;

@@ -31,14 +31,15 @@ public static class CommandRunner
         var start = new ProcessStartInfo
         {
             FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-
-            // chcp first so the pipes carry UTF-8: cmd defaults to the OEM code page, which
-            // turns every non-Latin character in the output into rubbish.
-            Arguments = $"/c chcp 65001>nul & {command}",
+            Arguments = $"/c {command}",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
+
+            // Read as bytes and decide afterwards. Which encoding comes back is not knowable in
+            // advance: cmd's own messages arrive in the OEM code page, while most modern tools
+            // write UTF-8 whatever the console is set to.
+            StandardOutputEncoding = Encoding.Latin1,
+            StandardErrorEncoding = Encoding.Latin1,
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -78,9 +79,9 @@ public static class CommandRunner
         }
 
         var output = new StringBuilder();
-        output.Append(await Safe(stdout).ConfigureAwait(false));
+        output.Append(Decode(await Safe(stdout).ConfigureAwait(false)));
 
-        var errors = await Safe(stderr).ConfigureAwait(false);
+        var errors = Decode(await Safe(stderr).ConfigureAwait(false));
         if (errors.Length > 0)
         {
             output.Append(output.Length > 0 ? "\n" : string.Empty).Append(errors);
@@ -96,6 +97,54 @@ public static class CommandRunner
         return result.Length > MaxOutput
             ? result[..MaxOutput] + $"\n(output cut after {MaxOutput} characters)"
             : result;
+    }
+
+    /// <summary>
+    /// The console code page, for output that is not UTF-8.
+    /// </summary>
+    /// <remarks>
+    /// A child started without a console still writes in the OEM code page — 866 on a Russian
+    /// Windows — and the usual <c>chcp 65001</c> cannot change that, because there is no console
+    /// for it to change. So the code page is read here instead and used to decode what comes back.
+    /// </remarks>
+    private static readonly Lazy<Encoding> Oem = new(() =>
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            return Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            // No such code page on this machine; Latin-1 at least keeps every byte distinct.
+            return Encoding.Latin1;
+        }
+    });
+
+    /// <summary>
+    /// Turns what a command printed into text, in whichever of the two encodings it used.
+    /// </summary>
+    /// <remarks>
+    /// UTF-8 first, strictly: its multi-byte sequences are structured enough that text in a
+    /// single-byte code page almost never passes for valid UTF-8, so a failure to decode is a
+    /// reliable sign of the other case rather than a coin toss. Pure ASCII — most output — reads
+    /// the same either way.
+    /// </remarks>
+    private static string Decode(string raw)
+    {
+        // Latin-1 was asked for above precisely so that this round-trip returns the original
+        // bytes: every byte maps to the code point of the same value and back.
+        var bytes = Encoding.Latin1.GetBytes(raw);
+
+        try
+        {
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return Oem.Value.GetString(bytes);
+        }
     }
 
     private static async Task<string> Safe(Task<string> read)

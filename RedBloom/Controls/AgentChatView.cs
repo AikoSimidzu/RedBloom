@@ -66,6 +66,14 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         _agent = agent;
         _chat = chat;
+
+        // A chat that was switched to another model keeps it. Only the name is overridden; the
+        // endpoint, key and permissions stay the agent's.
+        if (!string.IsNullOrWhiteSpace(chat.Model))
+        {
+            _agent.Model = chat.Model;
+        }
+
         _transport = AgentTransports.For(agent, this);
 
         // A reopened chat starts with its own past, so the model picks up where it left off
@@ -205,6 +213,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 _pageReady = true;
                 PushTheme();
                 Greet();
+                _ = PushModelsAsync();
+                break;
+
+            case "model" when message.TryGetProperty("name", out var picked):
+                SwitchModel(picked.GetString() ?? string.Empty);
                 break;
 
             case "send" when message.TryGetProperty("text", out var text):
@@ -272,6 +285,53 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         _webView.DefaultBackgroundColor = s.BackgroundMode == BackgroundMode.None
             ? System.Drawing.Color.FromArgb(255, background.R, background.G, background.B)
             : System.Drawing.Color.FromArgb(0, background.R, background.G, background.B);
+    }
+
+    /// <summary>
+    /// Fills the model picker, asking the endpoint what it serves.
+    /// </summary>
+    /// <remarks>
+    /// The picker is shown as soon as the current model is known and filled in again when the
+    /// listing arrives, so a slow or silent endpoint leaves a one-item list rather than an empty
+    /// control that looks broken.
+    /// </remarks>
+    private async Task PushModelsAsync()
+    {
+        Post(new { t = "models", list = Array.Empty<string>(), current = _agent.Model });
+
+        var models = await ModelCatalog.FetchAsync(_agent).ConfigureAwait(true);
+
+        if (!_disposed && models.Count > 0)
+        {
+            Post(new { t = "models", list = models, current = _agent.Model });
+        }
+    }
+
+    /// <summary>
+    /// Points this chat at another model, from the next message on.
+    /// </summary>
+    /// <remarks>
+    /// Only the model changes: the endpoint, the key and the tools are the agent's, and the
+    /// transport reads the name afresh on every request, so nothing has to be torn down and the
+    /// conversation carries over intact. A model swapped mid-chat therefore answers with the
+    /// whole history behind it, which is the point — the reason to reach for a bigger one is
+    /// usually the question that was just asked.
+    /// </remarks>
+    private void SwitchModel(string name)
+    {
+        name = name.Trim();
+
+        if (name.Length == 0 || name == _agent.Model)
+        {
+            return;
+        }
+
+        _agent.Model = name;
+        _chat.Model = name;
+        ChatStore.Save(_chat);
+
+        Post(new { t = "status", text = $"answering with {name}", busy = false });
+        _ = PushModelsAsync();
     }
 
     /// <summary>Hands the page the app's own colours and fonts, so the chat matches the window.</summary>
@@ -711,14 +771,19 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     public bool Enabled => _agent.AllowCommands;
 
     /// <inheritdoc />
-    public Task<bool> ApproveAsync(string command, CancellationToken cancellationToken)
+    /// <remarks>
+    /// A command asking for administrator rights is always put to the user, standing allowance or
+    /// not. An allowance is granted for a pattern in the ordinary run of things; it is not consent
+    /// to run that same pattern one privilege level up.
+    /// </remarks>
+    public Task<bool> ApproveAsync(string command, bool elevated, CancellationToken cancellationToken)
     {
-        if (!_agent.AskBeforeRun || _agent.IsAlwaysAllowed(command))
+        if (!elevated && (!_agent.AskBeforeRun || _agent.IsAlwaysAllowed(command)))
         {
             return Task.FromResult(true);
         }
 
-        _suggested = AiAgent.SuggestAllowPattern(command);
+        _suggested = elevated ? string.Empty : AiAgent.SuggestAllowPattern(command);
         var pending = new TaskCompletionSource<char>(TaskCreationOptions.RunContinuationsAsynchronously);
         _approval = pending;
 
@@ -727,6 +792,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             t = "ask",
             commandHtml = Markdown.Escape(command),
             pattern = _suggested,
+            elevated,
         });
 
         cancellationToken.Register(() => pending.TrySetResult('n'));
@@ -748,8 +814,27 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     }
 
     /// <inheritdoc />
-    public Task<string> RunAsync(string command, CancellationToken cancellationToken) =>
-        CommandRunner.RunAsync(command, cancellationToken);
+    /// <remarks>
+    /// An elevated command goes to the helper, starting it — and so asking Windows for consent —
+    /// the first time one is approved. Consent refused is reported back to the model as the
+    /// command's result rather than as a failed turn, so it can say what it would have done or
+    /// find a way that needs no administrator at all.
+    /// </remarks>
+    public async Task<string> RunAsync(string command, bool elevated, CancellationToken cancellationToken)
+    {
+        if (!elevated)
+        {
+            return await CommandRunner.RunAsync(command, cancellationToken).ConfigureAwait(true);
+        }
+
+        if (!ElevatedHost.IsRunning
+            && await ElevatedHost.StartAsync(cancellationToken).ConfigureAwait(true) is { } refused)
+        {
+            return $"This command needed administrator rights and did not get them: {refused}";
+        }
+
+        return await ElevatedHost.RunAsync(command, cancellationToken).ConfigureAwait(true);
+    }
 
     /// <summary>Adds a standing allowance to this session and to the saved agent behind it.</summary>
     private void Remember(string pattern)

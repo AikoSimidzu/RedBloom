@@ -685,7 +685,7 @@
                 </Button>
 
                 <!-- Only shown when the app is not already elevated. -->
-                <Button x:Name="ElevateMenuButton" Click="RestartElevated_Click" Cursor="Hand"
+                <Button x:Name="ElevateMenuButton" Click="Elevate_Click" Cursor="Hand"
                         HorizontalContentAlignment="Left" Visibility="Collapsed">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -706,7 +706,7 @@
                                    Foreground="{DynamicResource Accent}"
                                    VerticalAlignment="Center"
                                    Width="20" />
-                        <TextBlock Text="{DynamicResource L_RestartAdmin}"
+                        <TextBlock Text="{DynamicResource L_ElevateNow}"
                                    Foreground="{DynamicResource TextPrimary}"
                                    FontFamily="{DynamicResource UiFont}"
                                    FontSize="12"
@@ -741,6 +741,20 @@
                                FontFamily="{DynamicResource UiFont}"
                                FontSize="13"
                                FontWeight="SemiBold" />
+
+                    <!-- Only a chat has a name of its own to edit; a session tab is named by
+                         the session and a quick connection by its host. -->
+                    <StackPanel x:Name="CardNameRow" Visibility="Collapsed">
+                        <TextBlock Text="{DynamicResource L_AiChatName}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="11"
+                                   Margin="0,12,0,4" />
+                        <TextBox x:Name="CardNameBox"
+                                 FontFamily="{DynamicResource UiFont}"
+                                 FontSize="12" Padding="7,4"
+                                 KeyDown="CardName_KeyDown" />
+                    </StackPanel>
 
                     <!-- Only a chat has an avatar, so this row is shown when the card being
                          edited belongs to one and hidden for tabs that do not. -->
@@ -814,6 +828,39 @@
                                    HorizontalAlignment="Right" VerticalAlignment="Center" />
                     </Grid>
                     <Slider Minimum="0" Maximum="60" Value="{Binding Blur, Mode=TwoWay}" Margin="0,2,0,0" />
+
+                    <TextBlock Text="{DynamicResource L_CardImage}"
+                               Foreground="{DynamicResource TextMuted}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="11"
+                               Margin="0,12,0,4" />
+                    <Grid ColumnDefinitions="*,6,Auto,6,Auto">
+                        <TextBox Grid.Column="0"
+                                 Text="{Binding ImagePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 FontFamily="Cascadia Mono, Consolas, monospace"
+                                 FontSize="11.5" Padding="7,4" />
+                        <Button Grid.Column="2"
+                                Content="{DynamicResource L_Browse}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="9,4"
+                                Click="CardImageBrowse_Click" />
+                        <Button Grid.Column="4"
+                                Content="{DynamicResource L_Clear}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="9,4"
+                                Click="CardImageClear_Click" />
+                    </Grid>
+
+                    <!-- Bound to the stretch name itself rather than to an index, so the list can
+                         be reordered without silently changing what each row means. -->
+                    <ComboBox Margin="0,6,0,0"
+                              SelectedValuePath="Tag"
+                              SelectedValue="{Binding Stretch, Mode=TwoWay}">
+                        <ComboBoxItem Tag="UniformToFill" Content="{DynamicResource L_FitFillCrop}" />
+                        <ComboBoxItem Tag="Uniform" Content="{DynamicResource L_FitInside}" />
+                        <ComboBoxItem Tag="Fill" Content="{DynamicResource L_FitStretch}" />
+                        <ComboBoxItem Tag="None" Content="{DynamicResource L_FitOriginal}" />
+                    </ComboBox>
 
                     <Button Style="{StaticResource GhostButton}"
                             Content="{DynamicResource L_CardReset}"

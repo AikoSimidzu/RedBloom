@@ -41,6 +41,8 @@ public static class LocalizationService
         ["L_TrayShow"] = "Show RedBloom",
         ["L_TrayExit"] = "Exit",
         ["L_RestartAdmin"] = "Restart as administrator",
+        ["L_ElevateNow"] = "Gain administrator rights",
+        ["L_ElevateReady"] = "Administrator rights are ready. Commands that ask for them now run elevated.",
         ["L_AlreadyAdmin"] = "Running as administrator",
         ["L_SshSessions"] = "SSH SESSIONS",
         ["L_NewSshSession"] = "New SSH session",
@@ -109,6 +111,7 @@ public static class LocalizationService
         ["L_AiNewChat"] = "New chat",
         ["L_AiNoChats"] = "No chats with this agent yet",
         ["L_AiDeleteChat"] = "Delete this chat",
+        ["L_AiChatName"] = "Chat name",
         ["L_AiChatAvatar"] = "Avatar for this chat",
         ["L_AiChatAvatarNote"] = "Leave empty to use the agent's own picture.",
 
@@ -323,6 +326,8 @@ public static class LocalizationService
         ["L_TrayShow"] = "Показать RedBloom",
         ["L_TrayExit"] = "Выход",
         ["L_RestartAdmin"] = "Перезапустить от администратора",
+        ["L_ElevateNow"] = "Получить права администратора",
+        ["L_ElevateReady"] = "Права администратора получены. Команды, которым они нужны, теперь выполняются с ними.",
         ["L_AlreadyAdmin"] = "Запущено от администратора",
         ["L_SshSessions"] = "SSH-СЕССИИ",
         ["L_NewSshSession"] = "Новая SSH-сессия",
@@ -390,6 +395,7 @@ public static class LocalizationService
         ["L_AiNewChat"] = "Новый чат",
         ["L_AiNoChats"] = "С этим агентом ещё нет чатов",
         ["L_AiDeleteChat"] = "Удалить чат",
+        ["L_AiChatName"] = "Название чата",
         ["L_AiChatAvatar"] = "Аватар этого чата",
         ["L_AiChatAvatarNote"] = "Пусто — берётся картинка агента.",
 
