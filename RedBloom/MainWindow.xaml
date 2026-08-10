@@ -500,7 +500,7 @@
                               SelectionChanged="AgentPicker_Changed">
                         <ComboBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type models:AiAgent}">
-                                <TextBlock Text="{Binding Name}"
+                                <TextBlock Text="{Binding PickerName}"
                                            FontFamily="{DynamicResource UiFont}"
                                            TextTrimming="CharacterEllipsis" />
                             </DataTemplate>

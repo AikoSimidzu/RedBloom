@@ -315,17 +315,44 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    /// <summary>Fills the agent picker, keeping the current choice where it still exists.</summary>
+    /// <summary>
+    /// Fills the agent picker, keeping the current choice where it still exists.
+    /// </summary>
+    /// <remarks>
+    /// The configured agents go in at once and the models on this machine are added when the
+    /// look-round answers: finding those means asking the engine whether it is listening, and
+    /// the picker should not sit empty for a second while that happens.
+    /// </remarks>
     private void RefreshAgents()
     {
-        var wanted = SelectedAgent?.Id;
-        AgentPicker.ItemsSource = ThemeService.Settings.Agents;
+        // The downloaded files are a directory listing, so they go in with the saved agents
+        // straight away; only what the engine is serving has to be waited for.
+        Show([.. ThemeService.Settings.Agents, .. Services.Ai.LocalAgents.FromFiles()]);
 
-        AgentPicker.SelectedItem =
-            ThemeService.Settings.Agents.FirstOrDefault(a => a.Id == wanted)
-            ?? ThemeService.Settings.Agents.FirstOrDefault();
+        _ = AddLocalAgentsAsync();
 
-        RefreshChats();
+        void Show(List<AiAgent> agents)
+        {
+            var wanted = SelectedAgent?.Id;
+            AgentPicker.ItemsSource = agents;
+
+            AgentPicker.SelectedItem =
+                agents.FirstOrDefault(a => a.Id == wanted) ?? agents.FirstOrDefault();
+
+            RefreshChats();
+        }
+
+        async Task AddLocalAgentsAsync()
+        {
+            var local = await Services.Ai.LocalAgents.DiscoverAsync().ConfigureAwait(true);
+
+            // The saved list is re-read rather than captured: the look-round takes a moment, and
+            // an agent may have been added or removed in it.
+            if (local.Count > 0)
+            {
+                Show([.. ThemeService.Settings.Agents, .. local]);
+            }
+        }
     }
 
     private void AgentPicker_Changed(object sender, SelectionChangedEventArgs e) => RefreshChats();

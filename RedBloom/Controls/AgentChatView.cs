@@ -754,6 +754,33 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         ChatContext.EstimateTokens(Conversation(pictures: false).Select(m => m.Text))
         + (_history.Sum(turn => ChatContext.CountImages(turn.Attachments)) * ChatContext.TokensPerImage);
 
+    /// <summary>
+    /// Brings a local model up before the first question reaches it. Null when it is ready.
+    /// </summary>
+    /// <remarks>
+    /// Done at the first send rather than when the tab opens: a model is gigabytes of memory and
+    /// several seconds of loading, and someone who opened the chat to read it back should not
+    /// pay for either. Once it is up the check is a listing call, so later turns are unaffected.
+    /// </remarks>
+    private async Task<string?> StartLocalModelAsync(CancellationToken cancellationToken)
+    {
+        if (!_agent.IsLocal)
+        {
+            return null;
+        }
+
+        Phase(AgentPhase.Loading);
+
+        var refused = await LocalAgents.EnsureRunningAsync(_agent, cancellationToken).ConfigureAwait(true);
+
+        if (refused is null)
+        {
+            Phase(AgentPhase.Thinking);
+        }
+
+        return refused;
+    }
+
     private async Task RunTurnAsync()
     {
         var turn = new CancellationTokenSource();
@@ -774,6 +801,13 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         try
         {
+            if (await StartLocalModelAsync(turn.Token).ConfigureAwait(true) is { } refused)
+            {
+                Post(new { t = "note", html = Markdown.Escape(refused) });
+
+                return;
+            }
+
             await CompactIfFullAsync(turn.Token).ConfigureAwait(true);
 
             await foreach (var item in _transport.SendAsync(Conversation(), turn.Token).ConfigureAwait(true))
@@ -918,6 +952,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         var what = LocalizationService.T(phase switch
         {
+            AgentPhase.Loading => "L_PhaseLoading",
             AgentPhase.Deciding => "L_PhaseDeciding",
             AgentPhase.Running => "L_PhaseRunning",
             AgentPhase.RunningElevated => "L_PhaseRunningAdmin",

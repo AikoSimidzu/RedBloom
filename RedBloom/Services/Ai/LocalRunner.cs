@@ -19,7 +19,12 @@ public sealed record RunnerState(string Name, string BaseUrl, bool Running, IRea
 /// </remarks>
 public static class LocalRunner
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
+    /// <summary>
+    /// Short, because these are both on this machine: a runner that is there answers at once,
+    /// and one that is not refuses at once. Anything longer is a pause the user sits through
+    /// every time the picker is filled.
+    /// </summary>
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMilliseconds(1200) };
 
     /// <summary>Where Ollama listens unless it has been told otherwise.</summary>
     public const string OllamaUrl = "http://127.0.0.1:11434";
@@ -39,13 +44,22 @@ public static class LocalRunner
     /// </remarks>
     public static string ModelsFolder { get; } = Path.Combine(AppContext.BaseDirectory, "AIModels");
 
-    /// <summary>What is listening right now, and what it offers.</summary>
+    /// <summary>
+    /// What is listening right now, and what it offers.
+    /// </summary>
+    /// <remarks>
+    /// Both are asked at once. One after the other meant waiting out the first refusal before
+    /// the second was even tried, which doubled a delay the user notices — this runs whenever
+    /// the agent list is filled.
+    /// </remarks>
     public static async Task<IReadOnlyList<RunnerState>> DetectAsync(CancellationToken cancellationToken = default)
     {
-        var ollama = await OllamaAsync(cancellationToken).ConfigureAwait(false);
-        var llama = await LlamaAsync(cancellationToken).ConfigureAwait(false);
+        var ollama = OllamaAsync(cancellationToken);
+        var llama = LlamaAsync(cancellationToken);
 
-        return [ollama, llama];
+        await Task.WhenAll(ollama, llama).ConfigureAwait(false);
+
+        return [ollama.Result, llama.Result];
     }
 
     /// <summary>The GGUF files already downloaded here.</summary>

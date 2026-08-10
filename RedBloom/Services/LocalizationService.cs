@@ -284,6 +284,11 @@ public static class LocalizationService
         ["L_ChatCopied"] = "copied",
         ["L_ChatShowAll"] = "show all {0} lines",
         ["L_ChatOutput"] = "output",
+        ["L_PhaseLoading"] = "loading the model — the first time takes a while",
+        ["L_LocalNotLoaded"] = "The model was registered but the engine is not serving it.",
+        ["L_LocalNoFile"] =
+            "This model is not loaded and its file is not in the models folder. Download it again "
+            + "on the local models page, or start it there.",
         ["L_PhaseThinking"] = "thinking",
         ["L_PhaseDeciding"] = "working out what to do next",
         ["L_PhaseRunning"] = "running a command",
@@ -667,6 +672,11 @@ public static class LocalizationService
         ["L_ChatCopied"] = "скопировано",
         ["L_ChatShowAll"] = "показать все строки: {0}",
         ["L_ChatOutput"] = "вывод",
+        ["L_PhaseLoading"] = "загружаю модель — в первый раз это небыстро",
+        ["L_LocalNotLoaded"] = "Модель зарегистрирована, но движок её не отдаёт.",
+        ["L_LocalNoFile"] =
+            "Модель не загружена, и её файла нет в папке моделей. Скачайте заново на странице "
+            + "локальных моделей или запустите её оттуда.",
         ["L_PhaseThinking"] = "думаю",
         ["L_PhaseDeciding"] = "решаю, что делать дальше",
         ["L_PhaseRunning"] = "выполняю команду",

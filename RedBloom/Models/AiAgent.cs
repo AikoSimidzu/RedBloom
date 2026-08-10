@@ -55,6 +55,20 @@ public sealed class AiAgent : INotifyPropertyChanged
 
     public string Name { get => _name; set => Set(ref _name, value); }
 
+    /// <summary>
+    /// True for a model found on this machine rather than an agent the user configured.
+    /// </summary>
+    /// <remarks>
+    /// Read off the id rather than stored: these are discovered afresh each time the list is
+    /// shown, so a saved flag would be one more thing that could disagree with reality.
+    /// </remarks>
+    [JsonIgnore]
+    public bool IsLocal => _id.StartsWith("local:", StringComparison.Ordinal);
+
+    /// <summary>How the picker names it — local models are marked so the source is never a guess.</summary>
+    [JsonIgnore]
+    public string PickerName => IsLocal ? $"[L]  {_name}" : _name;
+
     public AiProvider Provider { get => _provider; set => Set(ref _provider, value); }
 
     /// <summary>

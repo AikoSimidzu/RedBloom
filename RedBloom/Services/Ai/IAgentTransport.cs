@@ -76,6 +76,7 @@ public enum AgentEventKind
 public static class AgentPhase
 {
     public const string Thinking = "thinking";
+    public const string Loading = "loading";
     public const string Deciding = "deciding";
     public const string Running = "running";
     public const string RunningElevated = "running-elevated";
