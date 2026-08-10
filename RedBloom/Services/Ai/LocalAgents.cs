@@ -81,15 +81,48 @@ public static class LocalAgents
     }
 
     /// <summary>A model's identity without the tag the engine appends to it.</summary>
-    private static string Key(string model) => model.Split(':')[0];
+    public static string Key(string model) => model.Split(':')[0];
+
+    /// <summary>
+    /// The name given to a model here, or the one it came with.
+    /// </summary>
+    /// <remarks>
+    /// A file downloaded from the hub is called something like
+    /// <c>qwythos-9b-claude-mythos-5-1m-uncensored-heretic-q6_k</c>, which says everything about
+    /// the build and nothing about what it is for. Renaming changes only the label: the id, the
+    /// file, and what the engine is asked for all stay as they were, so chats stay attached and
+    /// a rename cannot break the model.
+    /// </remarks>
+    public static string NameOf(string model) =>
+        ThemeService.Settings.LocalModelNames.TryGetValue(Key(model), out var given)
+        && !string.IsNullOrWhiteSpace(given)
+            ? given
+            // Shown without the engine's default tag, which is on everything and so
+            // distinguishes nothing. A tag chosen deliberately is kept, because then it does.
+            : model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? Key(model) : model;
+
+    /// <summary>Gives a local model a name of its own, or takes it back to the original.</summary>
+    public static void Rename(string model, string name)
+    {
+        var key = Key(model);
+        var given = name.Trim();
+
+        if (given.Length == 0)
+        {
+            ThemeService.Settings.LocalModelNames.Remove(key);
+        }
+        else
+        {
+            ThemeService.Settings.LocalModelNames[key] = given;
+        }
+
+        ThemeService.Save();
+    }
 
     private static AiAgent Build(string model, string baseUrl) => new()
     {
         Id = Prefix + Key(model),
-
-        // Shown without the engine's default tag, which is on everything and so distinguishes
-        // nothing. A tag that was chosen deliberately is kept, because then it does.
-        Name = model.EndsWith(":latest", StringComparison.OrdinalIgnoreCase) ? Key(model) : model,
+        Name = NameOf(model),
         Provider = AiProvider.OpenAiCompatible,
         BaseUrl = baseUrl,
         Model = model,

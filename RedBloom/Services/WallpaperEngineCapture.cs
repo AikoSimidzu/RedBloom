@@ -46,6 +46,8 @@ public sealed class WallpaperEngineCapture : IDisposable
     private volatile bool _running;
     private int _generation;
     private long _lastFrameIndex = -1;
+    private long _lastFrameAt;
+    private bool _stallReported;
 
     // Two managed buffers in rotation, so the UI thread can still be reading the previous
     // frame while the next is copied out of shared memory.
@@ -64,6 +66,21 @@ public sealed class WallpaperEngineCapture : IDisposable
     /// on the capture thread, at most once per run, and never for an ordinary <see cref="Stop"/>.
     /// </remarks>
     public event Action? Unavailable;
+
+    /// <summary>
+    /// Raised when the hook is in place and healthy but no new frame has arrived for a while,
+    /// which means Wallpaper Engine has stopped drawing.
+    /// </summary>
+    /// <remarks>
+    /// Worth saying out loud, because it is the one failure that looks exactly like a bug in
+    /// this app and is not one: Wallpaper Engine pauses itself when a window is maximised or
+    /// fullscreen — that is its default — and a paused engine presents nothing to capture. Left
+    /// unexplained, the background simply stops moving and the reason is invisible.
+    /// </remarks>
+    public event Action? Stalled;
+
+    /// <summary>How long without a frame counts as stopped rather than slow.</summary>
+    private static readonly TimeSpan StallAfter = TimeSpan.FromSeconds(4);
 
     public bool IsRunning => _running;
 
@@ -180,8 +197,21 @@ public sealed class WallpaperEngineCapture : IDisposable
         var frameIndex = view.ReadInt64(OffFrameIndex);
         if (frameIndex == _lastFrameIndex)
         {
+            // The engine is there and the block is valid, but it is not presenting. Said once
+            // per run: repeating it while a window stays maximised would be nagging.
+            if (!_stallReported
+                && _lastFrameAt != 0
+                && Environment.TickCount64 - _lastFrameAt > StallAfter.TotalMilliseconds)
+            {
+                _stallReported = true;
+                Stalled?.Invoke();
+            }
+
             return;
         }
+
+        _lastFrameAt = Environment.TickCount64;
+        _stallReported = false;
 
         var width = (int)view.ReadUInt32(OffWidth);
         var height = (int)view.ReadUInt32(OffHeight);

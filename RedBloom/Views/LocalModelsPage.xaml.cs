@@ -87,8 +87,15 @@ public sealed record ModelRow(HubModel Model)
     };
 }
 
-/// <summary>One model already on disk.</summary>
-public sealed record LocalRow(string Path, string Name, string Size);
+/// <summary>
+/// One model on this machine, whether it came from a file or from the engine's own store.
+/// </summary>
+/// <param name="Model">The name the engine answers to, which renaming never changes.</param>
+/// <param name="Path">Where its file is, or null when only the engine holds it.</param>
+public sealed record LocalRow(string Model, string Name, string Detail, string? Path)
+{
+    public bool HasFile => Path is not null;
+}
 
 /// <summary>
 /// Models that run on this machine: what is installed, what is listening, and what could be
@@ -315,21 +322,10 @@ public partial class LocalModelsPage : UserControl
     {
         MachineLine.Text = MachineFit.Summary;
 
-        var rows = new List<LocalRow>();
-
-        foreach (var file in LocalRunner.Downloaded())
-        {
-            rows.Add(new LocalRow(
-                file.FullName,
-                file.Name,
-                $"{MachineFit.Gigabytes(file.Length)} GB · {MachineFit.Describe(MachineFit.Rate(file.Length))}"));
-        }
-
-        DownloadedList.ItemsSource = rows;
-        DownloadedBox.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-
         var runners = await LocalRunner.DetectAsync().ConfigureAwait(true);
         var running = runners.Where(r => r.Running).ToList();
+
+        ShowInstalled(running);
 
         UpdateEngineButton(running.Count > 0);
 
@@ -351,6 +347,75 @@ public partial class LocalModelsPage : UserControl
         // A runner with something loaded is the whole point, so the way to use it is offered
         // right there rather than left to be assembled by hand in the agent settings.
         UseButtons(running);
+    }
+
+    /// <summary>
+    /// Everything on this machine: the files that were downloaded, and whatever the engine
+    /// already holds.
+    /// </summary>
+    /// <remarks>
+    /// Both are listed because both can be chosen as an agent, and anything that can be chosen
+    /// should be nameable. A model the engine holds without a file of its own — pulled with
+    /// Ollama directly, say — has nothing to start or delete here, so those buttons stay away
+    /// rather than sitting there greyed out.
+    /// </remarks>
+    private void ShowInstalled(IReadOnlyList<RunnerState> running)
+    {
+        var rows = new List<LocalRow>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in LocalRunner.Downloaded())
+        {
+            var model = System.IO.Path.GetFileNameWithoutExtension(file.Name).ToLowerInvariant();
+            seen.Add(LocalAgents.Key(model));
+
+            rows.Add(new LocalRow(
+                model,
+                LocalAgents.NameOf(model),
+                $"{MachineFit.Gigabytes(file.Length)} {LocalizationService.T("L_UnitGb")} · "
+                    + MachineFit.Describe(MachineFit.Rate(file.Length)),
+                file.FullName));
+        }
+
+        foreach (var model in running.SelectMany(runner => runner.Models))
+        {
+            if (seen.Add(LocalAgents.Key(model)))
+            {
+                rows.Add(new LocalRow(
+                    model,
+                    LocalAgents.NameOf(model),
+                    LocalizationService.T("L_LocalInEngine"),
+                    null));
+            }
+        }
+
+        DownloadedList.ItemsSource = rows;
+        DownloadedBox.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void RenameModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: LocalRow row })
+        {
+            return;
+        }
+
+        var dialog = new TextPromptDialog(
+            LocalizationService.T("L_LocalRenameTitle"),
+            LocalizationService.T("L_LocalRenameNote"),
+            row.Name)
+        {
+            Owner = Window.GetWindow(this),
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        LocalAgents.Rename(row.Model, dialog.Answer);
+
+        await RefreshAsync().ConfigureAwait(true);
     }
 
     /// <summary>

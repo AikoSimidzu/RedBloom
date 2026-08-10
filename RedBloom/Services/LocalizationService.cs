@@ -319,6 +319,16 @@ public static class LocalizationService
         ["L_DlDone"] = "{0} of {1} GB",
         ["L_DlSpeed"] = "{0} MB/s",
         ["L_DlLeft"] = "{0} left",
+        ["L_WallpaperPaused"] =
+            "The live background has stopped because Wallpaper Engine has paused itself. By "
+            + "default it pauses while a window is maximised or fullscreen — change that under "
+            + "Settings → Performance → “Other applications” in Wallpaper Engine.",
+        ["L_Rename"] = "Rename",
+        ["L_LocalInEngine"] = "in the engine's own store",
+        ["L_LocalRenameTitle"] = "Name this model",
+        ["L_LocalRenameNote"] =
+            "Only the label changes. The model, its file and what the engine is asked for stay "
+            + "as they are, so existing chats keep working. Leave it empty for the original name.",
         ["L_LocalNoModelLoaded"] = "no model loaded",
         ["L_LocalDownloads"] = "{0:N0} downloads",
         ["L_LocalParts"] = "{0} parts",
@@ -707,6 +717,16 @@ public static class LocalizationService
         ["L_DlDone"] = "{0} из {1} ГБ",
         ["L_DlSpeed"] = "{0} МБ/с",
         ["L_DlLeft"] = "осталось {0}",
+        ["L_WallpaperPaused"] =
+            "Живой фон замер: Wallpaper Engine поставил себя на паузу. По умолчанию он делает "
+            + "это, пока какое-то окно развёрнуто или на весь экран — поменять можно в его "
+            + "настройках: «Производительность» → «Другие приложения».",
+        ["L_Rename"] = "Переименовать",
+        ["L_LocalInEngine"] = "в хранилище движка",
+        ["L_LocalRenameTitle"] = "Название модели",
+        ["L_LocalRenameNote"] =
+            "Меняется только подпись. Сама модель, её файл и то, что запрашивается у движка, "
+            + "остаются прежними — существующие чаты продолжат работать. Пусто — вернуть исходное.",
         ["L_LocalNoModelLoaded"] = "модель не загружена",
         ["L_LocalDownloads"] = "{0:N0} скачиваний",
         ["L_LocalParts"] = "частей: {0}",

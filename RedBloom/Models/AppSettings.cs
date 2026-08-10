@@ -225,6 +225,18 @@ public sealed class AppSettings : INotifyPropertyChanged
     /// </remarks>
     public List<AiAgent> Agents { get; set; } = [];
 
+    /// <summary>
+    /// Names given to models found on this machine, by model id.
+    /// </summary>
+    /// <remarks>
+    /// Only the name is kept, not the model. Local models are discovered afresh each time the
+    /// list is shown — see <see cref="Services.Ai.LocalAgents"/> — so storing the whole thing
+    /// would create entries that outlive the files. A name, on the other hand, is the one part
+    /// the machine cannot work out for itself, and an entry left behind after a model is deleted
+    /// costs a line of text.
+    /// </remarks>
+    public Dictionary<string, string> LocalModelNames { get; set; } = [];
+
     public event Action? Changed;
 
     /// <summary>Subscribes to the nested layers so their edits raise <see cref="Changed"/> too.</summary>

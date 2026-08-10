@@ -55,6 +55,30 @@ public sealed class LiveWallpaperSource : IDisposable
         _desktop.FrameReady += OnFrame;
         _engine.FrameReady += OnFrame;
         _engine.Unavailable += OnEngineUnavailable;
+        _engine.Stalled += OnEngineStalled;
+    }
+
+    /// <summary>
+    /// Raised when Wallpaper Engine has stopped drawing, so there is nothing to capture.
+    /// </summary>
+    /// <remarks>
+    /// Not a reason to fall back to the whole-desktop capture: a paused engine leaves the
+    /// desktop showing the same frozen frame, so the other source would produce the identical
+    /// still picture with the icons added. The only useful response is to say what happened.
+    /// </remarks>
+    public event Action? EnginePaused;
+
+    private void OnEngineStalled()
+    {
+        lock (_gate)
+        {
+            if (!_wanted || !ReferenceEquals(_active, _engine))
+            {
+                return;
+            }
+        }
+
+        EnginePaused?.Invoke();
     }
 
     public void Start()

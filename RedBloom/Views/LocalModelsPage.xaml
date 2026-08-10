@@ -6,6 +6,7 @@
              FontFamily="{DynamicResource UiFont}">
     <UserControl.Resources>
         <views:FitBrushConverter x:Key="FitBrush" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
 
         <!-- Rows that answer to the pointer: without it a list of near-identical model names
              gives no sign of which one is being read, let alone which is selected. -->
@@ -91,29 +92,39 @@
                 <ItemsControl x:Name="DownloadedList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,3">
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,4">
                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Name}"
                                                Foreground="{DynamicResource TextPrimary}"
-                                               FontSize="12"
+                                               FontSize="12.5"
                                                TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding Size}"
+                                    <TextBlock Text="{Binding Detail}"
                                                Foreground="{DynamicResource TextFaint}"
-                                               FontSize="10.5" />
+                                               FontSize="10.5"
+                                               TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
-                                        Content="{DynamicResource L_LocalStart}"
+                                        Content="{DynamicResource L_Rename}"
                                         Style="{StaticResource GhostButton}"
                                         Padding="10,4"
                                         Margin="8,0,0,0"
-                                        Tag="{Binding Path}"
-                                        Click="Start_Click" />
+                                        Tag="{Binding}"
+                                        Click="RenameModel_Click" />
                                 <Button Grid.Column="2"
+                                        Content="{DynamicResource L_LocalStart}"
+                                        Style="{StaticResource GhostButton}"
+                                        Padding="10,4"
+                                        Margin="6,0,0,0"
+                                        Tag="{Binding Path}"
+                                        Visibility="{Binding HasFile, Converter={StaticResource BoolToVis}}"
+                                        Click="Start_Click" />
+                                <Button Grid.Column="3"
                                         Content="{DynamicResource L_Delete}"
                                         Style="{StaticResource GhostButton}"
                                         Padding="10,4"
                                         Margin="6,0,0,0"
                                         Tag="{Binding Path}"
+                                        Visibility="{Binding HasFile, Converter={StaticResource BoolToVis}}"
                                         Click="DeleteModel_Click" />
                             </Grid>
                         </DataTemplate>
