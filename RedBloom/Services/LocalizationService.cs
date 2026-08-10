@@ -53,6 +53,52 @@ public static class LocalizationService
         ["L_NoOpenTerminals"] = "No open terminals",
         ["L_EmptyHint"] = "Ctrl+Shift+T for a new tab  ·  double-click a session to connect",
         ["L_Settings"] = "Settings",
+        ["L_AiSettings"] = "AI settings",
+
+        // ---- AI agents ----
+        ["L_AiTitle"] = "AI agents",
+        ["L_AiNote"] = "Each agent is an endpoint, a model and a set of standing instructions. "
+                       + "Run one and it opens as a tab, like a shell or an SSH session.",
+        ["L_AiAdd"] = "Add",
+        ["L_AiDelete"] = "Delete",
+        ["L_AiNewAgent"] = "New agent",
+        ["L_AiName"] = "Name",
+        ["L_AiProvider"] = "API",
+        ["L_AiOpenAiCompatible"] = "OpenAI-compatible",
+        ["L_AiBaseUrl"] = "Endpoint",
+        ["L_AiBaseUrlNote"] = "Leave empty for the provider's own. Requests go to {0}.",
+        ["L_AiApiKey"] = "API key",
+        ["L_AiModel"] = "Model",
+        ["L_AiMaxTokens"] = "Reply limit (tokens)",
+        ["L_AiEffort"] = "Effort",
+        ["L_AiThinking"] = "Let the model think first",
+        ["L_AiThinkingNote"] = "Adaptive: the model decides per question how much thought it is worth. "
+                               + "The reasoning itself is never returned, so a thinking turn shows as a pause.",
+        ["L_AiAllowCommands"] = "Let this agent run commands",
+        ["L_AiAllowCommandsNote"] = "The agent gets a tool that runs command lines on this machine, "
+                                    + "with everything your account can do. What it decides to run is "
+                                    + "shaped by whatever it has read along the way, so leave the "
+                                    + "approval prompt on unless you are watching the session.",
+        ["L_AiAskBeforeRun"] = "Ask before each command",
+        ["L_AiAllowedCommands"] = "Allowed without asking",
+        ["L_AiAllowedCommandsNote"] = "One per line. A line matches a command that is exactly it, "
+                                      + "or that starts with it followed by a space — so \"git\" covers "
+                                      + "every git call, \"git status\" only that one. Answering [a] at "
+                                      + "the prompt adds a line here.",
+        ["L_AiSystemPrompt"] = "Standing instructions",
+        ["L_AiTest"] = "Test connection",
+        ["L_AiTesting"] = "Checking…",
+        ["L_AiTestOk"] = "The endpoint answered and accepted the key.",
+        ["L_AiTestFailed"] = "Failed: {0}",
+        ["L_AiLaunch"] = "Run",
+        ["L_AiImport"] = "Import",
+        ["L_AiImportTitle"] = "Import a config",
+        ["L_AiImportNote"] = "Paste the settings of a command-line Claude tool — the object with an "
+                             + "\"env\" block. One agent is created per model it names.",
+        ["L_AiImportFromFile"] = "From a file…",
+        ["L_AiImportAction"] = "Import",
+        ["L_AiImportReading"] = "Reading the config…",
+        ["L_AiImported"] = "Imported {0}.",
 
         // ---- settings: header ----
         ["L_Appearance"] = "Appearance",
@@ -277,6 +323,52 @@ public static class LocalizationService
         ["L_NoOpenTerminals"] = "Нет открытых терминалов",
         ["L_EmptyHint"] = "Ctrl+Shift+T — новая вкладка  ·  двойной клик по сессии для подключения",
         ["L_Settings"] = "Параметры",
+        ["L_AiSettings"] = "Параметры AI",
+
+        // ---- AI agents ----
+        ["L_AiTitle"] = "AI-агенты",
+        ["L_AiNote"] = "Агент — это эндпоинт, модель и постоянные инструкции. "
+                       + "Запущенный агент открывается вкладкой, как оболочка или SSH-сессия.",
+        ["L_AiAdd"] = "Добавить",
+        ["L_AiDelete"] = "Удалить",
+        ["L_AiNewAgent"] = "Новый агент",
+        ["L_AiName"] = "Название",
+        ["L_AiProvider"] = "API",
+        ["L_AiOpenAiCompatible"] = "OpenAI-совместимый",
+        ["L_AiBaseUrl"] = "Эндпоинт",
+        ["L_AiBaseUrlNote"] = "Пусто — собственный адрес провайдера. Запросы уходят на {0}.",
+        ["L_AiApiKey"] = "Ключ API",
+        ["L_AiModel"] = "Модель",
+        ["L_AiMaxTokens"] = "Предел ответа (токены)",
+        ["L_AiEffort"] = "Усилие",
+        ["L_AiThinking"] = "Разрешить модели подумать",
+        ["L_AiThinkingNote"] = "Адаптивно: модель сама решает, сколько размышлений стоит вопрос. "
+                               + "Сами рассуждения наружу не отдаются, поэтому такой ход выглядит как пауза.",
+        ["L_AiAllowCommands"] = "Разрешить агенту выполнять команды",
+        ["L_AiAllowCommandsNote"] = "Агент получает инструмент, запускающий команды на этой машине — "
+                                    + "с правами твоей учётки. На то, что он решит запустить, влияет "
+                                    + "всё прочитанное по дороге, поэтому подтверждение лучше не "
+                                    + "выключать, если не смотришь за сессией.",
+        ["L_AiAskBeforeRun"] = "Спрашивать перед каждой командой",
+        ["L_AiAllowedCommands"] = "Разрешено без вопросов",
+        ["L_AiAllowedCommandsNote"] = "По строке на образец. Строка подходит команде, равной ей или "
+                                      + "начинающейся с неё и пробела: «git» покрывает любой вызов git, "
+                                      + "«git status» — только его. Ответ [a] в приглашении добавляет "
+                                      + "строку сюда.",
+        ["L_AiSystemPrompt"] = "Постоянные инструкции",
+        ["L_AiTest"] = "Проверить связь",
+        ["L_AiTesting"] = "Проверяю…",
+        ["L_AiTestOk"] = "Эндпоинт ответил, ключ принят.",
+        ["L_AiTestFailed"] = "Не вышло: {0}",
+        ["L_AiLaunch"] = "Запустить",
+        ["L_AiImport"] = "Импорт",
+        ["L_AiImportTitle"] = "Импорт конфига",
+        ["L_AiImportNote"] = "Вставь настройки консольного Claude-инструмента — объект с блоком "
+                             + "\"env\". На каждую названную модель заводится агент.",
+        ["L_AiImportFromFile"] = "Из файла…",
+        ["L_AiImportAction"] = "Импортировать",
+        ["L_AiImportReading"] = "Читаю конфиг…",
+        ["L_AiImported"] = "Импортировано: {0}.",
 
         ["L_Appearance"] = "Внешний вид",
         ["L_AppearanceNote"] = "Изменения применяются сразу и сохраняются на ходу.",

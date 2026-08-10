@@ -99,12 +99,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // DWM offers only three fixed corner sizes; "Round" is the larger of the two rounded
         // ones (~8px against RoundSmall's ~4px). A maximized window stays square on its own.
         Interop.Dwm.SetCornerPreference(handle, Interop.Dwm.CornerPreference.Round);
-        Interop.MaximizeBounds.Attach(handle);
+        Interop.MaximizeBounds.Attach(handle, this);
 
         HookWallpaperCapture();
         ApplyBackdrops();
         ThemeService.Applied += ApplyBackdrops;
         Closed += (_, _) => ThemeService.Applied -= ApplyBackdrops;
+
+        // The AI page raises this rather than opening tabs itself: pages are content, and the
+        // window is what owns the tab strip.
+        AiSettingsPage.LaunchRequested += OpenAgentTab;
 
         SetupTray();
 
@@ -160,6 +164,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             (tab.Content as IDisposable)?.Dispose();
         }
 
+        // Static, so leaving it subscribed would keep this window alive past its close.
+        AiSettingsPage.LaunchRequested -= OpenAgentTab;
+
         _capture.FrameReady -= OnWallpaperFrame;
         _capture.Dispose();
         _tray?.Dispose();
@@ -185,6 +192,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private sealed record SshSource(SshSession Session, string? Secret) : PaneSource;
 
+    private sealed record AgentSource(AiAgent Agent) : PaneSource;
+
     // How each live pane can be reproduced, for the split shortcuts.
     private readonly Dictionary<TerminalView, PaneSource> _paneSources = [];
 
@@ -199,6 +208,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             AutoReconnect = ssh.Session.AutoReconnect,
         },
+
+        // Cloned for the same reason as an SSH pane: a split is its own conversation, and edits
+        // made on the settings page afterwards must not reach a session already running.
+        AgentSource agent => new TerminalView((_, _, _) =>
+            Task.FromResult<ITerminalBackend>(new AgentBackend(agent.Agent.Clone()))),
 
         _ => throw new ArgumentOutOfRangeException(nameof(source)),
     };
@@ -228,8 +242,44 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         tab.Card = session.TabCard;
     }
 
+    /// <summary>Opens a configured AI agent as its own terminal tab.</summary>
+    private void OpenAgentTab(AiAgent agent)
+    {
+        var source = new AgentSource(agent);
+        var view = CreateView(source);
+        _paneSources[view] = source;
+
+        var tab = AddTerminalTab(view, agent.Name, AiGlyph, $"{agent.Model} · {agent.ResolvedBaseUrl}");
+
+        // Like a local shell, an agent tab has no saved session to keep a card look in.
+        tab.Card = new TabCardStyle();
+    }
+
     /// <summary>Segoe MDL2 "Settings", used for the appearance tab.</summary>
     private const string SettingsGlyph = "";
+
+    /// <summary>Segoe MDL2 "Robot", used for the AI page and for agent tabs.</summary>
+    private const string AiGlyph = "\uE99A";
+
+    /// <summary>Opens the AI page, or brings the open one forward.</summary>
+    private void OpenAiSettingsTab()
+    {
+        if (Tabs.FirstOrDefault(t => t.Content is AiSettingsPage) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        AddTab(new AiSettingsPage(), LocalizationService.T("L_AiSettings"), AiGlyph,
+            LocalizationService.T("L_AiTitle"));
+    }
+
+    private void AiSettings_Click(object sender, RoutedEventArgs e)
+    {
+        // Every other entry in this menu closes it on the way out; this one was missing it.
+        ShellPopup.IsOpen = false;
+        OpenAiSettingsTab();
+    }
 
     /// <summary>
     /// Opens the appearance page, or brings it forward if it is already open — a second copy
@@ -1133,6 +1183,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _dragOrigin = e.GetPosition(TabStrip);
         _dragging = false;
     }
+
+
 
     private void TabStrip_PreviewMouseMove(object sender, MouseEventArgs e)
     {

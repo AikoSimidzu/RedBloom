@@ -212,6 +212,19 @@ public sealed class AppSettings : INotifyPropertyChanged
     }
 
     /// <summary>Raised for any change, so listeners can re-apply without naming every property.</summary>
+    // ---- AI agents ----
+
+    /// <summary>
+    /// The configured agents, in the order the AI settings page lists them.
+    /// </summary>
+    /// <remarks>
+    /// Replaced wholesale on load rather than merged, so the reflection copy in
+    /// <see cref="CopyFrom"/> handles it without help. Edits inside an agent do not raise
+    /// <see cref="Changed"/> — the page that makes them saves explicitly, which keeps a
+    /// half-typed endpoint from being written on every keystroke.
+    /// </remarks>
+    public List<AiAgent> Agents { get; set; } = [];
+
     public event Action? Changed;
 
     /// <summary>Subscribes to the nested layers so their edits raise <see cref="Changed"/> too.</summary>

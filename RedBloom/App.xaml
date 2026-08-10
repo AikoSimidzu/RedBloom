@@ -342,7 +342,21 @@
                                     <Border.Effect>
                                         <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.5" Color="Black" />
                                     </Border.Effect>
-                                    <ItemsPresenter />
+
+                                    <!-- The list has to be inside a ScrollViewer capped at
+                                         MaxDropDownHeight: a bare ItemsPresenter lays every item
+                                         out at full height with nothing to scroll it, which the
+                                         three-item pickers survive and the font list does not.
+                                         CanContentScroll keeps the ComboBox's virtualising panel
+                                         doing its job, so the few hundred installed fonts cost
+                                         only the rows actually on screen. -->
+                                    <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                                  CanContentScroll="True"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  Focusable="False">
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
                                 </Border>
                             </Popup>
                         </Grid>
@@ -479,7 +493,12 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ScrollBar">
                         <Grid Background="{TemplateBinding Background}">
-                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <!-- The track has to follow the bar's own orientation, and only the
+                                 vertical one counts down the way it scrolls; without both, a
+                                 horizontal bar draws its thumb sideways and backwards. -->
+                            <Track x:Name="PART_Track"
+                                   Orientation="{TemplateBinding Orientation}"
+                                   IsDirectionReversed="True">
                                 <Track.Thumb>
                                     <Thumb>
                                         <Thumb.Template>
@@ -499,9 +518,21 @@
                                 </Track.DecreaseRepeatButton>
                             </Track>
                         </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <!-- The fixed size belongs to whichever axis the bar is thin on.  -->
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto" />
+                    <Setter Property="Height" Value="9" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
     </Application.Resources>

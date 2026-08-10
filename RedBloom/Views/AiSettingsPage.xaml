@@ -1,0 +1,242 @@
+<UserControl x:Class="RedBloom.Views.AiSettingsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             Background="{DynamicResource Surface}"
+             UseLayoutRounding="True"
+             TextOptions.TextFormattingMode="Display">
+
+    <UserControl.Resources>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+            <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,3" />
+        </Style>
+
+        <Style x:Key="SectionNote" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextFaint}" />
+            <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,0,0,14" />
+        </Style>
+
+        <Style x:Key="RowLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}" />
+            <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <Style x:Key="AgentItem" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="4,1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Root" Background="Transparent" CornerRadius="5" Padding="9,7">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource ChromeHover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource SurfaceRaised}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="18,16,18,16" RowDefinitions="Auto,*">
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="{DynamicResource L_AiTitle}" Style="{StaticResource SectionTitle}" />
+            <TextBlock Text="{DynamicResource L_AiNote}" Style="{StaticResource SectionNote}" />
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnDefinitions="220,18,*">
+
+            <!-- ==== the agent list ==== -->
+            <Grid Grid.Column="0" RowDefinitions="*,Auto">
+                <Border Grid.Row="0"
+                        Background="{DynamicResource Chrome}"
+                        BorderBrush="{DynamicResource Divider}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <ListBox x:Name="AgentList"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             Foreground="{DynamicResource TextPrimary}"
+                             ItemContainerStyle="{StaticResource AgentItem}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="Agent_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}"
+                                               Foreground="{DynamicResource TextPrimary}"
+                                               FontFamily="{DynamicResource UiFont}"
+                                               FontSize="12"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Model}"
+                                               Foreground="{DynamicResource TextFaint}"
+                                               FontFamily="{DynamicResource UiFont}"
+                                               FontSize="10.5"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="0,1,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Border>
+
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
+                    <Button Content="{DynamicResource L_AiAdd}"
+                            Style="{StaticResource GhostButton}"
+                            Padding="10,5"
+                            Click="AddAgent_Click" />
+                    <Button x:Name="DeleteAgentButton"
+                            Content="{DynamicResource L_AiDelete}"
+                            Style="{StaticResource GhostButton}"
+                            Padding="10,5"
+                            Margin="6,0,0,0"
+                            Click="DeleteAgent_Click" />
+                    <Button Content="{DynamicResource L_AiImport}"
+                            Style="{StaticResource GhostButton}"
+                            Padding="10,5"
+                            Margin="6,0,0,0"
+                            Click="Import_Click" />
+                </StackPanel>
+            </Grid>
+
+            <!-- ==== the editor for the selected agent ==== -->
+            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="Editor" IsEnabled="False">
+
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiName}" Style="{StaticResource RowLabel}" />
+                        <TextBox Grid.Column="1" x:Name="NameBox" TextChanged="Field_Changed" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiProvider}" Style="{StaticResource RowLabel}" />
+                        <ComboBox Grid.Column="1" x:Name="ProviderBox" SelectionChanged="Provider_Changed">
+                            <ComboBoxItem Content="Anthropic" />
+                            <ComboBoxItem Content="{DynamicResource L_AiOpenAiCompatible}" />
+                        </ComboBox>
+                    </Grid>
+
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,2">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiBaseUrl}" Style="{StaticResource RowLabel}" />
+                        <TextBox Grid.Column="1" x:Name="BaseUrlBox" TextChanged="Field_Changed" />
+                    </Grid>
+                    <TextBlock x:Name="BaseUrlHint"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,10" />
+
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiApiKey}" Style="{StaticResource RowLabel}" />
+                        <PasswordBox Grid.Column="1" x:Name="ApiKeyBox" PasswordChanged="ApiKey_Changed" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiModel}" Style="{StaticResource RowLabel}" />
+                        <TextBox Grid.Column="1" x:Name="ModelBox" TextChanged="Field_Changed" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiMaxTokens}" Style="{StaticResource RowLabel}" />
+                        <TextBox Grid.Column="1" x:Name="MaxTokensBox" TextChanged="Field_Changed" />
+                    </Grid>
+
+                    <Grid x:Name="EffortRow" ColumnDefinitions="150,*" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiEffort}" Style="{StaticResource RowLabel}" />
+                        <ComboBox Grid.Column="1" x:Name="EffortBox" SelectionChanged="Field_Changed">
+                            <ComboBoxItem Content="low" />
+                            <ComboBoxItem Content="medium" />
+                            <ComboBoxItem Content="high" />
+                            <ComboBoxItem Content="xhigh" />
+                            <ComboBoxItem Content="max" />
+                        </ComboBox>
+                    </Grid>
+
+                    <CheckBox x:Name="ThinkingBox"
+                              Content="{DynamicResource L_AiThinking}"
+                              Margin="150,0,0,4"
+                              Checked="Field_Changed"
+                              Unchecked="Field_Changed" />
+                    <TextBlock x:Name="ThinkingHint"
+                               Text="{DynamicResource L_AiThinkingNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,12" />
+
+                    <CheckBox x:Name="AllowCommandsBox"
+                              Content="{DynamicResource L_AiAllowCommands}"
+                              Margin="150,0,0,4"
+                              Checked="Commands_Changed"
+                              Unchecked="Commands_Changed" />
+                    <TextBlock Text="{DynamicResource L_AiAllowCommandsNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,6" />
+                    <CheckBox x:Name="AskBeforeRunBox"
+                              Content="{DynamicResource L_AiAskBeforeRun}"
+                              Margin="150,0,0,8"
+                              Checked="Field_Changed"
+                              Unchecked="Field_Changed" />
+
+                    <TextBlock x:Name="AllowedLabel"
+                               Text="{DynamicResource L_AiAllowedCommands}"
+                               Style="{StaticResource RowLabel}"
+                               Margin="150,0,0,4" />
+                    <TextBox x:Name="AllowedCommandsBox"
+                             Margin="150,0,0,4"
+                             Height="70"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Cascadia Mono, Consolas, monospace"
+                             FontSize="11.5"
+                             TextChanged="Field_Changed" />
+                    <TextBlock x:Name="AllowedHint"
+                               Text="{DynamicResource L_AiAllowedCommandsNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,14" />
+
+                    <TextBlock Text="{DynamicResource L_AiSystemPrompt}" Style="{StaticResource RowLabel}" Margin="0,0,0,4" />
+                    <TextBox x:Name="SystemPromptBox"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             Height="120"
+                             TextChanged="Field_Changed" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <Button x:Name="TestButton"
+                                Content="{DynamicResource L_AiTest}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="12,6"
+                                Click="Test_Click" />
+                        <Button Content="{DynamicResource L_AiLaunch}"
+                                Style="{StaticResource AccentButton}"
+                                Padding="12,6"
+                                Margin="8,0,0,0"
+                                Click="Launch_Click" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="TestResult"
+                               Style="{StaticResource SectionNote}"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</UserControl>

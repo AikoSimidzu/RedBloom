@@ -11,7 +11,7 @@
         Title="RedBloom" Height="620" Width="1040"
         MinHeight="360" MinWidth="720"
         WindowStyle="None"
-        ResizeMode="CanResize"
+        ResizeMode="CanResize" WindowStartupLocation="CenterScreen"
         Background="Transparent"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Display">
@@ -27,6 +27,7 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <local:HexToBrushConverter x:Key="HexToBrush" />
+        <local:RemainingWidthConverter x:Key="RemainingWidth" />
 
         <!-- ===== a tab in the strip ===== -->
         <DataTemplate x:Key="TabTemplate" DataType="{x:Type local:TerminalTab}">
@@ -35,7 +36,6 @@
                     CornerRadius="6,6,0,0"
                     Margin="0,4,2,0"
                     Height="32"
-                    MinWidth="120"
                     MaxWidth="220"
                     ClipToBounds="True"
                     MouseLeftButtonDown="Tab_MouseLeftButtonDown"
@@ -234,23 +234,42 @@
         <Border Grid.Row="0" Grid.Column="1" Background="{DynamicResource TabBarFill}">
             <Grid ColumnDefinitions="*,Auto">
 
-                <!-- tabs + new tab split button -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left">
+                <!-- tabs + new tab split button.
+                     A Grid rather than a StackPanel: a horizontal StackPanel hands its children
+                     infinite width, so the strip laid every tab out at full size and the ones
+                     past the edge slid under the caption buttons and were clipped away, taking
+                     the new-tab and split buttons with them. The star column bounds the strip so
+                     the overflow scrolls instead, and the buttons keep a column of their own. -->
+                <Grid x:Name="TabBar" Grid.Column="0" ColumnDefinitions="Auto,*">
+                    <!-- The strip sizes to its tabs so the buttons stay flush against the last
+                         one, capped at whatever the buttons leave it. Past that cap the tabs
+                         share the width out between them instead of running off the edge. -->
                     <ItemsControl x:Name="TabStrip"
+                                  Grid.Column="0"
                                   ItemsSource="{Binding Tabs}"
                                   ItemTemplate="{StaticResource TabTemplate}"
                                   VerticalAlignment="Bottom"
+                                  HorizontalAlignment="Left"
                                   PreviewMouseMove="TabStrip_PreviewMouseMove"
                                   PreviewMouseLeftButtonUp="TabStrip_PreviewMouseLeftButtonUp"
                                   LostMouseCapture="TabStrip_LostMouseCapture">
+                        <ItemsControl.MaxWidth>
+                            <MultiBinding Converter="{StaticResource RemainingWidth}">
+                                <Binding ElementName="TabBar" Path="ActualWidth" />
+                                <Binding ElementName="TabActions" Path="ActualWidth" />
+                            </MultiBinding>
+                        </ItemsControl.MaxWidth>
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal" />
+                                <controls:TabStripPanel />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                     </ItemsControl>
 
-                    <StackPanel Orientation="Horizontal"
+                    <StackPanel x:Name="TabActions"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Left"
                                 VerticalAlignment="Center"
                                 Margin="4,2,0,0"
                                 shell:WindowChrome.IsHitTestVisibleInChrome="True">
@@ -285,7 +304,7 @@
                                 Click="SplitNew_Click"
                                 ToolTip="{DynamicResource L_SplitNewTip}" />
                     </StackPanel>
-                </StackPanel>
+                </Grid>
 
                 <!-- caption buttons -->
                 <StackPanel Grid.Column="1"
@@ -505,6 +524,34 @@
                                    VerticalAlignment="Center"
                                    Width="20" />
                         <TextBlock Text="{DynamicResource L_Settings}"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <Button Click="AiSettings_Click" Cursor="Hand" HorizontalContentAlignment="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Root" Background="Transparent" CornerRadius="4" Padding="10,7">
+                                <ContentPresenter />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Root" Property="Background" Value="{DynamicResource ChromeHover}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <StackPanel Orientation="Horizontal" MinWidth="170">
+                        <TextBlock Text="&#xE99A;"
+                                   FontFamily="{StaticResource IconFont}"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   VerticalAlignment="Center"
+                                   Width="20" />
+                        <TextBlock Text="{DynamicResource L_AiSettings}"
                                    Foreground="{DynamicResource TextPrimary}"
                                    FontFamily="{DynamicResource UiFont}"
                                    FontSize="12"
