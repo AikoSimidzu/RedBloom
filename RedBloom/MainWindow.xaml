@@ -134,6 +134,41 @@
             </Setter>
         </Style>
 
+        <!-- ===== one saved chat in the sidebar ===== -->
+        <DataTemplate x:Key="ChatTemplate" DataType="{x:Type models:ChatSession}">
+            <Grid ColumnDefinitions="Auto,*,Auto"
+                  Background="Transparent"
+                  MouseRightButtonUp="ChatList_RightClick">
+                <Border Grid.Column="0"
+                        Width="3" Height="26"
+                        CornerRadius="2"
+                        Background="{DynamicResource AccentDim}"
+                        Margin="0,0,9,0" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Title}"
+                               Foreground="{DynamicResource TextPrimary}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Summary}"
+                               Foreground="{DynamicResource TextFaint}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="10.5"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,1,0,0" />
+                </StackPanel>
+                <Button Grid.Column="2"
+                        Style="{StaticResource IconButton}"
+                        Content="&#xE74D;"
+                        FontSize="10"
+                        Width="20" Height="20"
+                        VerticalAlignment="Center"
+                        Click="DeleteChat_Click"
+                        Tag="{Binding}"
+                        ToolTip="{DynamicResource L_AiDeleteChat}" />
+            </Grid>
+        </DataTemplate>
+
         <DataTemplate x:Key="SessionTemplate" DataType="{x:Type models:SshSession}">
             <Grid ColumnDefinitions="Auto,*,Auto">
                 <Border Grid.Column="0"
@@ -344,7 +379,32 @@
             <Grid x:Name="SidebarContent"
                   Width="220"
                   HorizontalAlignment="Left"
-                  RowDefinitions="Auto,Auto,*">
+                  RowDefinitions="Auto,*">
+
+                <!-- Which half of the sidebar is showing. Saved connections and saved chats are
+                     both lists of things to open, but they have nothing to say to each other,
+                     so they take turns rather than sharing the column. -->
+                <Border Grid.Row="0"
+                        Margin="12,12,12,8"
+                        Background="{DynamicResource Chrome}"
+                        CornerRadius="6"
+                        Padding="2">
+                    <Grid ColumnDefinitions="*,*">
+                        <RadioButton x:Name="SshModeButton"
+                                     Grid.Column="0"
+                                     Style="{StaticResource SegmentedRadio}"
+                                     Content="SSH"
+                                     IsChecked="True"
+                                     Checked="SidebarMode_Changed" />
+                        <RadioButton x:Name="AiModeButton"
+                                     Grid.Column="1"
+                                     Style="{StaticResource SegmentedRadio}"
+                                     Content="AI"
+                                     Checked="SidebarMode_Changed" />
+                    </Grid>
+                </Border>
+
+                <Grid x:Name="SshPanel" Grid.Row="1" RowDefinitions="Auto,Auto,*">
 
                 <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="14,12,8,6">
                     <TextBlock Grid.Column="0"
@@ -406,6 +466,71 @@
                                    HorizontalAlignment="Center"
                                    Margin="0,4,0,0" />
                     </StackPanel>
+                </Grid>
+                </Grid>
+
+                <!-- ==== AI: pick an agent, then its chats ==== -->
+                <Grid x:Name="AiPanel"
+                      Grid.Row="1"
+                      RowDefinitions="Auto,Auto,*"
+                      Visibility="Collapsed">
+
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="14,12,8,6">
+                        <TextBlock Grid.Column="0"
+                                   Text="{DynamicResource L_AiChats}"
+                                   Foreground="{DynamicResource TextFaint}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE710;"
+                                Width="22" Height="22"
+                                Click="NewChat_Click"
+                                ToolTip="{DynamicResource L_AiNewChat}" />
+                    </Grid>
+
+                    <!-- An explicit item template rather than DisplayMemberPath: the combo box
+                         here wears a hand-written control template, and the template the path
+                         generates does not reach its selection box. -->
+                    <ComboBox x:Name="AgentPicker"
+                              Grid.Row="1"
+                              Margin="12,0,12,8"
+                              SelectionChanged="AgentPicker_Changed">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:AiAgent}">
+                                <TextBlock Text="{Binding Name}"
+                                           FontFamily="{DynamicResource UiFont}"
+                                           TextTrimming="CharacterEllipsis" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <Grid Grid.Row="2">
+                        <ListBox x:Name="ChatList"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 ItemTemplate="{StaticResource ChatTemplate}"
+                                 ItemContainerStyle="{StaticResource SessionItemStyle}"
+                                 HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 MouseDoubleClick="ChatList_MouseDoubleClick"
+                                 KeyDown="ChatList_KeyDown" />
+
+                        <StackPanel x:Name="NoChats"
+                                    VerticalAlignment="Center"
+                                    Margin="24,0"
+                                    IsHitTestVisible="False"
+                                    Visibility="Collapsed">
+                            <TextBlock Text="{DynamicResource L_AiNoChats}"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       FontFamily="{DynamicResource UiFont}"
+                                       FontSize="11.5"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
             </Grid>
         </Border>
@@ -616,6 +741,38 @@
                                FontFamily="{DynamicResource UiFont}"
                                FontSize="13"
                                FontWeight="SemiBold" />
+
+                    <!-- Only a chat has an avatar, so this row is shown when the card being
+                         edited belongs to one and hidden for tabs that do not. -->
+                    <StackPanel x:Name="CardAvatarRow" Visibility="Collapsed">
+                        <TextBlock Text="{DynamicResource L_AiChatAvatar}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="11"
+                                   Margin="0,12,0,4" />
+                        <Grid ColumnDefinitions="*,6,Auto,6,Auto">
+                            <TextBox Grid.Column="0"
+                                     x:Name="CardAvatarBox"
+                                     FontFamily="Cascadia Mono, Consolas, monospace"
+                                     FontSize="11.5" Padding="7,4" />
+                            <Button Grid.Column="2"
+                                    Content="{DynamicResource L_Browse}"
+                                    Style="{StaticResource GhostButton}"
+                                    Padding="9,4"
+                                    Click="CardAvatarBrowse_Click" />
+                            <Button Grid.Column="4"
+                                    Content="{DynamicResource L_Clear}"
+                                    Style="{StaticResource GhostButton}"
+                                    Padding="9,4"
+                                    Click="CardAvatarClear_Click" />
+                        </Grid>
+                        <TextBlock Text="{DynamicResource L_AiChatAvatarNote}"
+                                   Foreground="{DynamicResource TextFaint}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="10.5"
+                                   TextWrapping="Wrap"
+                                   Margin="0,4,0,0" />
+                    </StackPanel>
 
                     <TextBlock Text="{DynamicResource L_CardColor}"
                                Foreground="{DynamicResource TextMuted}"

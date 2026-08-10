@@ -35,6 +35,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         ShellProfiles = ShellProfile.Discover();
         _store.Load();
+        ChatStore.Load();
 
         SessionsView = CollectionViewSource.GetDefaultView(_store.Sessions);
         SessionsView.Filter = FilterSession;
@@ -44,6 +45,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _store.Sessions.CollectionChanged += OnSessionsChanged;
         Tabs.CollectionChanged += OnTabsChanged;
+
+        // A chat becomes real the first time it is answered, which happens in a tab rather than
+        // in the sidebar — so the list follows the store instead of being rebuilt by hand.
+        ChatStore.Chats.CollectionChanged += (_, _) => RefreshChats();
 
         Loaded += OnFirstLoad;
     }
@@ -192,7 +197,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private sealed record SshSource(SshSession Session, string? Secret) : PaneSource;
 
-    private sealed record AgentSource(AiAgent Agent) : PaneSource;
 
     // How each live pane can be reproduced, for the split shortcuts.
     private readonly Dictionary<TerminalView, PaneSource> _paneSources = [];
@@ -209,10 +213,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AutoReconnect = ssh.Session.AutoReconnect,
         },
 
-        // Cloned for the same reason as an SSH pane: a split is its own conversation, and edits
-        // made on the settings page afterwards must not reach a session already running.
-        AgentSource agent => new TerminalView((_, _, _) =>
-            Task.FromResult<ITerminalBackend>(new AgentBackend(agent.Agent.Clone()))),
 
         _ => throw new ArgumentOutOfRangeException(nameof(source)),
     };
@@ -242,17 +242,155 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         tab.Card = session.TabCard;
     }
 
-    /// <summary>Opens a configured AI agent as its own terminal tab.</summary>
-    private void OpenAgentTab(AiAgent agent)
+    /// <summary>Starts a fresh conversation with an agent.</summary>
+    private void OpenAgentTab(AiAgent agent) =>
+        OpenChatTab(agent, new ChatSession { AgentId = agent.Id });
+
+    /// <summary>
+    /// Opens one conversation as its own tab.
+    /// </summary>
+    /// <remarks>
+    /// A page tab rather than a terminal one: the chat draws itself and has nothing a split
+    /// would divide. Closing the tab disposes the content, which is what ends the session.
+    /// </remarks>
+    private void OpenChatTab(AiAgent agent, ChatSession chat)
     {
-        var source = new AgentSource(agent);
-        var view = CreateView(source);
-        _paneSources[view] = source;
+        // One tab per chat: a second view of the same conversation would have the two writing
+        // over each other's history.
+        if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
 
-        var tab = AddTerminalTab(view, agent.Name, AiGlyph, $"{agent.Model} · {agent.ResolvedBaseUrl}");
+        var tab = AddTab(
+            new AgentChatView(agent, chat),
+            chat.Title.Length > 0 ? chat.Title : agent.Name,
+            AiGlyph,
+            $"{agent.Name} · {agent.Model}");
 
-        // Like a local shell, an agent tab has no saved session to keep a card look in.
-        tab.Card = new TabCardStyle();
+        tab.Chat = chat;
+        tab.Card = chat.Card;
+
+        // The card is edited through the same right-click popup a session's is, so a change
+        // there has to reach the chat's own file.
+        chat.Card.Changed += Save;
+        chat.Changed += Rename;
+
+        void Save() => ChatStore.Save(chat);
+
+        void Rename()
+        {
+            if (chat.Title.Length > 0)
+            {
+                tab.Title = chat.Title;
+            }
+        }
+    }
+
+    /// <summary>Which agent the AI panel is showing chats for.</summary>
+    private AiAgent? SelectedAgent => AgentPicker.SelectedItem as AiAgent;
+
+    private void SidebarMode_Changed(object sender, RoutedEventArgs e)
+    {
+        // Fires during XAML load, before the panels exist.
+        if (SshPanel is null || AiPanel is null)
+        {
+            return;
+        }
+
+        var ai = AiModeButton.IsChecked == true;
+        SshPanel.Visibility = ai ? Visibility.Collapsed : Visibility.Visible;
+        AiPanel.Visibility = ai ? Visibility.Visible : Visibility.Collapsed;
+
+        if (ai)
+        {
+            RefreshAgents();
+        }
+    }
+
+    /// <summary>Fills the agent picker, keeping the current choice where it still exists.</summary>
+    private void RefreshAgents()
+    {
+        var wanted = SelectedAgent?.Id;
+        AgentPicker.ItemsSource = ThemeService.Settings.Agents;
+
+        AgentPicker.SelectedItem =
+            ThemeService.Settings.Agents.FirstOrDefault(a => a.Id == wanted)
+            ?? ThemeService.Settings.Agents.FirstOrDefault();
+
+        RefreshChats();
+    }
+
+    private void AgentPicker_Changed(object sender, SelectionChangedEventArgs e) => RefreshChats();
+
+    private void RefreshChats()
+    {
+        // Reached from the store's own event, which can fire before the panel is loaded.
+        if (ChatList is null || NoChats is null)
+        {
+            return;
+        }
+
+        var chats = SelectedAgent is { } agent ? ChatStore.ForAgent(agent.Id).ToList() : [];
+        ChatList.ItemsSource = chats;
+
+        NoChats.Visibility = chats.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void NewChat_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedAgent is { } agent)
+        {
+            OpenAgentTab(agent.Clone());
+        }
+    }
+
+    private void ChatList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ChatList.SelectedItem is ChatSession chat && SelectedAgent is { } agent)
+        {
+            OpenChatTab(agent.Clone(), chat);
+        }
+    }
+
+    private void ChatList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (ChatList.SelectedItem is not ChatSession chat)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter && SelectedAgent is { } agent)
+        {
+            OpenChatTab(agent.Clone(), chat);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Delete)
+        {
+            RemoveChat(chat);
+            e.Handled = true;
+        }
+    }
+
+    private void DeleteChat_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: ChatSession chat })
+        {
+            RemoveChat(chat);
+        }
+    }
+
+    /// <summary>Deletes a chat, closing its tab first so nothing writes it back afterwards.</summary>
+    private void RemoveChat(ChatSession chat)
+    {
+        if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id) is { } open)
+        {
+            CloseTab(open);
+        }
+
+        ChatStore.Delete(chat);
+        RefreshChats();
     }
 
     /// <summary>Segoe MDL2 "Settings", used for the appearance tab.</summary>
@@ -298,13 +436,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     /// <summary>Adds a page tab such as the appearance settings — anything that is not a terminal.</summary>
-    private void AddTab(FrameworkElement content, string title, string glyph, string toolTip)
+    private TerminalTab AddTab(FrameworkElement content, string title, string glyph, string toolTip)
     {
         var tab = new TerminalTab(content, title, glyph, toolTip);
         content.Visibility = Visibility.Collapsed;
         TerminalHost.Children.Add(content);
         Tabs.Add(tab);
         SelectTab(tab);
+        return tab;
     }
 
     /// <summary>Adds a terminal tab, wrapping the first pane in a split container it can grow into.</summary>
@@ -639,6 +778,59 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private TerminalTab? _cardEditTab;
 
+    /// <summary>The chat whose card is being edited, when the editor was opened for one.</summary>
+    private ChatSession? _cardEditChat;
+
+    /// <summary>Opens the card editor for a chat straight from the sidebar list.</summary>
+    /// <remarks>
+    /// The same popup a tab's right-click opens, so a chat is dressed the same way whether or
+    /// not it happens to be open at the time.
+    /// </remarks>
+    private void ChatList_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: ChatSession chat })
+        {
+            return;
+        }
+
+        _cardEditTab = null;
+        _cardEditChat = chat;
+
+        CardAvatarRow.Visibility = Visibility.Visible;
+        CardAvatarBox.Text = chat.AvatarPath;
+
+        TabCardPopup.DataContext = chat.Card;
+        TabCardPopup.PlacementTarget = (UIElement)sender;
+        TabCardPopup.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void CardAvatarBrowse_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Images|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*",
+            CheckFileExists = true,
+        };
+
+        // The card popup shuts on any click outside itself, and the file dialog is outside.
+        TabCardPopup.StaysOpen = true;
+        try
+        {
+            if (dialog.ShowDialog(this) == true)
+            {
+                CardAvatarBox.Text = dialog.FileName;
+            }
+        }
+        finally
+        {
+            TabCardPopup.StaysOpen = false;
+        }
+    }
+
+    private void CardAvatarClear_Click(object sender, RoutedEventArgs e) =>
+        CardAvatarBox.Text = string.Empty;
+
     private void Tab_RightClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: TerminalTab tab })
@@ -650,6 +842,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         tab.Card ??= new TabCardStyle();
 
         _cardEditTab = tab;
+        _cardEditChat = tab.Chat;
+
+        // A chat tab gets the avatar row too, so the same editor serves both routes in.
+        CardAvatarRow.Visibility = tab.Chat is null ? Visibility.Collapsed : Visibility.Visible;
+        CardAvatarBox.Text = tab.Chat?.AvatarPath ?? string.Empty;
+
         TabCardPopup.DataContext = tab.Card;
         TabCardPopup.PlacementTarget = (UIElement)sender;
         TabCardPopup.IsOpen = true;
@@ -694,7 +892,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _store.Save();
         }
 
+        if (_cardEditChat is { } chat)
+        {
+            chat.AvatarPath = CardAvatarBox.Text.Trim();
+            ChatStore.Save(chat);
+
+            // The open tab, if there is one, is showing the old picture until it is told.
+            if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id)?.Content is AgentChatView view)
+            {
+                view.RefreshAvatar();
+            }
+        }
+
         _cardEditTab = null;
+        _cardEditChat = null;
     }
 
     private void CloseTab_Click(object sender, RoutedEventArgs e)

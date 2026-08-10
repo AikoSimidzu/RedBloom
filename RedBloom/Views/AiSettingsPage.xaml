@@ -3,12 +3,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:RedBloom"
              mc:Ignorable="d"
              Background="{DynamicResource Surface}"
              UseLayoutRounding="True"
              TextOptions.TextFormattingMode="Display">
 
     <UserControl.Resources>
+        <local:HexToBrushConverter x:Key="HexToBrush" />
+
         <Style x:Key="SectionTitle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
             <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
@@ -151,6 +154,53 @@
                     <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiModel}" Style="{StaticResource RowLabel}" />
                         <TextBox Grid.Column="1" x:Name="ModelBox" TextChanged="Field_Changed" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="150,Auto,10,*,Auto,Auto" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiAvatar}" Style="{StaticResource RowLabel}" />
+                        <Border Grid.Column="1"
+                                Width="30" Height="30"
+                                CornerRadius="15"
+                                Background="{DynamicResource Chrome}"
+                                BorderBrush="{DynamicResource Divider}"
+                                BorderThickness="1">
+                            <Image x:Name="AvatarPreview" Stretch="UniformToFill" />
+                            <Border.Clip>
+                                <EllipseGeometry Center="15,15" RadiusX="15" RadiusY="15" />
+                            </Border.Clip>
+                        </Border>
+                        <TextBox Grid.Column="3" x:Name="AvatarBox" TextChanged="Field_Changed" />
+                        <Button Grid.Column="4"
+                                Content="{DynamicResource L_Browse}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,4"
+                                Margin="6,0,0,0"
+                                Click="BrowseAvatar_Click" />
+                        <Button Grid.Column="5"
+                                Content="{DynamicResource L_Clear}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,4"
+                                Margin="6,0,0,0"
+                                Click="ClearAvatar_Click" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="150,Auto,10,110" Margin="0,0,0,8">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiNameColor}" Style="{StaticResource RowLabel}" />
+                        <Border Grid.Column="1"
+                                x:Name="NameColorSwatch"
+                                Width="30" Height="26"
+                                CornerRadius="5"
+                                Cursor="Hand"
+                                MouseLeftButtonUp="NameColorSwatch_Click"
+                                Background="{Binding Text, ElementName=NameColorBox, Converter={StaticResource HexToBrush}}"
+                                BorderBrush="{DynamicResource Divider}"
+                                BorderThickness="1" />
+                        <TextBox Grid.Column="3"
+                                 x:Name="NameColorBox"
+                                 FontFamily="Cascadia Mono, Consolas, monospace"
+                                 FontSize="11.5"
+                                 Padding="7,4"
+                                 TextChanged="Field_Changed" />
                     </Grid>
 
                     <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">

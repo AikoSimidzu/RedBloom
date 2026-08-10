@@ -78,6 +78,9 @@ public sealed class TerminalTab : INotifyPropertyChanged
     /// <summary>The saved session behind this tab, so card edits can be persisted. Null for local tabs.</summary>
     public SshSession? Session { get; set; }
 
+    /// <summary>The saved chat behind this tab, for the same reason. Null for everything else.</summary>
+    public ChatSession? Chat { get; set; }
+
     private TabCardStyle? _card;
 
     /// <summary>This tab's own card look, or null to use the theme default.</summary>

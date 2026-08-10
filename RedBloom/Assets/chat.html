@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RedBloom agent</title>
+<style>
+  :root {
+    --page: transparent;
+    --bar: rgba(23, 22, 22, .45);
+    --bubble: rgba(30, 28, 28, .45);
+    --bubble-user: rgba(140, 43, 51, .28);
+    --nick: #ff4d5a;
+    --surface: #171616;
+    --raised: #1e1c1c;
+    --chrome: #221f1f;
+    --divider: #2d2d2d;
+    --text: #e6e0e0;
+    --muted: #a89f9f;
+    --faint: #6b6363;
+    --accent: #ff4d5a;
+    --accent-dim: #8c2b33;
+    --ui-font: "Segoe UI", system-ui, sans-serif;
+    --code-font: "Cascadia Mono", Consolas, monospace;
+    --code-size: 12.5px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--page);
+    color: var(--text);
+    font-family: var(--ui-font);
+    font-size: 13.5px;
+  }
+
+  body { display: flex; flex-direction: column; }
+
+  /* ---- transcript ---- */
+
+  #log {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 16px 18px 8px;
+    scroll-behavior: smooth;
+  }
+
+  /* A turn is a row: the agent's runs from the left behind its avatar, the user's from the
+     right. The text inside each stays left-aligned — right-aligned prose is hard to read once
+     it runs past one line. */
+  .turn {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .turn.user { flex-direction: row-reverse; }
+
+  .avatar {
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--chrome);
+    border: 1px solid var(--divider);
+  }
+
+  /* The drawn stand-in, used until a picture is chosen. */
+  .avatar.blank {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .side { min-width: 0; max-width: 82%; }
+
+  /* Only the agent is named. The user knows who they are, and the label was one more thing
+     between their question and the answer. */
+  .who {
+    font-size: 11px;
+    letter-spacing: .04em;
+    color: var(--nick);
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  .body { line-height: 1.55; word-wrap: break-word; overflow-wrap: anywhere; }
+
+  /* Both sides speak on a plate; the user's is tinted towards the accent so the two read
+     apart at a glance even where the avatar is off screen. */
+  .turn .body {
+    background: var(--bubble);
+    border: 1px solid var(--divider);
+    border-radius: 10px;
+    padding: 9px 12px;
+  }
+
+  .turn.user .body {
+    background: var(--bubble-user);
+    border-color: var(--accent-dim);
+  }
+  .body p { margin: 0 0 9px; }
+  .body p:last-child { margin-bottom: 0; }
+  .body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { margin: 14px 0 7px; font-size: 1.06em; }
+  .body ul, .body ol { margin: 0 0 9px; padding-left: 22px; }
+  .body li { margin: 2px 0; }
+  .body blockquote {
+    margin: 0 0 9px;
+    padding: 2px 0 2px 11px;
+    border-left: 2px solid var(--accent-dim);
+    color: var(--muted);
+  }
+  .body hr { border: 0; border-top: 1px solid var(--divider); margin: 12px 0; }
+  .body a { color: var(--accent); }
+  .body code {
+    font-family: var(--code-font);
+    font-size: var(--code-size);
+    background: var(--chrome);
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+
+  /* ---- code blocks ---- */
+
+  figure.code {
+    margin: 10px 0;
+    border: 1px solid var(--divider);
+    border-radius: 7px;
+    overflow: hidden;
+    background: var(--raised);
+  }
+
+  figure.code figcaption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 5px 9px;
+    background: var(--chrome);
+    border-bottom: 1px solid var(--divider);
+    font-size: 11px;
+    color: var(--faint);
+  }
+
+  figure.code .lang { letter-spacing: .04em; }
+  figure.code .tools { display: flex; gap: 6px; }
+
+  figure.code button {
+    font: inherit;
+    font-size: 11px;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--divider);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  figure.code button:hover { color: var(--text); border-color: var(--accent); }
+
+  figure.code pre {
+    margin: 0;
+    padding: 10px 11px;
+    overflow-x: auto;
+    font-family: var(--code-font);
+    font-size: var(--code-size);
+    line-height: 1.45;
+  }
+  figure.code pre code { background: none; padding: 0; }
+
+  /* A long block shows its first lines until asked for the rest. */
+  figure.code.collapsed pre { max-height: 17em; overflow-y: hidden; }
+
+  /* ---- what the agent is doing ---- */
+
+  .act {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 5px 0;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  .act .mark { color: var(--accent); }
+  .act.done .mark { color: var(--faint); }
+  .act .what { font-family: var(--code-font); font-size: var(--code-size); }
+
+  .act.running .mark { animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+
+  details.out {
+    margin: 2px 0 8px 18px;
+    border-left: 1px solid var(--divider);
+    padding-left: 10px;
+  }
+  details.out summary { cursor: pointer; color: var(--faint); font-size: 11.5px; }
+  details.out pre {
+    margin: 6px 0 0;
+    max-height: 22em;
+    overflow: auto;
+    font-family: var(--code-font);
+    font-size: var(--code-size);
+    line-height: 1.45;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+
+  /* ---- approval ---- */
+
+  .ask {
+    margin: 6px 0 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent-dim);
+    border-radius: 7px;
+    background: var(--raised);
+  }
+  .ask .cmd {
+    font-family: var(--code-font);
+    font-size: var(--code-size);
+    color: var(--text);
+    margin-bottom: 9px;
+    word-break: break-all;
+  }
+  .ask .row { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+  .ask button {
+    font: inherit;
+    font-size: 12px;
+    border-radius: 5px;
+    padding: 4px 11px;
+    cursor: pointer;
+    border: 1px solid var(--divider);
+    background: transparent;
+    color: var(--text);
+  }
+  .ask button.yes { background: var(--accent-dim); border-color: var(--accent-dim); }
+  .ask button:hover { border-color: var(--accent); }
+  .ask .note { color: var(--faint); font-size: 11.5px; }
+
+  /* ---- composer ---- */
+
+  #bar {
+    border-top: 1px solid var(--divider);
+    padding: 9px 12px 11px;
+    background: var(--bar);
+  }
+
+  #status { font-size: 11.5px; color: var(--faint); min-height: 15px; margin-bottom: 5px; }
+
+  #row { display: flex; gap: 8px; align-items: flex-end; }
+
+  #input {
+    flex: 1;
+    resize: none;
+    min-height: 38px;
+    max-height: 180px;
+    padding: 9px 11px;
+    border-radius: 7px;
+    border: 1px solid var(--divider);
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+    line-height: 1.4;
+    outline: none;
+  }
+  #input:focus { border-color: var(--accent); }
+
+  #send {
+    font: inherit;
+    padding: 9px 15px;
+    border-radius: 7px;
+    border: 1px solid var(--accent-dim);
+    background: var(--accent-dim);
+    color: var(--text);
+    cursor: pointer;
+  }
+  #send:hover { border-color: var(--accent); }
+  #send:disabled { opacity: .5; cursor: default; }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #3a3636; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+  <div id="log"></div>
+  <div id="bar">
+    <div id="status"></div>
+    <div id="row">
+      <textarea id="input" rows="1" placeholder="Ask the agent…" spellcheck="false"></textarea>
+      <button id="send">Send</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  const log = document.getElementById("log");
+  const input = document.getElementById("input");
+  const send = document.getElementById("send");
+  const status = document.getElementById("status");
+
+  const post = (message) => window.chrome.webview.postMessage(JSON.stringify(message));
+
+  let stuckToBottom = true;
+  log.addEventListener("scroll", () => {
+    stuckToBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  });
+
+  // Only follow the tail while the reader is already there; scrolling up to read something
+  // must not be undone by the next chunk of a streaming reply.
+  const follow = () => { if (stuckToBottom) log.scrollTop = log.scrollHeight; };
+
+  const el = (tag, cls, html) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (html !== undefined) node.innerHTML = html;
+    return node;
+  };
+
+  let openTurn = null;
+  let avatarSrc = "";
+
+  function avatarFor(who) {
+    if (who !== "agent") return null;
+    if (avatarSrc) {
+      const img = document.createElement("img");
+      img.className = "avatar";
+      img.src = avatarSrc;
+      img.alt = "";
+      return img;
+    }
+    // No picture chosen: a plain mark keeps the row aligned with the ones that have one.
+    return el("div", "avatar blank", "\u25c6");
+  }
+
+  function turn(who, label) {
+    const node = el("div", "turn " + who);
+
+    const face = avatarFor(who);
+    if (face) node.appendChild(face);
+
+    const side = el("div", "side");
+    if (label) side.appendChild(el("div", "who", label));
+    const body = el("div", "body");
+    side.appendChild(body);
+    node.appendChild(side);
+
+    log.appendChild(node);
+    return body;
+  }
+
+  const handlers = {
+    theme(m) {
+      for (const [name, value] of Object.entries(m.vars || {})) {
+        document.documentElement.style.setProperty("--" + name, value);
+      }
+    },
+
+    clear() { log.innerHTML = ""; openTurn = null; },
+
+    avatar(m) { avatarSrc = m.src || ""; },
+
+    user(m) { openTurn = null; turn("user", "").innerHTML = m.html; follow(); },
+
+    // The assistant's text is replaced wholesale each time rather than appended: the sender
+    // re-renders the markdown as it grows, and a half-written fence is not valid on its own.
+    assistant(m) {
+      if (!openTurn) openTurn = turn("agent", m.label || "agent");
+      openTurn.innerHTML = m.html;
+      follow();
+    },
+
+    endTurn() { openTurn = null; },
+
+    activity(m) {
+      openTurn = null;
+      const node = el("div", "act " + (m.state || "running"));
+      node.appendChild(el("span", "mark", "▸"));
+      node.appendChild(el("span", "label", m.label || ""));
+      if (m.what) node.appendChild(el("span", "what", m.what));
+      node.dataset.id = m.id || "";
+      log.appendChild(node);
+      follow();
+    },
+
+    activityDone(m) {
+      const node = [...log.querySelectorAll(".act")].reverse()
+        .find((n) => n.dataset.id === (m.id || ""));
+      if (node) node.className = "act done";
+      if (m.output) {
+        const box = el("details", "out");
+        box.appendChild(el("summary", null, m.summary || "output"));
+        const pre = document.createElement("pre");
+        pre.textContent = m.output;
+        box.appendChild(pre);
+        log.appendChild(box);
+      }
+      follow();
+    },
+
+    ask(m) {
+      openTurn = null;
+      const box = el("div", "ask");
+      box.appendChild(el("div", "cmd", m.commandHtml));
+      const row = el("div", "row");
+
+      const answer = (choice) => {
+        post({ t: "approve", answer: choice });
+        box.remove();
+      };
+
+      const yes = el("button", "yes", "Run");
+      yes.onclick = () => answer("y");
+      const no = el("button", null, "Skip");
+      no.onclick = () => answer("n");
+      row.appendChild(yes);
+      row.appendChild(no);
+
+      if (m.pattern) {
+        const always = el("button", null, "Always allow");
+        always.onclick = () => answer("a");
+        row.appendChild(always);
+        row.appendChild(el("span", "note", "“" + m.pattern + "” from now on"));
+      }
+
+      box.appendChild(row);
+      log.appendChild(box);
+      follow();
+      yes.focus();
+    },
+
+    status(m) {
+      status.textContent = m.text || "";
+      send.disabled = !!m.busy;
+    },
+
+    note(m) {
+      openTurn = null;
+      log.appendChild(el("div", "act done", "<span class=\"mark\">·</span><span>" + m.html + "</span>"));
+      follow();
+    },
+  };
+
+  window.chrome.webview.addEventListener("message", (e) => {
+    let message;
+    try { message = JSON.parse(e.data); } catch { return; }
+    const handler = handlers[message.t];
+    if (handler) handler(message);
+  });
+
+  // Code-block buttons are handled here rather than with inline handlers, so the generated
+  // HTML never needs to carry script.
+  log.addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-act]");
+    if (!button) return;
+
+    if (button.dataset.act === "copy") {
+      navigator.clipboard.writeText(button.dataset.code || "").then(() => {
+        const was = button.textContent;
+        button.textContent = "copied";
+        setTimeout(() => { button.textContent = was; }, 1200);
+      });
+      return;
+    }
+
+    if (button.dataset.act === "expand") {
+      const figure = button.closest("figure.code");
+      if (figure) figure.classList.remove("collapsed");
+      button.remove();
+    }
+  });
+
+  function submit() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    input.style.height = "auto";
+    post({ t: "send", text });
+  }
+
+  send.onclick = submit;
+
+  input.addEventListener("keydown", (e) => {
+    // Enter sends; Shift+Enter is how a multi-line question gets written.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  });
+
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+  });
+
+  post({ t: "ready" });
+  input.focus();
+})();
+</script>
+</body>
+</html>

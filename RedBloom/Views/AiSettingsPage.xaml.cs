@@ -1,7 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Imaging;
+using Microsoft.Win32;
 using RedBloom.Models;
 using RedBloom.Services;
 using RedBloom.Services.Ai;
@@ -131,6 +134,8 @@ public partial class AiSettingsPage : UserControl
             BaseUrlBox.Text = agent.BaseUrl;
             ApiKeyBox.Password = agent.ApiKey ?? string.Empty;
             ModelBox.Text = agent.Model;
+            AvatarBox.Text = agent.AvatarPath;
+            NameColorBox.Text = string.IsNullOrWhiteSpace(agent.NameColor) ? _settings.Accent : agent.NameColor;
             MaxTokensBox.Text = agent.MaxTokens.ToString(CultureInfo.InvariantCulture);
             EffortBox.SelectedIndex = EffortIndex(agent.Effort);
             ThinkingBox.IsChecked = agent.Thinking;
@@ -145,6 +150,7 @@ public partial class AiSettingsPage : UserControl
         }
 
         TestResult.Text = string.Empty;
+        ShowAvatar(Selected.AvatarPath);
         RefreshHints();
     }
 
@@ -166,6 +172,60 @@ public partial class AiSettingsPage : UserControl
         RefreshHints();
     }
 
+    private void BrowseAvatar_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Images|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*",
+            CheckFileExists = true,
+        };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            AvatarBox.Text = dialog.FileName;
+        }
+    }
+
+    private void ClearAvatar_Click(object sender, RoutedEventArgs e) => AvatarBox.Text = string.Empty;
+
+    /// <summary>Opens the shared colour picker under the nick swatch.</summary>
+    private void NameColorSwatch_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) =>
+        Controls.ColorPickerPopup.Show((UIElement)sender, NameColorBox.Text, hex => NameColorBox.Text = hex);
+
+    /// <summary>
+    /// Draws the chosen picture beside the field.
+    /// </summary>
+    /// <remarks>
+    /// Loaded on demand rather than held open, so the file can still be replaced or deleted
+    /// while RedBloom is running — the same reason the background pictures are loaded this way.
+    /// </remarks>
+    private void ShowAvatar(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            AvatarPreview.Source = null;
+            return;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.UriSource = new Uri(path, UriKind.Absolute);
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.DecodePixelWidth = 60;
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            AvatarPreview.Source = bitmap;
+        }
+        catch (Exception ex) when (ex is IOException or NotSupportedException or UriFormatException
+                                       or ArgumentException or InvalidOperationException)
+        {
+            AvatarPreview.Source = null;
+        }
+    }
+
     /// <summary>Copies the editor back into the selected agent and saves.</summary>
     private void Capture()
     {
@@ -182,6 +242,9 @@ public partial class AiSettingsPage : UserControl
         agent.BaseUrl = BaseUrlBox.Text.Trim();
         agent.ApiKey = ApiKeyBox.Password;
         agent.Model = ModelBox.Text.Trim();
+        agent.AvatarPath = AvatarBox.Text.Trim();
+        agent.NameColor = NameColorBox.Text.Trim();
+        ShowAvatar(agent.AvatarPath);
         agent.SystemPrompt = SystemPromptBox.Text;
         agent.Thinking = ThinkingBox.IsChecked == true;
         agent.AllowCommands = AllowCommandsBox.IsChecked == true;

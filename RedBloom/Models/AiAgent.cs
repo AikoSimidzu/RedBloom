@@ -37,6 +37,8 @@ public sealed class AiAgent : INotifyPropertyChanged
     private int _maxTokens = 16000;
     private string _effort = "high";
     private bool _thinking = true;
+    private string _avatarPath = string.Empty;
+    private string _nameColor = string.Empty;
     private bool _allowCommands;
     private bool _askBeforeRun = true;
     private string? _protectedApiKey;
@@ -79,6 +81,21 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// model decides per turn how much thinking a question is worth, so there is no budget here.
     /// </summary>
     public bool Thinking { get => _thinking; set => Set(ref _thinking, value); }
+
+    /// <summary>
+    /// A picture to show beside this agent's replies. Empty for the drawn default.
+    /// </summary>
+    /// <remarks>
+    /// Kept as a path rather than as the image itself: the settings file stays readable, and a
+    /// picture the user later edits in place is picked up on the next session without them
+    /// having to choose it again.
+    /// </remarks>
+    public string AvatarPath { get => _avatarPath; set => Set(ref _avatarPath, value); }
+
+    /// <summary>
+    /// The colour this agent's name is written in above its replies. Empty follows the accent.
+    /// </summary>
+    public string NameColor { get => _nameColor; set => Set(ref _nameColor, value); }
 
     /// <summary>
     /// Whether this agent is offered a tool for running commands on the machine.
@@ -199,6 +216,8 @@ public sealed class AiAgent : INotifyPropertyChanged
         MaxTokens = other.MaxTokens;
         Effort = other.Effort;
         Thinking = other.Thinking;
+        AvatarPath = other.AvatarPath;
+        NameColor = other.NameColor;
         AllowCommands = other.AllowCommands;
         AskBeforeRun = other.AskBeforeRun;
 
