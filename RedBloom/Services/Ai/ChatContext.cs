@@ -68,7 +68,11 @@ public static class ChatContext
 
             text.AppendLine();
 
-            if (Directory.Exists(path))
+            if (Attachments.IsSshSession(path))
+            {
+                AppendSession(text, path);
+            }
+            else if (Directory.Exists(path))
             {
                 AppendFolder(text, path);
             }
@@ -231,6 +235,73 @@ public static class ChatContext
         var read = file.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
 
         return head[..read].Contains<byte>(0);
+    }
+
+    /// <summary>
+    /// A saved SSH connection, described well enough to be acted on.
+    /// </summary>
+    /// <remarks>
+    /// The password and the key passphrase are never included, and the model is told so outright
+    /// rather than left to discover it: a model that knows a secret is withheld writes a command
+    /// that prompts for it, while one that thinks it simply lacks the detail invents a plausible
+    /// one. The private key's path is named because it is a path, not a secret — its contents
+    /// stay on disk.
+    /// </remarks>
+    private static void AppendSession(StringBuilder text, string path)
+    {
+        var session = SessionCatalog.Find(path);
+
+        if (session is null)
+        {
+            text.AppendLine($"=== ssh session: {path} ===")
+                .AppendLine("(this session has been deleted)");
+
+            return;
+        }
+
+        text.AppendLine($"=== ssh session: {session.Name} ===")
+            .AppendLine($"host: {session.Host}")
+            .AppendLine($"port: {session.Port}")
+            .AppendLine($"user: {session.Username}")
+            .AppendLine($"command line: ssh {SshCommandLine(session)}");
+
+        text.AppendLine(session.UsesPrivateKey
+            ? $"authentication: private key at {session.PrivateKeyPath}"
+            : "authentication: password");
+
+        foreach (var forward in session.Forwards)
+        {
+            text.AppendLine($"tunnel: {forward.Display}  ({forward.SshFlag})");
+        }
+
+        text.AppendLine(
+            "The password and any key passphrase are deliberately withheld. Do not guess at "
+            + "them or put a placeholder in a command as though it were real; if one is needed, "
+            + "write the command so that it asks for it, and say so.");
+    }
+
+    private static string SshCommandLine(Models.SshSession session)
+    {
+        var parts = new List<string>();
+
+        foreach (var forward in session.Forwards)
+        {
+            parts.Add(forward.SshFlag);
+        }
+
+        if (session.UsesPrivateKey && !string.IsNullOrWhiteSpace(session.PrivateKeyPath))
+        {
+            parts.Add($"-i \"{session.PrivateKeyPath}\"");
+        }
+
+        if (session.Port != 22)
+        {
+            parts.Add($"-p {session.Port}");
+        }
+
+        parts.Add(session.DisplayTarget.Split(':')[0]);
+
+        return string.Join(' ', parts);
     }
 
     private static void AppendFolder(StringBuilder text, string path)

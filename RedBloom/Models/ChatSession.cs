@@ -67,6 +67,15 @@ public sealed class ChatSession : INotifyPropertyChanged
     public TabCardStyle Card { get; set; } = new();
 
     /// <summary>
+    /// What the agent is called here, overriding its own name. Empty follows the agent.
+    /// </summary>
+    /// <remarks>
+    /// Per chat for the same reason the avatar is: one agent plays several parts, and a name is
+    /// the fastest way to tell which conversation is which when both are open.
+    /// </remarks>
+    public string BotName { get; set; } = string.Empty;
+
+    /// <summary>
     /// A picture for this conversation alone, overriding the agent's. Empty follows the agent.
     /// </summary>
     /// <remarks>

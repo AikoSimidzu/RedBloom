@@ -51,13 +51,52 @@ public enum AgentEventKind
 
     /// <summary>The user refused a command, or one could not be run. Text says which.</summary>
     ToolRefused,
+
+    /// <summary>
+    /// What the endpoint says this turn has cost so far, in <see cref="AgentEvent.Input"/> and
+    /// <see cref="AgentEvent.Output"/>.
+    /// </summary>
+    Usage,
+
+    /// <summary>
+    /// What the model is doing at this moment, as a short phrase in
+    /// <see cref="AgentEvent.Text"/> — "reading the output", "writing the answer".
+    /// </summary>
+    Phase,
 }
 
-public readonly record struct AgentEvent(AgentEventKind Kind, string Text)
+/// <summary>
+/// The names for what a model is doing at a given moment.
+/// </summary>
+/// <remarks>
+/// Names, not sentences: a transport has no business knowing which language the window is in, so
+/// it says which phase this is and the chat view looks up the wording. That also keeps the phrase
+/// in one place instead of repeated across two transports.
+/// </remarks>
+public static class AgentPhase
+{
+    public const string Thinking = "thinking";
+    public const string Deciding = "deciding";
+    public const string Running = "running";
+    public const string RunningElevated = "running-elevated";
+    public const string ReadingOutput = "reading-output";
+    public const string Writing = "writing";
+    public const string Sharing = "sharing";
+    public const string WrappingUp = "wrapping-up";
+}
+
+/// <param name="Input">Prompt tokens counted by the endpoint, on a <see cref="AgentEventKind.Usage"/>.</param>
+/// <param name="Output">Tokens written back, on a <see cref="AgentEventKind.Usage"/>.</param>
+public readonly record struct AgentEvent(AgentEventKind Kind, string Text, int Input = 0, int Output = 0)
 {
     public static AgentEvent OfText(string text) => new(AgentEventKind.Text, text);
 
     public static AgentEvent Failure(string reason) => new(AgentEventKind.Failed, reason);
+
+    public static AgentEvent Spent(long input, long output) =>
+        new(AgentEventKind.Usage, string.Empty, (int)input, (int)output);
+
+    public static AgentEvent Doing(string what) => new(AgentEventKind.Phase, what);
 }
 
 /// <summary>
@@ -103,6 +142,11 @@ public interface IAgentToolHost
 
     /// <summary>Runs an approved command and returns everything it printed.</summary>
     Task<string> RunAsync(string command, bool elevated, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts a file the agent produced into the chat, and reports back whether it arrived.
+    /// </summary>
+    Task<string> ShareAsync(string path, string note, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds the transport an agent's provider calls for.</summary>
@@ -115,7 +159,35 @@ public static class AgentTransports
         _ => throw new ArgumentOutOfRangeException(nameof(agent)),
     };
 
-    /// <summary>The one tool an agent gets, described the same way to both APIs.</summary>
+    /// <summary>
+    /// Handing a file back to the user, described the same way to both APIs.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the command tool because it is not a command: the agent has already written
+    /// or found the file, and this only says "here, look at this one". Without it a produced file
+    /// is a path buried in a paragraph, which the user then has to copy into Explorer.
+    /// </remarks>
+    public static class Share
+    {
+        public const string Name = "share_file";
+
+        public const string Description =
+            "Show a file to the user in the chat, where they can open it or find it on disk. Use "
+            + "it for anything you have written, converted, downloaded or picked out — a report, "
+            + "a patch, a log, an exported picture — instead of only naming its path in the "
+            + "answer. The file must already exist. Sharing does not send the file anywhere; it "
+            + "puts it in front of the person you are talking to.";
+
+        public const string Parameter = "path";
+
+        public const string ParameterDescription = "Full path of the file to show.";
+
+        public const string Note = "note";
+
+        public const string NoteDescription = "One short line saying what this file is.";
+    }
+
+    /// <summary>The command tool, described the same way to both APIs.</summary>
     public static class Command
     {
         public const string Name = "run_command";

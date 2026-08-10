@@ -18,8 +18,34 @@ public static class Attachments
     /// </summary>
     private const long MaxPreviewBytes = 3 * 1024 * 1024;
 
+    /// <summary>
+    /// How a saved SSH session is written when it is attached.
+    /// </summary>
+    /// <remarks>
+    /// A scheme rather than a second list: an attachment is a string everywhere it travels — the
+    /// composer, the saved turn, the context builder — and giving sessions their own prefix keeps
+    /// all of that unchanged. The id is the session's, so the details are read fresh at send time
+    /// and a session edited between turns reaches the model as it is now.
+    /// </remarks>
+    public const string SshScheme = "ssh-session:";
+
+    public static bool IsSshSession(string path) =>
+        path.StartsWith(SshScheme, StringComparison.OrdinalIgnoreCase);
+
     public static AttachmentView Describe(string path)
     {
+        if (IsSshSession(path))
+        {
+            var session = RedBloom.Services.SessionCatalog.Find(path);
+
+            return new AttachmentView(
+                path,
+                session?.Name ?? "(deleted session)",
+                "ssh",
+                "\uE968",
+                string.Empty);
+        }
+
         var name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
 
         if (name.Length == 0)

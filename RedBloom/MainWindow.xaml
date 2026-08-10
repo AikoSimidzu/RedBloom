@@ -684,6 +684,34 @@
                     </StackPanel>
                 </Button>
 
+                <Button Click="LocalModels_Click" Cursor="Hand" HorizontalContentAlignment="Left">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Root" Background="Transparent" CornerRadius="4" Padding="10,7">
+                                <ContentPresenter />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Root" Property="Background" Value="{DynamicResource ChromeHover}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <StackPanel Orientation="Horizontal" MinWidth="170">
+                        <TextBlock Text="&#xE964;"
+                                   FontFamily="{StaticResource IconFont}"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   VerticalAlignment="Center"
+                                   Width="20" />
+                        <TextBlock Text="{DynamicResource L_LocalModels}"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
                 <!-- Only shown when the app is not already elevated. -->
                 <Button x:Name="ElevateMenuButton" Click="Elevate_Click" Cursor="Hand"
                         HorizontalContentAlignment="Left" Visibility="Collapsed">
@@ -754,6 +782,22 @@
                                  FontFamily="{DynamicResource UiFont}"
                                  FontSize="12" Padding="7,4"
                                  KeyDown="CardName_KeyDown" />
+
+                        <TextBlock Text="{DynamicResource L_AiBotName}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="11"
+                                   Margin="0,10,0,4" />
+                        <TextBox x:Name="CardBotBox"
+                                 FontFamily="{DynamicResource UiFont}"
+                                 FontSize="12" Padding="7,4"
+                                 KeyDown="CardName_KeyDown" />
+                        <TextBlock Text="{DynamicResource L_AiBotNameNote}"
+                                   Foreground="{DynamicResource TextFaint}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="10.5"
+                                   TextWrapping="Wrap"
+                                   Margin="0,4,0,0" />
                     </StackPanel>
 
                     <!-- Only a chat has an avatar, so this row is shown when the card being

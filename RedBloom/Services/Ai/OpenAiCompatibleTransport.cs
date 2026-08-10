@@ -21,7 +21,8 @@ namespace RedBloom.Services.Ai;
 public sealed class OpenAiCompatibleTransport : IAgentTransport
 {
     /// <summary>How many command rounds one turn may take before it is called a loop.</summary>
-    private const int MaxToolSteps = 12;
+    /// <inheritdoc cref="AnthropicTransport.MaxToolSteps" />
+    private const int MaxToolSteps = 40;
 
     private readonly AiAgent _agent;
     private readonly IAgentToolHost? _tools;
@@ -75,14 +76,28 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             messages.Add(ToMessage(message));
         }
 
+        long spentIn = 0;
+        long spentOut = 0;
+
         for (var step = 0; step < MaxToolSteps; step++)
         {
+            yield return AgentEvent.Doing(step == 0 ? AgentPhase.Thinking : AgentPhase.Deciding);
+
             var (json, error) = await PostAsync(messages, cancellationToken).ConfigureAwait(false);
 
             if (error is not null || json is null)
             {
                 yield return AgentEvent.Failure(error ?? "The endpoint returned nothing.");
                 yield break;
+            }
+
+            var (roundIn, roundOut) = ReadUsage(json);
+            spentIn += roundIn;
+            spentOut += roundOut;
+
+            if (spentIn > 0 || spentOut > 0)
+            {
+                yield return AgentEvent.Spent(spentIn, spentOut);
             }
 
             using var document = JsonDocument.Parse(json);
@@ -112,8 +127,29 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             // it are what the results below are matched against.
             messages.Add(reply.Clone());
 
-            foreach (var (id, command, elevated) in calls)
+            foreach (var call in calls)
             {
+                var id = call.Id;
+
+                // Sharing opens nothing and runs nothing, so it is not put to the user.
+                if (call.Name == AgentTransports.Share.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Sharing);
+
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.ShareAsync(call.Path, call.Note, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                var command = call.Command;
+                var elevated = call.Elevated;
+
                 yield return new AgentEvent(AgentEventKind.ToolCall, command);
 
                 var approved = await _tools!.ApproveAsync(command, elevated, cancellationToken).ConfigureAwait(false);
@@ -121,8 +157,12 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
 
                 if (approved)
                 {
+                    yield return AgentEvent.Doing(elevated ? AgentPhase.RunningElevated : AgentPhase.Running);
+
                     output = await _tools.RunAsync(command, elevated, cancellationToken).ConfigureAwait(false);
+
                     yield return new AgentEvent(AgentEventKind.ToolResult, output);
+                    yield return AgentEvent.Doing(AgentPhase.ReadingOutput);
                 }
                 else
                 {
@@ -134,8 +174,31 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             }
         }
 
-        yield return AgentEvent.Failure(
-            $"The agent was still running commands after {MaxToolSteps} rounds; the turn was stopped.");
+        // Out of rounds. Asked once more with no tools offered at all, so the turn ends in a
+        // report of what was done rather than in an error that throws all of it away.
+        messages.Add(new { role = "user", content = AnthropicTransport.OutOfRounds });
+
+        var (closing, failure) = await PostAsync(messages, cancellationToken, withTools: false)
+            .ConfigureAwait(false);
+
+        if (failure is not null || closing is null)
+        {
+            yield return AgentEvent.Failure(failure ?? "The endpoint returned nothing.");
+            yield break;
+        }
+
+        using (var last = JsonDocument.Parse(closing))
+        {
+            if (TryReadMessage(last.RootElement, out var final)
+                && final.TryGetProperty("content", out var closingText)
+                && closingText.ValueKind == JsonValueKind.String
+                && closingText.GetString() is { Length: > 0 } said)
+            {
+                yield return AgentEvent.OfText(said);
+            }
+        }
+
+        yield return new AgentEvent(AgentEventKind.Completed, string.Empty);
     }
 
     private static bool TryReadMessage(JsonElement root, out JsonElement message)
@@ -153,9 +216,13 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         return true;
     }
 
-    private static List<(string Id, string Command, bool Elevated)> ReadToolCalls(JsonElement message)
+    /// <summary>One tool call, whichever of the two tools it is for.</summary>
+    private readonly record struct Call(
+        string Id, string Name, string Command, bool Elevated, string Path, string Note);
+
+    private static List<Call> ReadToolCalls(JsonElement message)
     {
-        var calls = new List<(string, string, bool)>();
+        var calls = new List<Call>();
 
         if (!message.TryGetProperty("tool_calls", out var toolCalls)
             || toolCalls.ValueKind != JsonValueKind.Array)
@@ -172,40 +239,81 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 continue;
             }
 
-            // Arguments arrive as a JSON string holding JSON, so they are parsed twice.
+            var name = function.TryGetProperty("name", out var named) && named.ValueKind == JsonValueKind.String
+                ? named.GetString() ?? string.Empty
+                : string.Empty;
+
             try
             {
-                using var parsed = JsonDocument.Parse(arguments.GetString() ?? "{}");
+                // The specification says the arguments are a JSON string holding JSON, and most
+                // endpoints send exactly that — but some proxies send the object itself. Both are
+                // accepted: refusing the second shape loses every tool call the model makes.
+                using var parsed = JsonDocument.Parse(
+                    arguments.ValueKind == JsonValueKind.String
+                        ? arguments.GetString() ?? "{}"
+                        : arguments.GetRawText());
 
-                if (parsed.RootElement.TryGetProperty(AgentTransports.Command.Parameter, out var command)
+                var root = parsed.RootElement;
+
+                if (name == AgentTransports.Share.Name)
+                {
+                    calls.Add(new Call(
+                        Id(id),
+                        name,
+                        string.Empty,
+                        false,
+                        Text(root, AgentTransports.Share.Parameter),
+                        Text(root, AgentTransports.Share.Note)));
+
+                    continue;
+                }
+
+                if (root.TryGetProperty(AgentTransports.Command.Parameter, out var command)
                     && command.ValueKind == JsonValueKind.String)
                 {
-                    var elevated = parsed.RootElement
+                    var elevated = root
                         .TryGetProperty(AgentTransports.Command.Elevated, out var asAdmin)
                         && asAdmin.ValueKind == JsonValueKind.True;
 
-                    calls.Add((id.GetString() ?? string.Empty, command.GetString() ?? string.Empty, elevated));
+                    calls.Add(new Call(
+                        Id(id),
+                        AgentTransports.Command.Name,
+                        command.GetString() ?? string.Empty,
+                        elevated,
+                        string.Empty,
+                        string.Empty));
                 }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
                 // A call whose arguments do not parse cannot be run; skipping it leaves the
-                // model to notice the missing result and try again.
+                // model to notice the missing result and try again. Never thrown onwards: this
+                // runs inside the turn, and one malformed call must not end the conversation.
             }
         }
 
         return calls;
+
+        // Ids are strings in the specification and numbers at more than one gateway; both have
+        // to come back out looking the same, because this is what results are matched against.
+        static string Id(JsonElement id) =>
+            id.ValueKind == JsonValueKind.String ? id.GetString() ?? string.Empty : id.GetRawText();
+
+        static string Text(JsonElement root, string name) =>
+            root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
     }
 
     private async Task<(string? Json, string? Error)> PostAsync(
-        List<object> messages, CancellationToken cancellationToken)
+        List<object> messages, CancellationToken cancellationToken, bool withTools = true)
     {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, Endpoint("chat/completions"))
             {
                 Content = new StringContent(
-                    BuildToolPayload(messages), Encoding.UTF8, "application/json"),
+                    BuildToolPayload(messages, withTools), Encoding.UTF8, "application/json"),
             };
 
             using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -225,12 +333,12 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         }
     }
 
-    private string BuildToolPayload(List<object> messages) => JsonSerializer.Serialize(new
+    private string BuildToolPayload(List<object> messages, bool withTools = true) => JsonSerializer.Serialize(new
     {
         model = _agent.Model,
         max_tokens = _agent.MaxTokens,
         messages,
-        tools = new[]
+        tools = !withTools ? null : new[]
         {
             new
             {
@@ -256,6 +364,33 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                             },
                         },
                         required = new[] { AgentTransports.Command.Parameter },
+                    },
+                },
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = AgentTransports.Share.Name,
+                    description = AgentTransports.Share.Description,
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>
+                        {
+                            [AgentTransports.Share.Parameter] = new
+                            {
+                                type = "string",
+                                description = AgentTransports.Share.ParameterDescription,
+                            },
+                            [AgentTransports.Share.Note] = new
+                            {
+                                type = "string",
+                                description = AgentTransports.Share.NoteDescription,
+                            },
+                        },
+                        required = new[] { AgentTransports.Share.Parameter },
                     },
                 },
             },
@@ -314,9 +449,26 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     break;
                 }
 
-                if (data.Length > 0 && ReadDelta(data) is { Length: > 0 } text)
+                if (data.Length == 0)
                 {
-                    sawText = true;
+                    continue;
+                }
+
+                // Usage rides on a chunk of its own at the very end, and only when it was asked
+                // for; an endpoint that ignores the request simply never sends one.
+                if (ReadUsage(data) is var (input, output) && (input > 0 || output > 0))
+                {
+                    yield return AgentEvent.Spent(input, output);
+                }
+
+                if (ReadDelta(data) is { Length: > 0 } text)
+                {
+                    if (!sawText)
+                    {
+                        sawText = true;
+                        yield return AgentEvent.Doing(AgentPhase.Writing);
+                    }
+
                     yield return AgentEvent.OfText(text);
                 }
             }
@@ -462,6 +614,11 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             model = _agent.Model,
             max_tokens = _agent.MaxTokens,
             stream,
+
+            // Asks for the token counts at the end of a stream. Endpoints that do not know the
+            // option ignore it, which costs nothing — the counter simply falls back to its own
+            // estimate.
+            stream_options = stream ? new { include_usage = true } : null,
             messages,
         });
     }
@@ -501,6 +658,32 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         }
 
         return new { role, content = parts };
+    }
+
+    /// <summary>What a chunk says the turn has cost, or zeroes when it says nothing.</summary>
+    private static (long Input, long Output) ReadUsage(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+
+            if (!document.RootElement.TryGetProperty("usage", out var usage)
+                || usage.ValueKind != JsonValueKind.Object)
+            {
+                return (0, 0);
+            }
+
+            return (Count(usage, "prompt_tokens"), Count(usage, "completion_tokens"));
+        }
+        catch (JsonException)
+        {
+            return (0, 0);
+        }
+
+        static long Count(JsonElement usage, string name) =>
+            usage.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+                ? value.GetInt64()
+                : 0;
     }
 
     /// <summary>Pulls the text fragment out of one streamed chunk, if it carries one.</summary>

@@ -19,8 +19,22 @@ namespace RedBloom.Services.Ai;
 /// </remarks>
 public sealed class AnthropicTransport : IAgentTransport
 {
-    /// <summary>How many command rounds one turn may take before it is called a loop.</summary>
-    private const int MaxToolSteps = 12;
+    /// <summary>
+    /// How many command rounds one turn may take before it is made to stop and report.
+    /// </summary>
+    /// <remarks>
+    /// Generous on purpose. Real work — look, build, read the errors, fix, build again — spends
+    /// rounds quickly, and a limit tight enough to catch a loop early is also tight enough to cut
+    /// off the tasks worth asking for. Running out is no longer a failure either, so the cost of
+    /// setting it high is some wasted commands rather than a lost answer.
+    /// </remarks>
+    internal const int MaxToolSteps = 40;
+
+    /// <summary>What the model is told when it runs out of rounds.</summary>
+    internal const string OutOfRounds =
+        "You have used all the commands allowed for this turn, and no more will run. Do not ask "
+        + "to run anything else. Tell the user what you found, what you changed, and what is "
+        + "left to do, so they can decide whether to have you carry on.";
 
     private readonly AiAgent _agent;
     private readonly IAgentToolHost? _tools;
@@ -70,6 +84,8 @@ public sealed class AnthropicTransport : IAgentTransport
 
         var sawText = false;
         var failure = default(string);
+        long spentIn = 0;
+        long spentOut = 0;
 
         // The reads sit in a helper rather than a try/catch here: C# forbids yielding from
         // inside a catch, and every failure has to reach the caller as an event.
@@ -90,9 +106,23 @@ public sealed class AnthropicTransport : IAgentTransport
                     break;
                 }
 
+                // Assigned, not added: each of these events carries the running total for the
+                // message, so summing them would count the same tokens several times over.
+                if (step.Input > 0 || step.Output > 0)
+                {
+                    spentIn = step.Input > 0 ? step.Input : spentIn;
+                    spentOut = step.Output > 0 ? step.Output : spentOut;
+                    yield return AgentEvent.Spent(spentIn, spentOut);
+                }
+
                 if (!string.IsNullOrEmpty(step.Text))
                 {
-                    sawText = true;
+                    if (!sawText)
+                    {
+                        sawText = true;
+                        yield return AgentEvent.Doing(AgentPhase.Writing);
+                    }
+
                     yield return AgentEvent.OfText(step.Text);
                 }
             }
@@ -151,8 +181,15 @@ public sealed class AnthropicTransport : IAgentTransport
 
         var messages = new List<MessageParam>(conversation.Select(ToParam));
 
+        // Both totals accumulate across rounds: one turn with commands in it is several requests,
+        // and what the user is spending is their sum, not the last one.
+        long spentIn = 0;
+        long spentOut = 0;
+
         for (var step = 0; step < MaxToolSteps; step++)
         {
+            yield return AgentEvent.Doing(step == 0 ? AgentPhase.Thinking : AgentPhase.Deciding);
+
             var turn = await CollectAsync(messages, cancellationToken).ConfigureAwait(false);
 
             if (turn.Error is not null)
@@ -161,8 +198,13 @@ public sealed class AnthropicTransport : IAgentTransport
                 yield break;
             }
 
+            spentIn += turn.Input;
+            spentOut += turn.Output;
+            yield return AgentEvent.Spent(spentIn, spentOut);
+
             if (turn.Text.Length > 0)
             {
+                yield return AgentEvent.Doing(AgentPhase.Writing);
                 yield return AgentEvent.OfText(turn.Text);
             }
 
@@ -193,9 +235,30 @@ public sealed class AnthropicTransport : IAgentTransport
 
             var results = new List<ContentBlockParam>();
 
-            foreach (var (id, command, elevated) in turn.Calls
-                .Select(c => (c.Id, Command: ReadCommand(c.Arguments), Elevated: ReadElevated(c.Arguments))))
+            foreach (var call in turn.Calls)
             {
+                var id = call.Id;
+
+                // Handing a file over needs no approval: it opens nothing and runs nothing, it
+                // only shows the user something already on their own disk.
+                if (call.Name == AgentTransports.Share.Name)
+                {
+                    var (shared, note) = ReadShare(call.Arguments);
+
+                    yield return AgentEvent.Doing(AgentPhase.Sharing);
+
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.ShareAsync(shared, note, cancellationToken).ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                var command = ReadCommand(call.Arguments);
+                var elevated = ReadElevated(call.Arguments);
+
                 yield return new AgentEvent(AgentEventKind.ToolCall, command);
 
                 var approved = await _tools!.ApproveAsync(command, elevated, cancellationToken).ConfigureAwait(false);
@@ -216,8 +279,12 @@ public sealed class AnthropicTransport : IAgentTransport
                     continue;
                 }
 
+                yield return AgentEvent.Doing(elevated ? AgentPhase.RunningElevated : AgentPhase.Running);
+
                 var output = await _tools.RunAsync(command, elevated, cancellationToken).ConfigureAwait(false);
+
                 yield return new AgentEvent(AgentEventKind.ToolResult, output);
+                yield return AgentEvent.Doing(AgentPhase.ReadingOutput);
 
                 results.Add(new ToolResultBlockParam { ToolUseID = id, Content = output });
             }
@@ -225,12 +292,34 @@ public sealed class AnthropicTransport : IAgentTransport
             messages.Add(new MessageParam { Role = Role.User, Content = results });
         }
 
-        yield return AgentEvent.Failure(
-            $"The agent was still running commands after {MaxToolSteps} rounds; the turn was stopped.");
+        // Out of rounds. Rather than throwing the turn away — which loses everything that was
+        // found on the way — the model is asked once more with no tools at all, so it has to
+        // answer in words. The user then has a report and can say whether to carry on.
+        messages.Add(new MessageParam { Role = Role.User, Content = OutOfRounds });
+
+        yield return AgentEvent.Doing(AgentPhase.WrappingUp);
+
+        var closing = await CollectAsync(messages, cancellationToken, withTools: false).ConfigureAwait(false);
+
+        if (closing.Error is not null)
+        {
+            yield return AgentEvent.Failure(closing.Error);
+            yield break;
+        }
+
+        yield return AgentEvent.Spent(spentIn + closing.Input, spentOut + closing.Output);
+
+        if (closing.Text.Length > 0)
+        {
+            yield return AgentEvent.OfText(closing.Text);
+        }
+
+        yield return new AgentEvent(AgentEventKind.Completed, string.Empty);
     }
 
     /// <summary>One assistant turn, gathered from the stream.</summary>
-    private sealed record Collected(string Text, List<ToolCall> Calls, string? Error);
+    private sealed record Collected(
+        string Text, List<ToolCall> Calls, string? Error, long Input = 0, long Output = 0);
 
     private sealed record ToolCall(string Id, string Name, string Arguments);
 
@@ -246,7 +335,7 @@ public sealed class AnthropicTransport : IAgentTransport
     /// here before being read.
     /// </remarks>
     private async Task<Collected> CollectAsync(
-        List<MessageParam> messages, CancellationToken cancellationToken)
+        List<MessageParam> messages, CancellationToken cancellationToken, bool withTools = true)
     {
         var text = new StringBuilder();
         var calls = new List<ToolCall>();
@@ -254,11 +343,13 @@ public sealed class AnthropicTransport : IAgentTransport
         string? openId = null;
         string? openName = null;
         var arguments = new StringBuilder();
+        long input = 0;
+        long output = 0;
 
         try
         {
             await foreach (var item in _client.Messages
-                               .CreateStreaming(BuildRequest(messages))
+                               .CreateStreaming(BuildRequest(messages, withTools))
                                .WithCancellation(cancellationToken)
                                .ConfigureAwait(false))
             {
@@ -289,6 +380,14 @@ public sealed class AnthropicTransport : IAgentTransport
                     openName = null;
                     arguments.Clear();
                 }
+                else if (item.TryPickStart(out var opening))
+                {
+                    input = opening.Message.Usage.InputTokens;
+                }
+                else if (item.TryPickDelta(out var closing))
+                {
+                    output = closing.Usage.OutputTokens;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -300,7 +399,7 @@ public sealed class AnthropicTransport : IAgentTransport
             return new Collected(string.Empty, [], Describe(ex));
         }
 
-        return new Collected(text.ToString(), calls, null);
+        return new Collected(text.ToString(), calls, null, input, output);
     }
 
     /// <summary>The tool call's arguments as the SDK wants them when the turn is echoed back.</summary>
@@ -341,8 +440,21 @@ public sealed class AnthropicTransport : IAgentTransport
         ParseArguments(json).TryGetValue(AgentTransports.Command.Elevated, out var value)
         && value.ValueKind == JsonValueKind.True;
 
+    private static (string Path, string Note) ReadShare(string json)
+    {
+        var arguments = ParseArguments(json);
+
+        return (Text(AgentTransports.Share.Parameter), Text(AgentTransports.Share.Note));
+
+        string Text(string name) =>
+            arguments.TryGetValue(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+    }
+
     /// <summary>One read from the stream: whether it moved, what it carried, why it stopped.</summary>
-    private readonly record struct Step(bool Moved, string? Text, string? Error);
+    private readonly record struct Step(
+        bool Moved, string? Text, string? Error, long Input = 0, long Output = 0);
 
     private (IAsyncEnumerator<RawMessageStreamEvent>? Stream, string? Error) OpenStream(
         IReadOnlyList<AgentMessage> conversation, CancellationToken cancellationToken)
@@ -369,9 +481,24 @@ public sealed class AnthropicTransport : IAgentTransport
                 return new Step(false, null, null);
             }
 
-            return stream.Current.TryPickContentBlockDelta(out var delta) && delta.Delta.TryPickText(out var text)
-                ? new Step(true, text.Text, null)
-                : new Step(true, null, null);
+            if (stream.Current.TryPickContentBlockDelta(out var delta) && delta.Delta.TryPickText(out var text))
+            {
+                return new Step(true, text.Text, null);
+            }
+
+            // What the turn cost, as the endpoint counts it. The prompt total lands at the start,
+            // the written total at the end, so the two arrive on different events.
+            if (stream.Current.TryPickStart(out var opening))
+            {
+                return new Step(true, null, null, Input: opening.Message.Usage.InputTokens);
+            }
+
+            if (stream.Current.TryPickDelta(out var closing))
+            {
+                return new Step(true, null, null, Output: closing.Usage.OutputTokens);
+            }
+
+            return new Step(true, null, null);
         }
         catch (OperationCanceledException)
         {
@@ -434,13 +561,14 @@ public sealed class AnthropicTransport : IAgentTransport
         _ => MediaType.ImagePng,
     };
 
-    private MessageCreateParams BuildRequest(List<MessageParam> messages)
+    private MessageCreateParams BuildRequest(List<MessageParam> messages, bool withTools = true)
     {
-        var thinking = _agent.Thinking && !ToolsEnabled;
+        var offerTools = ToolsEnabled && withTools;
+        var thinking = _agent.Thinking && !offerTools;
 
         return new MessageCreateParams
         {
-            Tools = ToolsEnabled
+            Tools = offerTools
                 ?
                 [
                     new Tool
@@ -465,6 +593,30 @@ public sealed class AnthropicTransport : IAgentTransport
                                     }),
                             },
                             Required = [AgentTransports.Command.Parameter],
+                        },
+                    },
+                    new Tool
+                    {
+                        Name = AgentTransports.Share.Name,
+                        Description = AgentTransports.Share.Description,
+                        InputSchema = new()
+                        {
+                            Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                            {
+                                [AgentTransports.Share.Parameter] =
+                                    System.Text.Json.JsonSerializer.SerializeToElement(new
+                                    {
+                                        type = "string",
+                                        description = AgentTransports.Share.ParameterDescription,
+                                    }),
+                                [AgentTransports.Share.Note] =
+                                    System.Text.Json.JsonSerializer.SerializeToElement(new
+                                    {
+                                        type = "string",
+                                        description = AgentTransports.Share.NoteDescription,
+                                    }),
+                            },
+                            Required = [AgentTransports.Share.Parameter],
                         },
                     },
                 ]

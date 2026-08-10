@@ -35,6 +35,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         ShellProfiles = ShellProfile.Discover();
         _store.Load();
+
+        // Published for the parts that resolve an attached connection long after the picker has
+        // gone — a chat turn running in the background has no way to reach this window.
+        SessionCatalog.Store = _store;
         ChatStore.Load();
 
         SessionsView = CollectionViewSource.GetDefaultView(_store.Sessions);
@@ -114,6 +118,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // The AI page raises this rather than opening tabs itself: pages are content, and the
         // window is what owns the tab strip.
         AiSettingsPage.LaunchRequested += OpenAgentTab;
+        LocalModelsPage.LaunchRequested += OpenAgentTab;
 
         SetupTray();
 
@@ -419,6 +424,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         AddTab(new AiSettingsPage(), LocalizationService.T("L_AiSettings"), AiGlyph,
             LocalizationService.T("L_AiTitle"));
+    }
+
+    /// <summary>Segoe MDL2 "Processor", used for the local models page.</summary>
+    private static readonly string LocalGlyph = ((char)0xE964).ToString();
+
+    private void OpenLocalModelsTab()
+    {
+        if (Tabs.FirstOrDefault(t => t.Content is LocalModelsPage) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        AddTab(new LocalModelsPage(), LocalizationService.T("L_LocalModels"), LocalGlyph,
+            LocalizationService.T("L_LocalModels"));
+    }
+
+    private void LocalModels_Click(object sender, RoutedEventArgs e)
+    {
+        ShellPopup.IsOpen = false;
+        OpenLocalModelsTab();
     }
 
     private void AiSettings_Click(object sender, RoutedEventArgs e)
@@ -822,6 +848,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         CardNameRow.Visibility = forChat;
         CardNameBox.Text = chat?.Title ?? string.Empty;
+        CardBotBox.Text = chat?.BotName ?? string.Empty;
 
         CardAvatarRow.Visibility = forChat;
         CardAvatarBox.Text = chat?.AvatarPath ?? string.Empty;
@@ -955,6 +982,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (_cardEditChat is { } chat)
         {
             chat.AvatarPath = CardAvatarBox.Text.Trim();
+            chat.BotName = CardBotBox.Text.Trim();
 
             // An empty name means "go back to being named after the first question", which is
             // what the chat is called until someone renames it.
@@ -973,6 +1001,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (tab.Content is AgentChatView view)
                 {
                     view.RefreshAvatar();
+                    view.RefreshBotName();
                 }
             }
         }

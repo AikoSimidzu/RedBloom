@@ -1,0 +1,348 @@
+<UserControl x:Class="RedBloom.Views.LocalModelsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:RedBloom.Views"
+             Background="Transparent"
+             FontFamily="{DynamicResource UiFont}">
+    <UserControl.Resources>
+        <views:FitBrushConverter x:Key="FitBrush" />
+
+        <!-- Rows that answer to the pointer: without it a list of near-identical model names
+             gives no sign of which one is being read, let alone which is selected. -->
+        <Style x:Key="PickerItem" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="4,2" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Root"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Padding="9,7">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource ChromeHover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource SurfaceRaised}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentDim}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="20,16,20,16" RowDefinitions="Auto,Auto,*">
+
+        <!-- What this machine has, and what is listening on it. -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource Chrome}"
+                BorderBrush="{DynamicResource Divider}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="14,11">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0">
+                    <TextBlock x:Name="MachineLine"
+                               Foreground="{DynamicResource TextPrimary}"
+                               FontSize="12.5" />
+                    <TextBlock x:Name="RunnerLine"
+                               Foreground="{DynamicResource TextFaint}"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Margin="0,3,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button x:Name="EngineButton"
+                            Style="{StaticResource GhostButton}"
+                            Padding="12,5"
+                            Margin="0,0,6,0"
+                            Click="Engine_Click" />
+                    <Button Content="{DynamicResource L_Refresh}"
+                            Style="{StaticResource GhostButton}"
+                            Padding="12,5"
+                            Click="Refresh_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- What is already on disk. -->
+        <Border Grid.Row="1"
+                Margin="0,12,0,0"
+                Background="{DynamicResource Chrome}"
+                BorderBrush="{DynamicResource Divider}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="14,11"
+                Visibility="Collapsed"
+                x:Name="DownloadedBox">
+            <StackPanel>
+                <TextBlock Text="{DynamicResource L_LocalDownloaded}"
+                           Foreground="{DynamicResource TextMuted}"
+                           FontSize="11"
+                           Margin="0,0,0,7" />
+                <ItemsControl x:Name="DownloadedList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,3">
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}"
+                                               Foreground="{DynamicResource TextPrimary}"
+                                               FontSize="12"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Size}"
+                                               Foreground="{DynamicResource TextFaint}"
+                                               FontSize="10.5" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Content="{DynamicResource L_LocalStart}"
+                                        Style="{StaticResource GhostButton}"
+                                        Padding="10,4"
+                                        Margin="8,0,0,0"
+                                        Tag="{Binding Path}"
+                                        Click="Start_Click" />
+                                <Button Grid.Column="2"
+                                        Content="{DynamicResource L_Delete}"
+                                        Style="{StaticResource GhostButton}"
+                                        Padding="10,4"
+                                        Margin="6,0,0,0"
+                                        Tag="{Binding Path}"
+                                        Click="DeleteModel_Click" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <!-- The shop: search on the left, the chosen model's files on the right. -->
+        <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="300,14,*">
+            <Grid Grid.Column="0" RowDefinitions="Auto,*">
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0"
+                             x:Name="SearchBox"
+                             FontSize="12"
+                             Padding="8,6"
+                             KeyDown="Search_KeyDown" />
+                    <Button Grid.Column="1"
+                            Content="{DynamicResource L_Search}"
+                            Style="{StaticResource GhostButton}"
+                            Padding="12,6"
+                            Margin="6,0,0,0"
+                            Click="Search_Click" />
+                </Grid>
+
+                <ListBox Grid.Row="1"
+                         x:Name="ModelList"
+                         Margin="0,8,0,0"
+                         Background="Transparent"
+                         BorderBrush="{DynamicResource Divider}"
+                         BorderThickness="1"
+                         HorizontalContentAlignment="Stretch"
+                         ItemContainerStyle="{StaticResource PickerItem}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         SelectionChanged="ModelList_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding Name}"
+                                           Foreground="{DynamicResource TextPrimary}"
+                                           FontSize="12.5"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding By}"
+                                           Foreground="{DynamicResource TextFaint}"
+                                           FontSize="10.5"
+                                           Margin="0,2,0,0"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+
+            <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto">
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                    <TextBlock Grid.Column="0"
+                               x:Name="FilesHeader"
+                               Foreground="{DynamicResource TextMuted}"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                    <CheckBox Grid.Column="1"
+                              x:Name="OnlyFitting"
+                              Content="{DynamicResource L_LocalOnlyFits}"
+                              Foreground="{DynamicResource TextMuted}"
+                              FontSize="11"
+                              VerticalAlignment="Center"
+                              Margin="10,0,0,0"
+                              Checked="OnlyFitting_Changed"
+                              Unchecked="OnlyFitting_Changed" />
+                </Grid>
+
+                <ListBox Grid.Row="1"
+                         x:Name="FileList"
+                         Background="Transparent"
+                         BorderBrush="{DynamicResource Divider}"
+                         BorderThickness="1"
+                         HorizontalContentAlignment="Stretch"
+                         ItemContainerStyle="{StaticResource PickerItem}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <!-- Read left to right: which quantisation, how big, whether it will
+                                 run, and the one button that acts on all three. -->
+                            <Grid ColumnDefinitions="Auto,14,*,Auto,Auto">
+                                <Border Grid.Column="0"
+                                        VerticalAlignment="Center"
+                                        MinWidth="74"
+                                        CornerRadius="5"
+                                        Padding="8,4"
+                                        Background="{DynamicResource Surface}"
+                                        BorderBrush="{DynamicResource Divider}"
+                                        BorderThickness="1">
+                                    <TextBlock Text="{Binding Quant}"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               FontFamily="Cascadia Mono, Consolas, monospace"
+                                               FontSize="11"
+                                               TextAlignment="Center" />
+                                </Border>
+
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Size}"
+                                                   Foreground="{DynamicResource TextPrimary}"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Parts}"
+                                                   Foreground="{DynamicResource TextFaint}"
+                                                   FontSize="10.5"
+                                                   Margin="8,0,0,0"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Why}"
+                                               Foreground="{DynamicResource TextFaint}"
+                                               FontSize="10.5"
+                                               Margin="0,2,0,0"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <Border Grid.Column="3"
+                                        VerticalAlignment="Center"
+                                        CornerRadius="9"
+                                        Padding="9,3"
+                                        Margin="12,0"
+                                        Background="{Binding Fit, Converter={StaticResource FitBrush}}">
+                                    <TextBlock Text="{Binding Verdict}"
+                                               Foreground="#141010"
+                                               FontSize="10.5"
+                                               FontWeight="SemiBold" />
+                                </Border>
+
+                                <Button Grid.Column="4"
+                                        Content="{DynamicResource L_LocalGet}"
+                                        Style="{StaticResource GhostButton}"
+                                        Padding="13,5"
+                                        VerticalAlignment="Center"
+                                        Tag="{Binding}"
+                                        Click="Download_Click" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- The download in progress. Its own card rather than a bar in the corner:
+                     these are gigabytes over minutes, and the thing people want to know is not
+                     "is it going" but "how long, and can I stop it". -->
+                <Border Grid.Row="2"
+                        x:Name="ProgressRow"
+                        Visibility="Collapsed"
+                        Margin="0,12,0,0"
+                        Background="{DynamicResource Chrome}"
+                        BorderBrush="{DynamicResource Divider}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="14,11">
+                    <Grid RowDefinitions="Auto,Auto,Auto">
+                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto">
+                            <TextBlock Grid.Column="0"
+                                       x:Name="ProgressName"
+                                       Foreground="{DynamicResource TextPrimary}"
+                                       FontSize="12"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1"
+                                       x:Name="ProgressPercent"
+                                       Foreground="{DynamicResource Accent}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold"
+                                       Margin="10,0,0,0"
+                                       VerticalAlignment="Center" />
+                            <Button Grid.Column="2"
+                                    Content="{DynamicResource L_Cancel}"
+                                    Style="{StaticResource GhostButton}"
+                                    Padding="10,3"
+                                    Margin="10,0,0,0"
+                                    Click="CancelDownload_Click" />
+                        </Grid>
+
+                        <!-- The track is a plain rounded box; the fill is a second box laid over
+                             it whose width is set as the bytes arrive. A ProgressBar template
+                             would have been more machinery for the same two rectangles. -->
+                        <Border Grid.Row="1"
+                                x:Name="Track"
+                                Height="8"
+                                Margin="0,9,0,0"
+                                CornerRadius="4"
+                                Background="{DynamicResource Surface}"
+                                BorderBrush="{DynamicResource Divider}"
+                                BorderThickness="1"
+                                ClipToBounds="True"
+                                SizeChanged="Track_SizeChanged">
+                            <!-- Clipped so the sweeping highlight stays inside the filled part
+                                 instead of drifting across empty track. -->
+                            <Grid HorizontalAlignment="Left" x:Name="Fill" Width="0" ClipToBounds="True">
+                                <!-- Painted from code: the theme publishes brushes, not colours,
+                                     and a gradient needs the colours themselves. -->
+                                <Border x:Name="FillBar" CornerRadius="3" />
+
+                                <!-- A highlight sweeping along the filled part, so a download
+                                     that has stalled looks different from one that is moving. -->
+                                <Border x:Name="Shine" Width="90" HorizontalAlignment="Left" CornerRadius="3">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                            <GradientStop Color="#00FFFFFF" Offset="0" />
+                                            <GradientStop Color="#38FFFFFF" Offset="0.5" />
+                                            <GradientStop Color="#00FFFFFF" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <Border.RenderTransform>
+                                        <TranslateTransform x:Name="ShineShift" X="-90" />
+                                    </Border.RenderTransform>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <Grid Grid.Row="2" Margin="0,7,0,0" ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0"
+                                       x:Name="ProgressText"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       FontSize="11" />
+                            <TextBlock Grid.Column="1"
+                                       x:Name="ProgressRate"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       FontSize="11"
+                                       HorizontalAlignment="Right" />
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

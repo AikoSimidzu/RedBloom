@@ -1,0 +1,53 @@
+<Window x:Class="RedBloom.Views.SessionPickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:RedBloom.Models"
+        Title="{DynamicResource L_AiAttachSsh}"
+        Width="380" Height="440"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Background="{DynamicResource Surface}"
+        FontFamily="{DynamicResource UiFont}">
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0"
+                   Text="{DynamicResource L_AiAttachSshNote}"
+                   Foreground="{DynamicResource TextMuted}"
+                   FontSize="11.5"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10" />
+
+        <ListBox Grid.Row="1"
+                 x:Name="List"
+                 Background="Transparent"
+                 BorderBrush="{DynamicResource Divider}"
+                 BorderThickness="1"
+                 HorizontalContentAlignment="Stretch"
+                 MouseDoubleClick="List_MouseDoubleClick">
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type models:SshSession}">
+                    <StackPanel Margin="2,4">
+                        <TextBlock Text="{Binding Name}"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   FontSize="12.5" />
+                        <TextBlock Text="{Binding DisplayTarget}"
+                                   Foreground="{DynamicResource TextFaint}"
+                                   FontSize="10.5" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="{DynamicResource L_Cancel}"
+                    Style="{StaticResource GhostButton}"
+                    Padding="14,6"
+                    IsCancel="True" />
+            <Button Content="{DynamicResource L_Attach}"
+                    Style="{StaticResource GhostButton}"
+                    Padding="14,6"
+                    Margin="8,0,0,0"
+                    IsDefault="True"
+                    Click="Choose_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

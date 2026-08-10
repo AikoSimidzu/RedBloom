@@ -37,8 +37,11 @@ namespace RedBloom
             // is still pending so the last change is never lost on the way out.
             ThemeService.Flush();
 
-            // An elevated worker must never outlive the window that asked for it.
+            // An elevated worker must never outlive the window that asked for it, and neither
+            // should an inference engine started from here.
             ElevatedHost.Stop();
+            Services.Ai.OllamaEngine.Stop();
+            Services.Ai.LocalRunner.Stop();
             base.OnExit(e);
         }
     }

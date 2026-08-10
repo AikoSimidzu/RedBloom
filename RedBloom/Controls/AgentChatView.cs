@@ -49,6 +49,9 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// <summary>Attached in the composer and not yet sent.</summary>
     private readonly List<string> _pending = [];
 
+    /// <summary>Files the agent has handed over during the turn now running.</summary>
+    private readonly List<string> _shared = [];
+
     /// <summary>The reply being streamed, re-rendered as it grows.</summary>
     private readonly StringBuilder _reply = new();
 
@@ -61,6 +64,18 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     private bool _dirty;
     private bool _disposed;
     private int _activity;
+
+    /// <summary>What this turn has cost, and whether those figures came from the endpoint.</summary>
+    private int _spentIn;
+    private int _spentOut;
+    private bool _counted;
+
+    /// <summary>
+    /// What the agent is called in this chat. A chat may name it something of its own; empty
+    /// falls back to the agent's name, the same way the avatar and the model do.
+    /// </summary>
+    private string BotName =>
+        string.IsNullOrWhiteSpace(_chat.BotName) ? _agent.Name : _chat.BotName;
 
     public AgentChatView(AiAgent agent, ChatSession chat)
     {
@@ -94,6 +109,15 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// <summary>Re-sends the avatar, after the chat or the agent has been given a new one.</summary>
     public void RefreshAvatar() => Post(new { t = "avatar", src = AvatarDataUri() });
 
+    /// <summary>
+    /// Renames the agent everywhere it is named on the page, after a chat has renamed it.
+    /// </summary>
+    /// <remarks>
+    /// Past turns are relabelled too rather than only the next one: the name is how this chat
+    /// refers to the agent, not a record of what it happened to be called at the time.
+    /// </remarks>
+    public void RefreshBotName() => Post(new { t = "rename", name = BotName });
+
     private void AttachFiles()
     {
         var dialog = new Microsoft.Win32.OpenFileDialog { Multiselect = true, CheckFileExists = true };
@@ -111,6 +135,33 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         if (dialog.ShowDialog(Window.GetWindow(this)) == true)
         {
             Attach([dialog.FolderName]);
+        }
+    }
+
+    /// <summary>
+    /// Attaches a saved SSH connection, so the agent can write commands for a machine the user
+    /// already has set up.
+    /// </summary>
+    /// <remarks>
+    /// The session is attached by id rather than by its details: what goes to the model is built
+    /// fresh on every send, so editing the connection between turns changes what the agent sees,
+    /// and the saved chat never holds a copy of the host and account.
+    /// </remarks>
+    private void AttachSession()
+    {
+        var sessions = SessionCatalog.All;
+
+        if (sessions.Count == 0)
+        {
+            Post(new { t = "note", html = Markdown.Escape("There are no saved SSH connections to attach.") });
+            return;
+        }
+
+        var picker = new Views.SessionPickerDialog(sessions) { Owner = Window.GetWindow(this) };
+
+        if (picker.ShowDialog() == true && picker.Chosen is { } chosen)
+        {
+            Attach([SessionCatalog.Reference(chosen)]);
         }
     }
 
@@ -211,6 +262,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         {
             case "ready":
                 _pageReady = true;
+                PushStrings();
                 PushTheme();
                 Greet();
                 _ = PushModelsAsync();
@@ -230,6 +282,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             case "attachFolder":
                 AttachFolder();
+                break;
+
+            case "attachSsh":
+                AttachSession();
                 break;
 
             case "detach" when message.TryGetProperty("path", out var drop):
@@ -332,6 +388,32 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         Post(new { t = "status", text = $"answering with {name}", busy = false });
         _ = PushModelsAsync();
+    }
+
+    /// <summary>
+    /// Hands the page every word it shows, in the window's language.
+    /// </summary>
+    /// <remarks>
+    /// The page carries English defaults so it is readable even if this never arrives, but the
+    /// wording lives here with the rest of the strings rather than being duplicated in HTML where
+    /// switching language could not reach it.
+    /// </remarks>
+    private void PushStrings()
+    {
+        string[] keys =
+        [
+            "L_ChatAsk", "L_ChatSend", "L_ChatAttachFile", "L_ChatAttachFolder", "L_ChatAttachSsh",
+            "L_ChatRemove", "L_ChatOpenFile", "L_ChatOpenFolder", "L_ChatReveal",
+            "L_ChatRun", "L_ChatSkip", "L_ChatAlways", "L_ChatAlwaysNote", "L_ChatAdminWarn",
+            "L_ChatModelTitle", "L_ChatModelOther", "L_ChatModelPlaceholder",
+            "L_ChatContextTip", "L_ChatSpentCounted", "L_ChatSpentEstimated", "L_ChatCopied",
+        ];
+
+        Post(new
+        {
+            t = "strings",
+            s = keys.ToDictionary(key => key[6..], LocalizationService.T),
+        });
     }
 
     /// <summary>Hands the page the app's own colours and fonts, so the chat matches the window.</summary>
@@ -444,7 +526,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             bits.Add(_agent.AskBeforeRun ? "can run commands, each one asks" : "runs commands without asking");
         }
 
-        Post(new { t = "note", html = Markdown.Escape($"{_agent.Name} — {string.Join(" · ", bits)}") });
+        Post(new { t = "note", html = Markdown.Escape($"{BotName} — {string.Join(" · ", bits)}") });
 
         // Everything said before this run is redrawn, so reopening a chat looks like scrolling
         // back through it rather than starting over.
@@ -452,7 +534,19 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         {
             if (turn.Role == "assistant")
             {
-                Post(new { t = "assistant", label = _agent.Name, html = Markdown.ToHtml(turn.Text) });
+                Post(new { t = "assistant", label = BotName, html = Markdown.ToHtml(turn.Text) });
+
+                // Files the agent handed over are part of what it said, so they come back with it.
+                if (turn.Attachments.Count > 0)
+                {
+                    Post(new
+                    {
+                        t = "shared",
+                        label = BotName,
+                        note = string.Empty,
+                        files = turn.Attachments.Select(Attachments.Describe),
+                    });
+                }
             }
             else
             {
@@ -635,11 +729,19 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         foreach (var turn in _history)
         {
-            var role = turn.Role == "assistant" ? AgentRole.Assistant : AgentRole.User;
+            if (turn.Role == "assistant")
+            {
+                // An assistant turn's attachments are files it handed over, not material to
+                // read back: re-reading them into every later request would fill the window
+                // with what the agent itself produced.
+                conversation.Add(new AgentMessage(AgentRole.Assistant, turn.Text));
+                continue;
+            }
+
             var context = ChatContext.Build(turn.Attachments);
 
             conversation.Add(new AgentMessage(
-                role,
+                AgentRole.User,
                 context is null ? turn.Text : turn.Text + "\n\n" + context,
                 pictures ? ChatContext.Images(turn.Attachments) : null));
         }
@@ -659,7 +761,16 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         _reply.Clear();
         Post(new { t = "status", text = "working…", busy = true });
-        Post(new { t = "thinking", on = true, label = _agent.Name });
+        // The prompt side is known before the request goes out — it is the conversation being
+        // sent — so the counter starts with that estimate instead of at zero, and is corrected
+        // when the endpoint says what it actually charged.
+        _spentIn = UsedTokens();
+        _spentOut = 0;
+        _counted = false;
+        _shared.Clear();
+        PushSpend(counted: false);
+
+        Phase("thinking");
 
         try
         {
@@ -687,7 +798,12 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         if (_reply.Length > 0)
         {
-            _history.Add(new ChatTurn { Role = "assistant", Text = _reply.ToString() });
+            _history.Add(new ChatTurn
+            {
+                Role = "assistant",
+                Text = _reply.ToString(),
+                Attachments = [.. _shared],
+            });
         }
         else
         {
@@ -705,7 +821,24 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         switch (item.Kind)
         {
             case AgentEventKind.Thinking:
-                Post(new { t = "status", text = "thinking…", busy = true });
+                Phase("thinking");
+                break;
+
+            case AgentEventKind.Phase:
+                Phase(item.Text);
+                break;
+
+            case AgentEventKind.Usage:
+                // Not every endpoint reports the prompt side — some proxies leave it out of the
+                // stream entirely — so a zero keeps the estimate made when the turn started
+                // rather than replacing a rough figure with a wrong one.
+                if (item.Input > 0)
+                {
+                    _spentIn = item.Input;
+                }
+
+                _spentOut = item.Output;
+                PushSpend(counted: item.Input > 0);
                 break;
 
             case AgentEventKind.Text:
@@ -762,7 +895,48 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         }
 
         _dirty = false;
-        Post(new { t = "assistant", label = _agent.Name, html = Markdown.ToHtml(_reply.ToString()) });
+        Post(new { t = "assistant", label = BotName, html = Markdown.ToHtml(_reply.ToString()) });
+
+        // While text is arriving the endpoint has not said what it cost yet, so the count is
+        // carried by an estimate and marked as one until the real figure lands.
+        if (!_counted)
+        {
+            _spentOut = ChatContext.EstimateTokens([_reply.ToString()]);
+            PushSpend(counted: false);
+        }
+    }
+
+    /// <summary>
+    /// Says what the model is doing at this moment, both in the bar and on the waiting card.
+    /// </summary>
+    /// <remarks>
+    /// A phrase rather than three moving dots: "running a command" and "reading the output" are
+    /// the difference between a wait that is understood and one that looks like a hang, and they
+    /// are what tells the user whether interrupting would lose anything.
+    /// </remarks>
+    private void Phase(string phase)
+    {
+        var what = LocalizationService.T(phase switch
+        {
+            AgentPhase.Deciding => "L_PhaseDeciding",
+            AgentPhase.Running => "L_PhaseRunning",
+            AgentPhase.RunningElevated => "L_PhaseRunningAdmin",
+            AgentPhase.ReadingOutput => "L_PhaseReading",
+            AgentPhase.Writing => "L_PhaseWriting",
+            AgentPhase.Sharing => "L_PhaseSharing",
+            AgentPhase.WrappingUp => "L_PhaseWrappingUp",
+            _ => "L_PhaseThinking",
+        });
+
+        Post(new { t = "status", text = what + "…", busy = true });
+        Post(new { t = "thinking", on = true, label = BotName, what });
+    }
+
+    /// <summary>What this turn has cost so far.</summary>
+    private void PushSpend(bool counted)
+    {
+        _counted = counted;
+        Post(new { t = "spend", input = _spentIn, output = _spentOut, counted });
     }
 
     // ---- commands ----
@@ -834,6 +1008,43 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         }
 
         return await ElevatedHost.RunAsync(command, cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Nothing is copied or uploaded: the file is on the user's own machine and stays there. What
+    /// the chat gains is a pin they can open or find in Explorer, which is the difference between
+    /// a result they can use and a path they have to retype.
+    /// </remarks>
+    public Task<string> ShareAsync(string path, string note, CancellationToken cancellationToken)
+    {
+        path = path.Trim().Trim('"');
+
+        if (path.Length == 0)
+        {
+            return Task.FromResult("No path was given, so nothing was shared.");
+        }
+
+        if (!File.Exists(path) && !Directory.Exists(path))
+        {
+            // Reported rather than silently dropped: a model that shares a file it only meant to
+            // write will otherwise carry on believing the user has it.
+            return Task.FromResult($"There is nothing at {path}, so it was not shared.");
+        }
+
+        var full = Path.GetFullPath(path);
+
+        _shared.Add(full);
+
+        Post(new
+        {
+            t = "shared",
+            label = BotName,
+            note,
+            files = new[] { Attachments.Describe(full) },
+        });
+
+        return Task.FromResult($"Shared {full} with the user; it is now in the chat for them to open.");
     }
 
     /// <summary>Adds a standing allowance to this session and to the saved agent behind it.</summary>

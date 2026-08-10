@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using RedBloom.Services;
 
 namespace RedBloom.Services.Ai;
 
@@ -67,6 +68,12 @@ public static partial class Markdown
                 continue;
             }
 
+            if (IsTableAt(lines, index))
+            {
+                index = AppendTable(html, lines, index);
+                continue;
+            }
+
             if (BulletLine().IsMatch(line) || NumberedLine().IsMatch(line))
             {
                 index = AppendList(html, lines, index);
@@ -115,16 +122,21 @@ public static partial class Markdown
 
         if (collapsed)
         {
-            html.Append("<button class=\"more\" data-act=\"expand\">show all ")
-                .Append(lineCount)
-                .Append(" lines</button>");
+            html.Append("<button class=\"more\" data-act=\"expand\">")
+                .Append(Escape(string.Format(
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    LocalizationService.T("L_ChatShowAll"),
+                    lineCount)))
+                .Append("</button>");
         }
 
         // The text to copy rides on the element rather than being read back out of the DOM, so
         // what lands on the clipboard is exactly what the model wrote.
         html.Append("<button class=\"copy\" data-act=\"copy\" data-code=\"")
             .Append(Escape(text))
-            .Append("\">copy</button></span></figcaption><pre><code>")
+            .Append("\">")
+            .Append(Escape(LocalizationService.T("L_ChatCopy")))
+            .Append("</button></span></figcaption><pre><code>")
             .Append(Escape(text))
             .Append("</code></pre></figure>\n");
 
@@ -156,6 +168,98 @@ public static partial class Markdown
         return index;
     }
 
+    /// <summary>
+    /// A table is a header row followed by a row of dashes — the dashes are what tell it apart
+    /// from an ordinary line that happens to contain a pipe.
+    /// </summary>
+    private static bool IsTableAt(string[] lines, int index) =>
+        index + 1 < lines.Length
+        && lines[index].Contains('|', StringComparison.Ordinal)
+        && TableDivider().IsMatch(lines[index + 1]);
+
+    /// <remarks>
+    /// Wrapped in a scrolling box rather than squeezed to fit: a table of paths or of numbers is
+    /// unreadable once the columns are narrower than their contents, and the chat is a narrow
+    /// panel. Rows below the header are taken for as long as they keep coming, so a table still
+    /// being streamed renders as far as it has got instead of waiting for its last line.
+    /// </remarks>
+    private static int AppendTable(StringBuilder html, string[] lines, int index)
+    {
+        var headers = SplitRow(lines[index]);
+        var alignments = SplitRow(lines[index + 1]).ConvertAll(AlignmentOf);
+        index += 2;
+
+        html.Append("<div class=\"tablebox\"><table><thead><tr>");
+
+        for (var column = 0; column < headers.Count; column++)
+        {
+            html.Append("<th").Append(AlignAttribute(alignments, column)).Append('>')
+                .Append(Inline(headers[column]))
+                .Append("</th>");
+        }
+
+        html.Append("</tr></thead><tbody>");
+
+        while (index < lines.Length
+            && lines[index].Contains('|', StringComparison.Ordinal)
+            && lines[index].Trim().Length > 0)
+        {
+            var cells = SplitRow(lines[index]);
+            html.Append("<tr>");
+
+            // Ragged rows are common in model output; missing cells are drawn empty rather than
+            // shifting everything after them one column to the left.
+            for (var column = 0; column < headers.Count; column++)
+            {
+                html.Append("<td").Append(AlignAttribute(alignments, column)).Append('>')
+                    .Append(column < cells.Count ? Inline(cells[column]) : string.Empty)
+                    .Append("</td>");
+            }
+
+            html.Append("</tr>");
+            index++;
+        }
+
+        html.Append("</tbody></table></div>\n");
+
+        return index;
+    }
+
+    /// <summary>The cells of one row, without the pipes that fence them.</summary>
+    private static List<string> SplitRow(string line)
+    {
+        // An escaped pipe is content, not a cell boundary, so it is carried past the split.
+        const string Escaped = "\u0001";
+
+        var trimmed = line.Trim().Replace("\\|", Escaped, StringComparison.Ordinal);
+
+        if (trimmed.StartsWith('|'))
+        {
+            trimmed = trimmed[1..];
+        }
+
+        if (trimmed.EndsWith('|'))
+        {
+            trimmed = trimmed[..^1];
+        }
+
+        return [.. trimmed.Split('|').Select(cell => cell.Trim().Replace(Escaped, "|", StringComparison.Ordinal))];
+    }
+
+    private static string AlignmentOf(string divider)
+    {
+        var cell = divider.Trim();
+
+        return cell.StartsWith(':') && cell.EndsWith(':') ? "center"
+            : cell.EndsWith(':') ? "right"
+            : string.Empty;
+    }
+
+    private static string AlignAttribute(List<string> alignments, int column) =>
+        column < alignments.Count && alignments[column].Length > 0
+            ? $" class=\"{alignments[column]}\""
+            : string.Empty;
+
     private static int AppendQuote(StringBuilder html, string[] lines, int index)
     {
         var text = new StringBuilder();
@@ -182,6 +286,7 @@ public static partial class Markdown
             if (line.Trim().Length == 0
                 || FenceStart().IsMatch(line)
                 || HeadingLine().IsMatch(line)
+                || IsTableAt(lines, index)
                 || BulletLine().IsMatch(line)
                 || NumberedLine().IsMatch(line)
                 || RuleLine().IsMatch(line)
@@ -250,6 +355,10 @@ public static partial class Markdown
 
     [GeneratedRegex(@"^\s*[-*+]\s+(.*)$")]
     private static partial Regex BulletLine();
+
+    /// <summary>The dashed row under a table's header, with optional alignment colons.</summary>
+    [GeneratedRegex(@"^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-*:?\s*\|?\s*$")]
+    private static partial Regex TableDivider();
 
     [GeneratedRegex(@"^\s*\d+[.)]\s+(.*)$")]
     private static partial Regex NumberedLine();
