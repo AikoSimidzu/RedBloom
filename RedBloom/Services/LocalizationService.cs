@@ -88,12 +88,53 @@ public static class LocalizationService
                                     + "shaped by whatever it has read along the way, so leave the "
                                     + "approval prompt on unless you are watching the session.",
         ["L_AiAskBeforeRun"] = "Ask before each command",
+        ["L_AiAllowImages"] = "Let this agent draw pictures",
+        ["L_AiAllowImagesNote"] = "The agent gets a tool that draws a picture from a prompt with the "
+                                  + "local image model (stable-diffusion.cpp) and shows it in the chat. "
+                                  + "Needs the image engine installed and a diffusion .gguf in the AIModels folder.",
+        ["L_AiImageEngineInstall"] = "Install image engine",
+        ["L_AiImageEngineReinstall"] = "Reinstall / switch backend",
+        ["L_AiImageEngineReady"] = "Image engine installed.",
+        ["L_AiImageEngineInstalledFmt"] = "Installed: {0}.",
+        ["L_AiImageEngineSuggest"] = "Not installed. Suggested for your hardware: {0}.",
+        ["L_AiImageEngineInstalling"] = "Downloading… {0}%",
+        ["L_AiImageEngineAsk"] = "Download the {0} build of stable-diffusion.cpp into {1}? It is a few "
+                                 + "hundred megabytes and installs beside the program, needing no administrator.",
+        ["L_AiPickModel"] = "Choose…",
+        ["L_AiPickModelNone"] = "No local models found",
+        ["L_AiImageModel"] = "Local image model",
+        ["L_AiImageModelNote"] = "Which diffusion model to draw with. Found: {0}. Leave empty for the first one.",
+        ["L_AiImageModelNoneNote"] = "No diffusion model was found in the AIModels folder. Put a diffusion .gguf there.",
+        ["L_ImageAgentNoPrompt"] = "Type what to draw, and the model will draw it.",
+        ["L_ImageAgentNoEngine"] = "The image engine is not installed. Install it under \"Let this agent draw pictures\".",
+        ["L_ImageAgentNoModel"] = "No diffusion model was found for this agent.",
         ["L_AiAllowedCommands"] = "Allowed without asking",
         ["L_AiAllowedCommandsNote"] = "One per line. A line matches a command that is exactly it, "
                                       + "or that starts with it followed by a space — so \"git\" covers "
                                       + "every git call, \"git status\" only that one. Answering [a] at "
                                       + "the prompt adds a line here.",
         ["L_AiSystemPrompt"] = "Standing instructions",
+        ["L_AiRoleplay"] = "Roleplay model (plays a character)",
+        ["L_AiRoleplayNote"] = "The character card below is sent ahead of everything else, so the "
+                               + "model answers as this character instead of naming whoever trained it. "
+                               + "Empty fields are left out.",
+        ["L_CharCard"] = "Character card",
+        ["L_CharName"] = "Name",
+        ["L_CharSex"] = "Sex",
+        ["L_CharAge"] = "Age",
+        ["L_CharRace"] = "Race",
+        ["L_CharHeight"] = "Height",
+        ["L_CharWeight"] = "Weight",
+        ["L_CharHair"] = "Hair",
+        ["L_CharSkin"] = "Skin",
+        ["L_CharManner"] = "Manner of speech",
+        ["L_CharLikes"] = "Likes",
+        ["L_CharDislikes"] = "Dislikes",
+        ["L_CharHobbies"] = "Hobbies",
+        ["L_CharBiography"] = "Biography",
+        ["L_CharScenario"] = "Scene",
+        ["L_CharGreeting"] = "Greeting",
+        ["L_CharOther"] = "Also",
         ["L_AiTest"] = "Test connection",
         ["L_AiTesting"] = "Checking…",
         ["L_AiTestOk"] = "The endpoint answered and accepted the key.",
@@ -289,6 +330,18 @@ public static class LocalizationService
         ["L_ChatShowAll"] = "show all {0} lines",
         ["L_ChatOutput"] = "output",
         ["L_PhaseLoading"] = "loading the model — the first time takes a while",
+        ["L_PhaseTunnelling"] = "opening the connection to the machine that serves it",
+        ["L_TunnelNoSession"] = "This agent is routed through a saved SSH connection that no longer exists.",
+        ["L_TunnelNoPort"] =
+            "Routing through a connection only works for an address on 127.0.0.1 — that is what "
+            + "the tunnel carries. Point the agent at the loopback port the server listens on.",
+        ["L_TunnelFailed"] = "The connection to that machine could not be opened: {0}",
+        ["L_AiTunnel"] = "Reach it through",
+        ["L_AiTunnelNone"] = "Directly, no tunnel",
+        ["L_AiTunnelNote"] =
+            "For a server that listens only on its own machine. Keep the endpoint pointed at "
+            + "127.0.0.1 and that port is carried over this connection while a chat is open — no "
+            + "firewall change, no ssh window to keep running.",
         ["L_LocalNotLoaded"] = "The model was registered but the engine is not serving it.",
         ["L_LocalNoFile"] =
             "This model is not loaded and its file is not in the models folder. Download it again "
@@ -300,6 +353,7 @@ public static class LocalizationService
         ["L_PhaseReading"] = "reading the output",
         ["L_PhaseWriting"] = "writing the answer",
         ["L_PhaseSharing"] = "sharing a file",
+        ["L_PhaseDrawing"] = "drawing a picture",
         ["L_PhaseWrappingUp"] = "out of command rounds — writing up what was found",
         ["L_FitGood"] = "runs well",
         ["L_FitTight"] = "tight",
@@ -357,6 +411,7 @@ public static class LocalizationService
         ["L_EngineNoFinish"] = "The engine download did not finish. Nothing was kept.",
         ["L_EngineNoUnpack"] = "The engine could not be unpacked: {0}",
         ["L_EngineNoExe"] = "The download unpacked, but ollama.exe was not in it.",
+        ["L_ImageEngineNoExe"] = "The download unpacked, but the image engine (sd-cli.exe) was not in it.",
         ["L_EngineNoStart"] = "Ollama could not be started: {0}",
         ["L_EngineQuit"] = "Ollama stopped straight away — something else may be using its port.",
         ["L_EngineSlow"] = "Ollama did not start answering.",
@@ -517,12 +572,53 @@ public static class LocalizationService
                                     + "всё прочитанное по дороге, поэтому подтверждение лучше не "
                                     + "выключать, если не смотришь за сессией.",
         ["L_AiAskBeforeRun"] = "Спрашивать перед каждой командой",
+        ["L_AiAllowImages"] = "Разрешить агенту рисовать картинки",
+        ["L_AiAllowImagesNote"] = "Агент получает инструмент, который рисует картинку по описанию "
+                                  + "локальной image-моделью (stable-diffusion.cpp) и показывает её в чате. "
+                                  + "Нужен установленный движок картинок и diffusion-.gguf в папке AIModels.",
+        ["L_AiImageEngineInstall"] = "Установить движок картинок",
+        ["L_AiImageEngineReinstall"] = "Переустановить (сменить бэкенд)",
+        ["L_AiImageEngineReady"] = "Движок картинок установлен.",
+        ["L_AiImageEngineInstalledFmt"] = "Установлен: {0}.",
+        ["L_AiImageEngineSuggest"] = "Не установлен. Рекомендуется для твоего железа: {0}.",
+        ["L_AiImageEngineInstalling"] = "Скачиваю… {0}%",
+        ["L_AiImageEngineAsk"] = "Скачать сборку {0} для stable-diffusion.cpp в {1}? Это несколько сотен "
+                                 + "мегабайт, ставится рядом с программой, без прав администратора.",
+        ["L_AiPickModel"] = "Выбрать…",
+        ["L_AiPickModelNone"] = "Локальных моделей не найдено",
+        ["L_AiImageModel"] = "Локальная модель картинок",
+        ["L_AiImageModelNote"] = "Какой diffusion-моделью рисовать. Найдено: {0}. Пусто — первая из списка.",
+        ["L_AiImageModelNoneNote"] = "В папке AIModels нет diffusion-модели. Положи туда diffusion-.gguf.",
+        ["L_ImageAgentNoPrompt"] = "Напиши, что нарисовать, — модель нарисует.",
+        ["L_ImageAgentNoEngine"] = "Движок картинок не установлен. Поставь его под «Разрешить агенту рисовать картинки».",
+        ["L_ImageAgentNoModel"] = "Для этого агента не найдена diffusion-модель.",
         ["L_AiAllowedCommands"] = "Разрешено без вопросов",
         ["L_AiAllowedCommandsNote"] = "По строке на образец. Строка подходит команде, равной ей или "
                                       + "начинающейся с неё и пробела: «git» покрывает любой вызов git, "
                                       + "«git status» — только его. Ответ [a] в приглашении добавляет "
                                       + "строку сюда.",
         ["L_AiSystemPrompt"] = "Постоянные инструкции",
+        ["L_AiRoleplay"] = "РП-модель (играет персонажа)",
+        ["L_AiRoleplayNote"] = "Карточка персонажа ниже уходит впереди всего остального, поэтому модель "
+                               + "отвечает от лица персонажа, а не называет того, кто её обучал. Пустые "
+                               + "поля не отправляются.",
+        ["L_CharCard"] = "Карточка персонажа",
+        ["L_CharName"] = "Имя",
+        ["L_CharSex"] = "Пол",
+        ["L_CharAge"] = "Возраст",
+        ["L_CharRace"] = "Раса",
+        ["L_CharHeight"] = "Рост",
+        ["L_CharWeight"] = "Вес",
+        ["L_CharHair"] = "Волосы",
+        ["L_CharSkin"] = "Кожа",
+        ["L_CharManner"] = "Манера речи",
+        ["L_CharLikes"] = "Нравится",
+        ["L_CharDislikes"] = "Не нравится",
+        ["L_CharHobbies"] = "Хобби",
+        ["L_CharBiography"] = "Биография",
+        ["L_CharScenario"] = "Сцена",
+        ["L_CharGreeting"] = "Приветствие",
+        ["L_CharOther"] = "Ещё",
         ["L_AiTest"] = "Проверить связь",
         ["L_AiTesting"] = "Проверяю…",
         ["L_AiTestOk"] = "Эндпоинт ответил, ключ принят.",
@@ -706,6 +802,18 @@ public static class LocalizationService
         ["L_ChatShowAll"] = "показать все строки: {0}",
         ["L_ChatOutput"] = "вывод",
         ["L_PhaseLoading"] = "загружаю модель — в первый раз это небыстро",
+        ["L_PhaseTunnelling"] = "открываю соединение с машиной, где она работает",
+        ["L_TunnelNoSession"] = "Агент направлен через сохранённое SSH-подключение, которого больше нет.",
+        ["L_TunnelNoPort"] =
+            "Через подключение можно вести только адрес на 127.0.0.1 — именно этот порт и "
+            + "переносится. Укажите агенту локальный порт, который слушает сервер.",
+        ["L_TunnelFailed"] = "Не удалось открыть соединение с той машиной: {0}",
+        ["L_AiTunnel"] = "Идти через",
+        ["L_AiTunnelNone"] = "Напрямую, без туннеля",
+        ["L_AiTunnelNote"] =
+            "Для сервера, который слушает только на своей машине. Оставьте адрес на 127.0.0.1 — "
+            + "этот порт будет перенесён через выбранное подключение, пока открыт чат. Ни правок "
+            + "файрвола, ни отдельного окна с ssh.",
         ["L_LocalNotLoaded"] = "Модель зарегистрирована, но движок её не отдаёт.",
         ["L_LocalNoFile"] =
             "Модель не загружена, и её файла нет в папке моделей. Скачайте заново на странице "
@@ -717,6 +825,7 @@ public static class LocalizationService
         ["L_PhaseReading"] = "читаю вывод",
         ["L_PhaseWriting"] = "пишу ответ",
         ["L_PhaseSharing"] = "передаю файл",
+        ["L_PhaseDrawing"] = "рисую картинку",
         ["L_PhaseWrappingUp"] = "команды кончились — подвожу итог",
         ["L_FitGood"] = "потянет",
         ["L_FitTight"] = "впритык",
@@ -774,6 +883,7 @@ public static class LocalizationService
         ["L_EngineNoFinish"] = "Загрузка движка не завершилась. Ничего не сохранено.",
         ["L_EngineNoUnpack"] = "Движок не распаковался: {0}",
         ["L_EngineNoExe"] = "Архив распаковался, но ollama.exe в нём не оказалось.",
+        ["L_ImageEngineNoExe"] = "Архив распаковался, но движка картинок (sd-cli.exe) в нём не оказалось.",
         ["L_EngineNoStart"] = "Ollama не запустилась: {0}",
         ["L_EngineQuit"] = "Ollama сразу завершилась — возможно, её порт занят чем-то другим.",
         ["L_EngineSlow"] = "Ollama не начала отвечать.",

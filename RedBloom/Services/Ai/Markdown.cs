@@ -137,7 +137,7 @@ public static partial class Markdown
             .Append("\">")
             .Append(Escape(LocalizationService.T("L_ChatCopy")))
             .Append("</button></span></figcaption><pre><code>")
-            .Append(Escape(text))
+            .Append(CodeHighlighter.Highlight(text))
             .Append("</code></pre></figure>\n");
 
         return index;

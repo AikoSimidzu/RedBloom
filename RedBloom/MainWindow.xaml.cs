@@ -39,6 +39,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // Published for the parts that resolve an attached connection long after the picker has
         // gone — a chat turn running in the background has no way to reach this window.
         SessionCatalog.Store = _store;
+
+        // The tunnel opener needs the same host-key judgement the terminal uses; without it an
+        // unknown host would be refused silently instead of being put to the user.
+        Services.Ai.AgentTunnel.IsTrusted = _hostKeyPolicy.IsTrusted;
+        Services.Ai.AgentTunnel.ApproveAsync = _hostKeyPolicy.ApproveAsync;
         ChatStore.Load();
 
         SessionsView = CollectionViewSource.GetDefaultView(_store.Sessions);

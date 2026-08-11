@@ -54,6 +54,12 @@ public static class SessionCatalog
     public static bool CarriesSecret(string attachment) =>
         attachment.EndsWith(WithSecret, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>A session by its plain id, as an agent's tunnel setting stores it.</summary>
+    public static SshSession? ById(string id) =>
+        Guid.TryParse(id, out var parsed)
+            ? Store?.Sessions.FirstOrDefault(session => session.Id == parsed)
+            : null;
+
     /// <summary>How a session is written when it is attached to a message.</summary>
     public static string Reference(SshSession session, bool withSecret) =>
         Scheme + session.Id + (withSecret ? WithSecret : string.Empty);

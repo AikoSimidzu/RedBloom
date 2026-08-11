@@ -42,6 +42,7 @@ namespace RedBloom
             ElevatedHost.Stop();
             Services.Ai.OllamaEngine.Stop();
             Services.Ai.LocalRunner.Stop();
+            Services.Ai.AgentTunnel.CloseAll();
             base.OnExit(e);
         }
     }

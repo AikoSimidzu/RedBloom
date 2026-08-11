@@ -23,6 +23,14 @@
     --ui-font: "Segoe UI", system-ui, sans-serif;
     --code-font: "Cascadia Mono", Consolas, monospace;
     --code-size: 12.5px;
+    /* Syntax colours. Medium-bright hues chosen to read on the code plate (--raised) in the
+       default dark theme; kept as variables so a future theme can retune them. */
+    --tok-com: var(--faint);
+    --tok-kw: #d2a8ff;
+    --tok-str: #8ddb8c;
+    --tok-num: #79c0ff;
+    --tok-fn: #ffa657;
+    --tok-lit: #79c0ff;
   }
 
   * { box-sizing: border-box; }
@@ -236,6 +244,14 @@
     line-height: 1.45;
   }
   figure.code pre code { background: none; padding: 0; }
+
+  /* Syntax highlighting. The spans are emitted by CodeHighlighter on the C# side. */
+  figure.code .tok-com { color: var(--tok-com); font-style: italic; }
+  figure.code .tok-kw  { color: var(--tok-kw); }
+  figure.code .tok-str { color: var(--tok-str); }
+  figure.code .tok-num { color: var(--tok-num); }
+  figure.code .tok-fn  { color: var(--tok-fn); }
+  figure.code .tok-lit { color: var(--tok-lit); }
 
   /* A long block shows its first lines until asked for the rest. */
   figure.code.collapsed pre { max-height: 17em; overflow-y: hidden; }
@@ -543,6 +559,20 @@
 
   .thumb { width: 20px; height: 20px; border-radius: 4px; object-fit: cover; flex: 0 0 20px; }
   .glyph { font-family: "Segoe MDL2 Assets"; font-size: 13px; color: var(--faint); flex: 0 0 auto; }
+
+  /* A picture the agent drew, shown at full size rather than as a pin. Capped so a tall image
+     does not push the whole conversation off screen; clicking opens it in the system viewer. */
+  figure.genimg { margin: 4px 0 10px; }
+  figure.genimg img {
+    display: block;
+    max-width: 100%;
+    max-height: 70vh;
+    width: auto;
+    border-radius: 8px;
+    border: 1px solid var(--divider);
+    cursor: zoom-in;
+  }
+  figure.genimg figcaption { color: var(--faint); font-size: 11px; margin-top: 5px; }
 
   /* An attachment that has been sent: it lives in the message now, and clicking it offers
      the two things anyone wants from a path — the thing itself, or where it lives. */
@@ -1151,6 +1181,22 @@
       box.appendChild(strip);
 
       log.appendChild(box);
+      follow();
+    },
+
+    /// A picture the agent drew, shown full-size. Clicking opens it in the system viewer.
+    image(m) {
+      stopThinking();
+      openTurn = null;
+
+      const fig = el("figure", "genimg");
+      const img = document.createElement("img");
+      img.src = m.src || "";
+      img.alt = "";
+      if (m.path) img.addEventListener("click", () => post({ t: "openAttachment", path: m.path, how: "open" }));
+      fig.appendChild(img);
+
+      log.appendChild(fig);
       follow();
     },
 

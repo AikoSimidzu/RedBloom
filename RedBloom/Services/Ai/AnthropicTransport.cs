@@ -51,7 +51,7 @@ public sealed class AnthropicTransport : IAgentTransport
         };
     }
 
-    private bool ToolsEnabled => _tools is { Enabled: true };
+    private bool ToolsEnabled => _tools is not null && (_tools.Enabled || _tools.ImagesEnabled);
 
     public IAsyncEnumerable<AgentEvent> SendAsync(
         IReadOnlyList<AgentMessage> conversation,
@@ -261,6 +261,24 @@ public sealed class AnthropicTransport : IAgentTransport
                     continue;
                 }
 
+                // Drawing a picture also needs no approval: it runs a diffusion model and shows
+                // the result, the same standing as sharing a file.
+                if (call.Name == AgentTransports.Image.Name)
+                {
+                    var (prompt, negative) = ReadImage(call.Arguments);
+
+                    yield return AgentEvent.Doing(AgentPhase.Drawing);
+
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.GenerateImageAsync(prompt, negative, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
                 var command = ReadCommand(call.Arguments);
                 var elevated = ReadElevated(call.Arguments);
 
@@ -457,6 +475,18 @@ public sealed class AnthropicTransport : IAgentTransport
                 : string.Empty;
     }
 
+    private static (string Prompt, string Negative) ReadImage(string json)
+    {
+        var arguments = ParseArguments(json);
+
+        return (Text(AgentTransports.Image.Parameter), Text(AgentTransports.Image.Negative));
+
+        string Text(string name) =>
+            arguments.TryGetValue(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+    }
+
     /// <summary>One read from the stream: whether it moved, what it carried, why it stopped.</summary>
     private readonly record struct Step(
         bool Moved, string? Text, string? Error, long Input = 0, long Output = 0, string? Thinking = null);
@@ -583,59 +613,7 @@ public sealed class AnthropicTransport : IAgentTransport
 
         return new MessageCreateParams
         {
-            Tools = offerTools
-                ?
-                [
-                    new Tool
-                    {
-                        Name = AgentTransports.Command.Name,
-                        Description = AgentTransports.Command.Description,
-                        InputSchema = new()
-                        {
-                            Properties = new Dictionary<string, System.Text.Json.JsonElement>
-                            {
-                                [AgentTransports.Command.Parameter] =
-                                    System.Text.Json.JsonSerializer.SerializeToElement(new
-                                    {
-                                        type = "string",
-                                        description = AgentTransports.Command.ParameterDescription,
-                                    }),
-                                [AgentTransports.Command.Elevated] =
-                                    System.Text.Json.JsonSerializer.SerializeToElement(new
-                                    {
-                                        type = "boolean",
-                                        description = AgentTransports.Command.ElevatedDescription,
-                                    }),
-                            },
-                            Required = [AgentTransports.Command.Parameter],
-                        },
-                    },
-                    new Tool
-                    {
-                        Name = AgentTransports.Share.Name,
-                        Description = AgentTransports.Share.Description,
-                        InputSchema = new()
-                        {
-                            Properties = new Dictionary<string, System.Text.Json.JsonElement>
-                            {
-                                [AgentTransports.Share.Parameter] =
-                                    System.Text.Json.JsonSerializer.SerializeToElement(new
-                                    {
-                                        type = "string",
-                                        description = AgentTransports.Share.ParameterDescription,
-                                    }),
-                                [AgentTransports.Share.Note] =
-                                    System.Text.Json.JsonSerializer.SerializeToElement(new
-                                    {
-                                        type = "string",
-                                        description = AgentTransports.Share.NoteDescription,
-                                    }),
-                            },
-                            Required = [AgentTransports.Share.Parameter],
-                        },
-                    },
-                ]
-                : null,
+            Tools = BuildTools(offerTools),
             Model = _agent.Model,
             MaxTokens = _agent.MaxTokens,
             // Adaptive, never a fixed budget — the budget form is rejected by current models.
@@ -647,12 +625,83 @@ public sealed class AnthropicTransport : IAgentTransport
             // Cast so the empty branch is a genuine null of the union type. Without it both
             // branches type as the list, and converting a null list into the union throws
             // before the request is ever sent.
-            System = string.IsNullOrWhiteSpace(_agent.SystemPrompt)
+            System = string.IsNullOrWhiteSpace(_agent.Instructions)
                 ? (MessageCreateParamsSystem?)null
-                : new List<TextBlockParam> { new() { Text = _agent.SystemPrompt } },
+                : new List<TextBlockParam> { new() { Text = _agent.Instructions } },
             Messages = messages,
         };
     }
+
+    /// <summary>
+    /// The tools offered this turn: the command and share pair when commands are allowed, and the
+    /// image tool when drawing is. Null, not an empty list, when none apply — the API rejects a
+    /// tools field that is present but empty.
+    /// </summary>
+    private List<ToolUnion>? BuildTools(bool offer)
+    {
+        if (!offer)
+        {
+            return null;
+        }
+
+        var tools = new List<ToolUnion>();
+
+        if (_tools is { Enabled: true })
+        {
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Command.Name,
+                Description = AgentTransports.Command.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Command.Parameter] = Schema("string", AgentTransports.Command.ParameterDescription),
+                        [AgentTransports.Command.Elevated] = Schema("boolean", AgentTransports.Command.ElevatedDescription),
+                    },
+                    Required = [AgentTransports.Command.Parameter],
+                },
+            });
+
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Share.Name,
+                Description = AgentTransports.Share.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Share.Parameter] = Schema("string", AgentTransports.Share.ParameterDescription),
+                        [AgentTransports.Share.Note] = Schema("string", AgentTransports.Share.NoteDescription),
+                    },
+                    Required = [AgentTransports.Share.Parameter],
+                },
+            });
+        }
+
+        if (_tools is { ImagesEnabled: true })
+        {
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Image.Name,
+                Description = AgentTransports.Image.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Image.Parameter] = Schema("string", AgentTransports.Image.ParameterDescription),
+                        [AgentTransports.Image.Negative] = Schema("string", AgentTransports.Image.NegativeDescription),
+                    },
+                    Required = [AgentTransports.Image.Parameter],
+                },
+            });
+        }
+
+        return tools.Count == 0 ? null : tools;
+    }
+
+    private static System.Text.Json.JsonElement Schema(string type, string description) =>
+        System.Text.Json.JsonSerializer.SerializeToElement(new { type, description });
 
     /// <summary>
     /// The effort level to ask for, lowered when it would contradict the thinking setting.

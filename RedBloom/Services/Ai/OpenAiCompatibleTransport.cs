@@ -43,7 +43,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         }
     }
 
-    private bool ToolsEnabled => _tools is { Enabled: true };
+    private bool ToolsEnabled => _tools is not null && (_tools.Enabled || _tools.ImagesEnabled);
 
     public IAsyncEnumerable<AgentEvent> SendAsync(
         IReadOnlyList<AgentMessage> conversation,
@@ -66,9 +66,9 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
     {
         var messages = new List<object>();
 
-        if (!string.IsNullOrWhiteSpace(_agent.SystemPrompt))
+        if (!string.IsNullOrWhiteSpace(_agent.Instructions))
         {
-            messages.Add(new { role = "system", content = _agent.SystemPrompt });
+            messages.Add(new { role = "system", content = _agent.Instructions });
         }
 
         foreach (var message in conversation)
@@ -141,6 +141,23 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                         role = "tool",
                         tool_call_id = id,
                         content = await _tools!.ShareAsync(call.Path, call.Note, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                // Drawing runs a diffusion model and shows the result; like sharing, it is not put
+                // to the user for approval. The prompt rides in Command and the negative in Note.
+                if (call.Name == AgentTransports.Image.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Drawing);
+
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.GenerateImageAsync(call.Command, call.Note, cancellationToken)
                             .ConfigureAwait(false),
                     });
 
@@ -268,6 +285,21 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     continue;
                 }
 
+                // The prompt is carried in Command and the negative in Note, so the dispatch above
+                // can pull them out without the record needing fields of its own for drawing.
+                if (name == AgentTransports.Image.Name)
+                {
+                    calls.Add(new Call(
+                        Id(id),
+                        name,
+                        Text(root, AgentTransports.Image.Parameter),
+                        false,
+                        string.Empty,
+                        Text(root, AgentTransports.Image.Negative)));
+
+                    continue;
+                }
+
                 if (root.TryGetProperty(AgentTransports.Command.Parameter, out var command)
                     && command.ValueKind == JsonValueKind.String)
                 {
@@ -333,69 +365,73 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         }
     }
 
-    private string BuildToolPayload(List<object> messages, bool withTools = true) => JsonSerializer.Serialize(new
+    private string BuildToolPayload(List<object> messages, bool withTools = true)
     {
-        model = _agent.Model,
-        max_tokens = _agent.MaxTokens,
-        messages,
-        tools = !withTools ? null : new[]
+        // Each tool is offered only when its permission is on, so an agent that may draw but not
+        // run commands is handed the image tool alone. A function with no properties is not valid,
+        // so the list is null rather than empty when nothing is offered.
+        List<object>? tools = null;
+
+        if (withTools)
         {
-            new
+            tools = [];
+
+            if (_tools is { Enabled: true })
             {
-                type = "function",
-                function = new
+                tools.Add(Function(AgentTransports.Command.Name, AgentTransports.Command.Description, new()
                 {
-                    name = AgentTransports.Command.Name,
-                    description = AgentTransports.Command.Description,
-                    parameters = new
-                    {
-                        type = "object",
-                        properties = new Dictionary<string, object>
-                        {
-                            [AgentTransports.Command.Parameter] = new
-                            {
-                                type = "string",
-                                description = AgentTransports.Command.ParameterDescription,
-                            },
-                            [AgentTransports.Command.Elevated] = new
-                            {
-                                type = "boolean",
-                                description = AgentTransports.Command.ElevatedDescription,
-                            },
-                        },
-                        required = new[] { AgentTransports.Command.Parameter },
-                    },
-                },
-            },
-            new
+                    [AgentTransports.Command.Parameter] = Property("string", AgentTransports.Command.ParameterDescription),
+                    [AgentTransports.Command.Elevated] = Property("boolean", AgentTransports.Command.ElevatedDescription),
+                }, AgentTransports.Command.Parameter));
+
+                tools.Add(Function(AgentTransports.Share.Name, AgentTransports.Share.Description, new()
+                {
+                    [AgentTransports.Share.Parameter] = Property("string", AgentTransports.Share.ParameterDescription),
+                    [AgentTransports.Share.Note] = Property("string", AgentTransports.Share.NoteDescription),
+                }, AgentTransports.Share.Parameter));
+            }
+
+            if (_tools is { ImagesEnabled: true })
             {
-                type = "function",
-                function = new
+                tools.Add(Function(AgentTransports.Image.Name, AgentTransports.Image.Description, new()
                 {
-                    name = AgentTransports.Share.Name,
-                    description = AgentTransports.Share.Description,
-                    parameters = new
-                    {
-                        type = "object",
-                        properties = new Dictionary<string, object>
-                        {
-                            [AgentTransports.Share.Parameter] = new
-                            {
-                                type = "string",
-                                description = AgentTransports.Share.ParameterDescription,
-                            },
-                            [AgentTransports.Share.Note] = new
-                            {
-                                type = "string",
-                                description = AgentTransports.Share.NoteDescription,
-                            },
-                        },
-                        required = new[] { AgentTransports.Share.Parameter },
-                    },
-                },
+                    [AgentTransports.Image.Parameter] = Property("string", AgentTransports.Image.ParameterDescription),
+                    [AgentTransports.Image.Negative] = Property("string", AgentTransports.Image.NegativeDescription),
+                }, AgentTransports.Image.Parameter));
+            }
+
+            if (tools.Count == 0)
+            {
+                tools = null;
+            }
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            model = _agent.Model,
+            max_tokens = _agent.MaxTokens,
+            messages,
+            tools,
+        });
+    }
+
+    private static object Property(string type, string description) => new { type, description };
+
+    private static object Function(string name, string description, Dictionary<string, object> properties, string required) => new
+    {
+        type = "function",
+        function = new
+        {
+            name,
+            description,
+            parameters = new
+            {
+                type = "object",
+                properties,
+                required = new[] { required },
             },
         },
-    });
+    };
 
     private async IAsyncEnumerable<AgentEvent> StreamAsync(
         IReadOnlyList<AgentMessage> conversation,
@@ -604,9 +640,9 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         var messages = new List<object>();
 
         // This format carries standing instructions as a leading message rather than a field.
-        if (!string.IsNullOrWhiteSpace(_agent.SystemPrompt))
+        if (!string.IsNullOrWhiteSpace(_agent.Instructions))
         {
-            messages.Add(new { role = "system", content = _agent.SystemPrompt });
+            messages.Add(new { role = "system", content = _agent.Instructions });
         }
 
         foreach (var message in conversation)

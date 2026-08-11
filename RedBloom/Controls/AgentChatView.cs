@@ -549,6 +549,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             bits.Add(_agent.AskBeforeRun ? "can run commands, each one asks" : "runs commands without asking");
         }
 
+        if (_agent.AllowImages)
+        {
+            bits.Add("can draw pictures");
+        }
+
         Post(new { t = "note", html = Markdown.Escape($"{BotName} — {string.Join(" · ", bits)}") });
 
         // Everything said before this run is redrawn, so reopening a chat looks like scrolling
@@ -609,6 +614,13 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     private async Task CompactIfFullAsync(CancellationToken cancellationToken)
     {
         const int KeepVerbatim = 6;
+
+        // An image agent has no conversation to compact — each message is a self-contained prompt,
+        // and asking it to "summarise" would only set it drawing a picture of the instruction.
+        if (_agent.Provider == AiProvider.ImageGen)
+        {
+            return;
+        }
 
         var used = UsedTokens();
 
@@ -825,6 +837,20 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         try
         {
+            // The tunnel first: a local model behind one cannot be asked whether it is loaded
+            // until there is a way through to it.
+            if (_agent.UsesTunnel)
+            {
+                Phase(AgentPhase.Tunnelling);
+
+                if (await AgentTunnel.EnsureAsync(_agent, turn.Token).ConfigureAwait(true) is { } blocked)
+                {
+                    Post(new { t = "note", html = Markdown.Escape(blocked) });
+
+                    return;
+                }
+            }
+
             if (await StartLocalModelAsync(turn.Token).ConfigureAwait(true) is { } refused)
             {
                 Post(new { t = "note", html = Markdown.Escape(refused) });
@@ -941,6 +967,12 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 Post(new { t = "activityDone", id = _activity.ToString(), summary = "skipped", output = "" });
                 break;
 
+            case AgentEventKind.Image:
+                // Kept with the turn as well as shown, so reopening the chat still has it.
+                _shared.Add(item.Text);
+                Post(new { t = "image", label = BotName, src = ImageDataUri(item.Text), path = item.Text });
+                break;
+
             case AgentEventKind.Failed:
                 Post(new { t = "note", html = Markdown.Escape(item.Text) });
                 break;
@@ -987,12 +1019,14 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         var what = LocalizationService.T(phase switch
         {
             AgentPhase.Loading => "L_PhaseLoading",
+            AgentPhase.Tunnelling => "L_PhaseTunnelling",
             AgentPhase.Deciding => "L_PhaseDeciding",
             AgentPhase.Running => "L_PhaseRunning",
             AgentPhase.RunningElevated => "L_PhaseRunningAdmin",
             AgentPhase.ReadingOutput => "L_PhaseReading",
             AgentPhase.Writing => "L_PhaseWriting",
             AgentPhase.Sharing => "L_PhaseSharing",
+            AgentPhase.Drawing => "L_PhaseDrawing",
             AgentPhase.WrappingUp => "L_PhaseWrappingUp",
             _ => "L_PhaseThinking",
         });
@@ -1021,6 +1055,9 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
     /// <inheritdoc />
     public bool Enabled => _agent.AllowCommands;
+
+    /// <inheritdoc />
+    public bool ImagesEnabled => _agent.AllowImages;
 
     /// <inheritdoc />
     /// <remarks>
@@ -1123,6 +1160,58 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         });
 
         return Task.FromResult($"Shared {full} with the user; it is now in the chat for them to open.");
+    }
+
+    /// <summary>
+    /// Draws a picture with the local diffusion model and shows it in the chat at full size.
+    /// </summary>
+    /// <remarks>
+    /// The file is kept with the turn as well as shown, so reopening the chat still has it. What
+    /// goes back to the model is a plain confirmation, not the picture: it cannot see what it drew,
+    /// and inviting it to describe the image only produces a guess the user can already disprove by
+    /// looking.
+    /// </remarks>
+    public async Task<string> GenerateImageAsync(string prompt, string negative, CancellationToken cancellationToken)
+    {
+        var result = await ImageGen
+            .GenerateAsync(prompt, new ImageOptions { Negative = negative }, cancellationToken)
+            .ConfigureAwait(true);
+
+        if (!result.Ok || result.PngPath is null)
+        {
+            return result.Message;
+        }
+
+        _shared.Add(result.PngPath);
+
+        Post(new
+        {
+            t = "image",
+            label = BotName,
+            src = ImageDataUri(result.PngPath),
+            path = result.PngPath,
+        });
+
+        return "The picture was generated and is now shown to the user in the chat at full size. "
+            + "They can see it; do not describe what is in it.";
+    }
+
+    /// <summary>The picture inlined as a data URI, or empty when it is missing or too large to embed.</summary>
+    private static string ImageDataUri(string path)
+    {
+        try
+        {
+            if (!File.Exists(path) || new FileInfo(path).Length > 12 * 1024 * 1024)
+            {
+                return string.Empty;
+            }
+
+            return $"data:image/png;base64,{Convert.ToBase64String(File.ReadAllBytes(path))}";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>Adds a standing allowance to this session and to the saved agent behind it.</summary>

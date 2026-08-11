@@ -55,6 +55,28 @@ public sealed class SshConnection : IDisposable
         return connection;
     }
 
+    /// <summary>
+    /// Runs one command on the far machine and returns what it printed, with its exit code.
+    /// </summary>
+    /// <remarks>
+    /// A command channel rather than the interactive shell: a shell echoes the prompt, paints
+    /// the banner and edits the line, so reading a command's own output back out of it means
+    /// guessing where one ends and the next begins. This gets the output and nothing else.
+    /// </remarks>
+    public async Task<(int ExitCode, string Output)> RunAsync(
+        string command, CancellationToken cancellationToken = default)
+    {
+        using var channel = _client.CreateCommand(command);
+
+        var text = await Task.Factory.FromAsync(
+            channel.BeginExecute(), channel.EndExecute).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        var complaint = channel.Error;
+
+        return (channel.ExitStatus ?? -1,
+            (text + (complaint.Length > 0 ? "\n" + complaint : string.Empty)).TrimEnd());
+    }
+
     /// <summary>Opens another shell channel on this connection.</summary>
     public ShellStream OpenShell(int columns, int rows)
     {

@@ -290,9 +290,9 @@ public sealed class ClaudeCliTransport : IAgentTransport
 
         var text = new StringBuilder();
 
-        if (!string.IsNullOrWhiteSpace(_agent.SystemPrompt))
+        if (!string.IsNullOrWhiteSpace(_agent.Instructions))
         {
-            text.AppendLine(_agent.SystemPrompt).AppendLine();
+            text.AppendLine(_agent.Instructions).AppendLine();
         }
 
         foreach (var message in conversation)

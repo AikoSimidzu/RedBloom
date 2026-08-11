@@ -25,6 +25,17 @@ public enum AiProvider
     /// provider needs no key and no base URL.
     /// </remarks>
     ClaudeCli,
+
+    /// <summary>
+    /// A local diffusion model driven through stable-diffusion.cpp, which draws a picture from
+    /// each message rather than answering in words.
+    /// </summary>
+    /// <remarks>
+    /// Not an endpoint at all: there is no base URL, no key and no token budget. The message is
+    /// the prompt, and the reply is the picture. <see cref="AiAgent.Model"/> names the diffusion
+    /// GGUF to load, empty for whichever one is found in the models folder.
+    /// </remarks>
+    ImageGen,
 }
 
 /// <summary>
@@ -50,7 +61,11 @@ public sealed class AiAgent : INotifyPropertyChanged
     private string _avatarPath = string.Empty;
     private string _nameColor = string.Empty;
     private bool _allowCommands;
+    private bool _allowImages;
     private bool _askBeforeRun = true;
+    private bool _isRemoteLocal;
+    private bool _isRoleplay;
+    private string _tunnelSessionId = string.Empty;
     private string? _protectedApiKey;
 
     /// <summary>
@@ -87,7 +102,44 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// signed-in plan allows — in both cases a list would offer choices that cannot be honoured.
     /// </remarks>
     [JsonIgnore]
-    public bool CanChooseModel => !IsLocal && _provider is AiProvider.Anthropic or AiProvider.OpenAiCompatible;
+    public bool CanChooseModel =>
+        !IsLocal && !_isRemoteLocal && _provider is AiProvider.Anthropic or AiProvider.OpenAiCompatible;
+
+    /// <summary>
+    /// A model running on another machine of the user's own, reached over the network.
+    /// </summary>
+    /// <remarks>
+    /// Told apart from a hosted endpoint because it behaves like the ones found on this machine:
+    /// one model is loaded and that is the one that answers, so there is no list to offer.
+    /// </remarks>
+    public bool IsRemoteLocal { get => _isRemoteLocal; set => Set(ref _isRemoteLocal, value); }
+
+    /// <summary>True when this agent plays a character rather than assisting.</summary>
+    public bool IsRoleplay { get => _isRoleplay; set => Set(ref _isRoleplay, value); }
+
+    /// <summary>Who it plays, when it does.</summary>
+    public CharacterCard Character { get; set; } = new();
+
+    /// <summary>
+    /// The standing instructions actually sent: the character card first, then anything typed.
+    /// </summary>
+    /// <remarks>
+    /// The card leads because its job is to say who the model is before it can reach for the
+    /// identity it memorised in training, and these models weight the opening of the system
+    /// message heavily.
+    /// </remarks>
+    [JsonIgnore]
+    public string Instructions
+    {
+        get
+        {
+            var card = _isRoleplay ? Character.Compose() : string.Empty;
+
+            return card.Length > 0 && !string.IsNullOrWhiteSpace(_systemPrompt)
+                ? card + "\n\n" + _systemPrompt.Trim()
+                : card.Length > 0 ? card : _systemPrompt;
+        }
+    }
 
     public AiProvider Provider { get => _provider; set => Set(ref _provider, value); }
 
@@ -156,6 +208,16 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// setting, and <see cref="AskBeforeRun"/> stands between the decision and the machine.
     /// </remarks>
     public bool AllowCommands { get => _allowCommands; set => Set(ref _allowCommands, value); }
+
+    /// <summary>
+    /// Whether this agent is offered a tool for drawing pictures with the local image model.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="AllowCommands"/>: drawing a picture runs a diffusion model, not an
+    /// arbitrary command line, so an agent can be trusted to draw without being trusted to run
+    /// anything on the machine. Off unless turned on for a particular agent.
+    /// </remarks>
+    public bool AllowImages { get => _allowImages; set => Set(ref _allowImages, value); }
 
     /// <summary>Whether each command is shown for approval before it runs. On by default.</summary>
     public bool AskBeforeRun { get => _askBeforeRun; set => Set(ref _askBeforeRun, value); }
@@ -228,6 +290,19 @@ public sealed class AiAgent : INotifyPropertyChanged
             : parts[0];
     }
 
+    /// <summary>
+    /// A saved SSH connection to carry this agent's traffic, or empty for a direct one.
+    /// </summary>
+    /// <remarks>
+    /// For a model server that listens only on its own machine's loopback. The agent's address
+    /// stays what it is — <c>127.0.0.1:8080</c> — and the connection named here is what makes
+    /// that address mean the remote machine. See <see cref="Services.Ai.AgentTunnel"/>.
+    /// </remarks>
+    public string TunnelSessionId { get => _tunnelSessionId; set => Set(ref _tunnelSessionId, value ?? string.Empty); }
+
+    [JsonIgnore]
+    public bool UsesTunnel => !string.IsNullOrWhiteSpace(_tunnelSessionId);
+
     /// <summary>The API key as it is stored and serialised — DPAPI ciphertext, never plaintext.</summary>
     [JsonPropertyName("apiKey")]
     public string? ProtectedApiKey { get => _protectedApiKey; set => Set(ref _protectedApiKey, value); }
@@ -249,7 +324,12 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// fallback would name an endpoint it never contacts.
     /// </remarks>
     [JsonIgnore]
-    public string Origin => _provider == AiProvider.ClaudeCli ? "Claude Code" : ResolvedBaseUrl;
+    public string Origin => _provider switch
+    {
+        AiProvider.ClaudeCli => "Claude Code",
+        AiProvider.ImageGen => "stable-diffusion.cpp",
+        _ => ResolvedBaseUrl,
+    };
 
     public string ResolvedBaseUrl =>
         string.IsNullOrWhiteSpace(BaseUrl)
@@ -279,11 +359,17 @@ public sealed class AiAgent : INotifyPropertyChanged
         AvatarPath = other.AvatarPath;
         NameColor = other.NameColor;
         AllowCommands = other.AllowCommands;
+        AllowImages = other.AllowImages;
         AskBeforeRun = other.AskBeforeRun;
 
         // Copied by value: a running session must not be able to widen the saved agent's
         // allowances by editing a list it happens to share with it.
         AllowedCommands = [.. other.AllowedCommands];
+
+        TunnelSessionId = other.TunnelSessionId;
+        IsRemoteLocal = other.IsRemoteLocal;
+        IsRoleplay = other.IsRoleplay;
+        Character.CopyFrom(other.Character);
 
         // Moved in its wrapped form: unwrapping and rewrapping would be pointless work and
         // would put the key in a string for no reason.

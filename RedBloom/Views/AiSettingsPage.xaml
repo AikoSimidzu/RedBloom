@@ -135,9 +135,11 @@
                         <ComboBox Grid.Column="1" x:Name="ProviderBox" SelectionChanged="Provider_Changed">
                             <ComboBoxItem Content="Anthropic" />
                             <ComboBoxItem Content="{DynamicResource L_AiOpenAiCompatible}" />
+                            <ComboBoxItem Content="{DynamicResource L_AiImageModel}" />
                         </ComboBox>
                     </Grid>
 
+                    <StackPanel x:Name="EndpointFields">
                     <Grid ColumnDefinitions="150,*" Margin="0,0,0,2">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiBaseUrl}" Style="{StaticResource RowLabel}" />
                         <TextBox Grid.Column="1" x:Name="BaseUrlBox" TextChanged="Field_Changed" />
@@ -146,15 +148,37 @@
                                Style="{StaticResource SectionNote}"
                                Margin="150,0,0,10" />
 
+                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,4">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_AiTunnel}" Style="{StaticResource RowLabel}" />
+                        <ComboBox Grid.Column="1"
+                                  x:Name="TunnelBox"
+                                  DisplayMemberPath="Name"
+                                  SelectionChanged="Tunnel_Changed" />
+                    </Grid>
+                    <TextBlock Text="{DynamicResource L_AiTunnelNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,10" />
+
                     <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiApiKey}" Style="{StaticResource RowLabel}" />
                         <PasswordBox Grid.Column="1" x:Name="ApiKeyBox" PasswordChanged="ApiKey_Changed" />
                     </Grid>
+                    </StackPanel>
 
-                    <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
+                    <Grid ColumnDefinitions="150,*,Auto" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiModel}" Style="{StaticResource RowLabel}" />
                         <TextBox Grid.Column="1" x:Name="ModelBox" TextChanged="Field_Changed" />
+                        <Button Grid.Column="2"
+                                x:Name="PickModelButton"
+                                Content="{DynamicResource L_AiPickModel}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,4"
+                                Margin="6,0,0,0"
+                                Click="PickModel_Click" />
                     </Grid>
+                    <TextBlock x:Name="ModelHint"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,10" />
 
                     <Grid ColumnDefinitions="150,Auto,10,*,Auto,Auto" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiAvatar}" Style="{StaticResource RowLabel}" />
@@ -203,6 +227,7 @@
                                  TextChanged="Field_Changed" />
                     </Grid>
 
+                    <StackPanel x:Name="TokenFields">
                     <Grid ColumnDefinitions="150,*" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiMaxTokens}" Style="{StaticResource RowLabel}" />
                         <TextBox Grid.Column="1" x:Name="MaxTokensBox" TextChanged="Field_Changed" />
@@ -215,7 +240,9 @@
                     <TextBlock Text="{DynamicResource L_AiContextWindowNote}"
                                Style="{StaticResource SectionNote}"
                                Margin="150,0,0,10" />
+                    </StackPanel>
 
+                    <StackPanel x:Name="BehaviorFields">
                     <Grid x:Name="EffortRow" ColumnDefinitions="150,*" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiEffort}" Style="{StaticResource RowLabel}" />
                         <ComboBox Grid.Column="1" x:Name="EffortBox" SelectionChanged="Field_Changed">
@@ -269,6 +296,30 @@
                                Style="{StaticResource SectionNote}"
                                Margin="150,0,0,14" />
 
+                    <CheckBox x:Name="AllowImagesBox"
+                              Content="{DynamicResource L_AiAllowImages}"
+                              Margin="150,0,0,4"
+                              Checked="Field_Changed"
+                              Unchecked="Field_Changed" />
+                    <TextBlock Text="{DynamicResource L_AiAllowImagesNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,6" />
+                    <StackPanel Orientation="Horizontal" Margin="150,0,0,4" VerticalAlignment="Center">
+                        <ComboBox x:Name="ImageBackendBox" Width="100" VerticalAlignment="Center">
+                            <ComboBoxItem Content="CPU" />
+                            <ComboBoxItem Content="Vulkan" />
+                            <ComboBoxItem Content="CUDA" />
+                        </ComboBox>
+                        <Button x:Name="ImageEngineButton"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,5"
+                                Margin="8,0,0,0"
+                                Click="ImageEngine_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="ImageEngineStatus"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,2,0,14" />
+
                     <TextBlock Text="{DynamicResource L_AiSystemPrompt}" Style="{StaticResource RowLabel}" Margin="0,0,0,4" />
                     <TextBox x:Name="SystemPromptBox"
                              AcceptsReturn="True"
@@ -276,6 +327,85 @@
                              VerticalScrollBarVisibility="Auto"
                              Height="120"
                              TextChanged="Field_Changed" />
+
+                    <!-- ==== roleplay / character card ==== -->
+                    <CheckBox x:Name="RoleplayBox"
+                              Content="{DynamicResource L_AiRoleplay}"
+                              Margin="0,16,0,4"
+                              Checked="Roleplay_Changed"
+                              Unchecked="Roleplay_Changed" />
+                    <TextBlock Text="{DynamicResource L_AiRoleplayNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="0,0,0,8" />
+
+                    <StackPanel x:Name="CharacterPanel">
+                        <TextBlock Text="{DynamicResource L_CharCard}"
+                                   Style="{StaticResource SectionTitle}"
+                                   FontSize="12"
+                                   Margin="0,0,0,8" />
+
+                        <Grid ColumnDefinitions="90,*,14,90,*" Margin="0,0,0,6">
+                            <TextBlock Grid.Column="0" Text="{DynamicResource L_CharName}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="1" x:Name="CharNameBox" TextChanged="Field_Changed" />
+                            <TextBlock Grid.Column="3" Text="{DynamicResource L_CharSex}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="4" x:Name="CharSexBox" TextChanged="Field_Changed" />
+                        </Grid>
+                        <Grid ColumnDefinitions="90,*,14,90,*" Margin="0,0,0,6">
+                            <TextBlock Grid.Column="0" Text="{DynamicResource L_CharAge}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="1" x:Name="CharAgeBox" TextChanged="Field_Changed" />
+                            <TextBlock Grid.Column="3" Text="{DynamicResource L_CharRace}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="4" x:Name="CharRaceBox" TextChanged="Field_Changed" />
+                        </Grid>
+                        <Grid ColumnDefinitions="90,*,14,90,*" Margin="0,0,0,6">
+                            <TextBlock Grid.Column="0" Text="{DynamicResource L_CharHeight}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="1" x:Name="CharHeightBox" TextChanged="Field_Changed" />
+                            <TextBlock Grid.Column="3" Text="{DynamicResource L_CharWeight}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="4" x:Name="CharWeightBox" TextChanged="Field_Changed" />
+                        </Grid>
+                        <Grid ColumnDefinitions="90,*,14,90,*" Margin="0,0,0,6">
+                            <TextBlock Grid.Column="0" Text="{DynamicResource L_CharHair}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="1" x:Name="CharHairBox" TextChanged="Field_Changed" />
+                            <TextBlock Grid.Column="3" Text="{DynamicResource L_CharSkin}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="4" x:Name="CharSkinBox" TextChanged="Field_Changed" />
+                        </Grid>
+                        <Grid ColumnDefinitions="90,*,14,90,*" Margin="0,0,0,6">
+                            <TextBlock Grid.Column="0" Text="{DynamicResource L_CharManner}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="1" x:Name="CharMannerBox" TextChanged="Field_Changed" />
+                            <TextBlock Grid.Column="3" Text="{DynamicResource L_CharHobbies}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="4" x:Name="CharHobbiesBox" TextChanged="Field_Changed" />
+                        </Grid>
+                        <Grid ColumnDefinitions="90,*,14,90,*" Margin="0,0,0,10">
+                            <TextBlock Grid.Column="0" Text="{DynamicResource L_CharLikes}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="1" x:Name="CharLikesBox" TextChanged="Field_Changed" />
+                            <TextBlock Grid.Column="3" Text="{DynamicResource L_CharDislikes}" Style="{StaticResource RowLabel}" />
+                            <TextBox Grid.Column="4" x:Name="CharDislikesBox" TextChanged="Field_Changed" />
+                        </Grid>
+
+                        <TextBlock Text="{DynamicResource L_CharBiography}" Style="{StaticResource RowLabel}" Margin="0,0,0,4" />
+                        <TextBox x:Name="CharBiographyBox"
+                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" Height="70"
+                                 Margin="0,0,0,8" TextChanged="Field_Changed" />
+
+                        <TextBlock Text="{DynamicResource L_CharScenario}" Style="{StaticResource RowLabel}" Margin="0,0,0,4" />
+                        <TextBox x:Name="CharScenarioBox"
+                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" Height="60"
+                                 Margin="0,0,0,8" TextChanged="Field_Changed" />
+
+                        <TextBlock Text="{DynamicResource L_CharGreeting}" Style="{StaticResource RowLabel}" Margin="0,0,0,4" />
+                        <TextBox x:Name="CharGreetingBox"
+                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" Height="60"
+                                 Margin="0,0,0,8" TextChanged="Field_Changed" />
+
+                        <TextBlock Text="{DynamicResource L_CharOther}" Style="{StaticResource RowLabel}" Margin="0,0,0,4" />
+                        <TextBox x:Name="CharOtherBox"
+                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" Height="60"
+                                 Margin="0,0,0,4" TextChanged="Field_Changed" />
+                    </StackPanel>
+                    </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                         <Button x:Name="TestButton"

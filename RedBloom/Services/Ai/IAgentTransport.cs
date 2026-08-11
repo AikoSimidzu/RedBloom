@@ -59,6 +59,9 @@ public enum AgentEventKind
     /// <summary>The user refused a command, or one could not be run. Text says which.</summary>
     ToolRefused,
 
+    /// <summary>A picture was produced. <see cref="AgentEvent.Text"/> is its path on disk.</summary>
+    Image,
+
     /// <summary>
     /// What the endpoint says this turn has cost so far, in <see cref="AgentEvent.Input"/> and
     /// <see cref="AgentEvent.Output"/>.
@@ -84,9 +87,11 @@ public static class AgentPhase
 {
     public const string Thinking = "thinking";
     public const string Loading = "loading";
+    public const string Tunnelling = "tunnelling";
     public const string Deciding = "deciding";
     public const string Running = "running";
     public const string RunningElevated = "running-elevated";
+    public const string Drawing = "drawing";
     public const string ReadingOutput = "reading-output";
     public const string Writing = "writing";
     public const string Sharing = "sharing";
@@ -105,6 +110,9 @@ public readonly record struct AgentEvent(AgentEventKind Kind, string Text, int I
         new(AgentEventKind.Usage, string.Empty, (int)input, (int)output);
 
     public static AgentEvent Doing(string what) => new(AgentEventKind.Phase, what);
+
+    /// <summary>A finished picture, carried as the path it was written to.</summary>
+    public static AgentEvent Image(string path) => new(AgentEventKind.Image, path);
 }
 
 /// <summary>
@@ -145,6 +153,9 @@ public interface IAgentToolHost
     /// <summary>False when this agent may not run commands, in which case no tool is offered.</summary>
     bool Enabled { get; }
 
+    /// <summary>True when this agent may draw pictures, in which case the image tool is offered.</summary>
+    bool ImagesEnabled { get; }
+
     /// <summary>Puts the command to the user. False means it must not run.</summary>
     Task<bool> ApproveAsync(string command, bool elevated, CancellationToken cancellationToken);
 
@@ -155,6 +166,11 @@ public interface IAgentToolHost
     /// Puts a file the agent produced into the chat, and reports back whether it arrived.
     /// </summary>
     Task<string> ShareAsync(string path, string note, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Draws a picture from a prompt and shows it in the chat, reporting back what happened.
+    /// </summary>
+    Task<string> GenerateImageAsync(string prompt, string negative, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds the transport an agent's provider calls for.</summary>
@@ -167,6 +183,9 @@ public static class AgentTransports
 
         // No tool host: this one brings its own tools and asks for its own permissions.
         AiProvider.ClaudeCli => new ClaudeCliTransport(agent),
+
+        // No tool host either: it draws rather than talks, so a message is a prompt.
+        AiProvider.ImageGen => new ImageGenTransport(agent),
         _ => throw new ArgumentOutOfRangeException(nameof(agent)),
     };
 
@@ -196,6 +215,37 @@ public static class AgentTransports
         public const string Note = "note";
 
         public const string NoteDescription = "One short line saying what this file is.";
+    }
+
+    /// <summary>
+    /// Drawing a picture from a prompt, described the same way to both APIs.
+    /// </summary>
+    /// <remarks>
+    /// Runs a local diffusion model through <see cref="ImageGen"/> and puts the result in the
+    /// chat at full size. Offered only to an agent that has image generation turned on, and needs
+    /// no approval — it writes a picture to the user's own machine and shows it to them, the same
+    /// standing as <see cref="Share"/>.
+    /// </remarks>
+    public static class Image
+    {
+        public const string Name = "generate_image";
+
+        public const string Description =
+            "Draw a picture from a text description using the local image model, and show it to "
+            + "the user in the chat at full size. Write the prompt the way image models expect: a "
+            + "comma-separated list of subject, appearance, setting, style and quality tags rather "
+            + "than a sentence. Use this when the user asks you to draw, generate, or show an "
+            + "image; do not claim to have made a picture without calling it.";
+
+        public const string Parameter = "prompt";
+
+        public const string ParameterDescription =
+            "What to draw, as comma-separated tags: subject, look, setting, style, quality.";
+
+        public const string Negative = "negative";
+
+        public const string NegativeDescription =
+            "Optional. Comma-separated tags for what to keep out of the picture.";
     }
 
     /// <summary>The command tool, described the same way to both APIs.</summary>
