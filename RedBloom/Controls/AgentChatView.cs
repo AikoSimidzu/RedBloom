@@ -279,6 +279,17 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 Submit(text.GetString() ?? string.Empty);
                 break;
 
+            case "regenerate":
+                Regenerate();
+                break;
+
+            case "feedback" when message.TryGetProperty("verdict", out var verdict):
+                SaveFeedback(
+                    verdict.GetString() ?? string.Empty,
+                    message.TryGetProperty("note", out var note) ? note.GetString() ?? string.Empty : string.Empty,
+                    message.TryGetProperty("text", out var reply) ? reply.GetString() ?? string.Empty : string.Empty);
+                break;
+
             case "attach":
                 AttachFiles();
                 break;
@@ -430,6 +441,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatModelTitle", "L_ChatModelOther", "L_ChatModelPlaceholder",
             "L_ChatContextTip", "L_ChatSpentCounted", "L_ChatSpentEstimated", "L_ChatCopied",
             "L_ChatReasoning", "L_ChatStop",
+            "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatLike", "L_ChatDislike",
+            "L_ChatRegenerate", "L_ChatDislikeAsk", "L_ChatDislikeSend", "L_ChatThink",
+            "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
+            "L_ChatPrev", "L_ChatNext",
         ];
 
         Post(new
@@ -587,6 +602,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 {
                     t = "user",
                     html = Markdown.ToHtml(turn.Text),
+                    text = turn.Text,
                     files = turn.Attachments.Select(Attachments.Describe),
                 });
             }
@@ -743,12 +759,66 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         {
             t = "user",
             html = Markdown.ToHtml(question),
+            text = question,
             files = turn.Attachments.Select(Attachments.Describe),
         });
 
         _history.Add(turn);
         PushPending();
         _ = RunTurnAsync();
+    }
+
+    /// <summary>Throws away the last reply and asks for another to the same question.</summary>
+    private void Regenerate()
+    {
+        if (_turn is not null || _history.Count == 0 || _history[^1].Role != "assistant")
+        {
+            return;
+        }
+
+        _history.RemoveAt(_history.Count - 1);
+        Post(new { t = "dropLastAgent" });
+        _ = RunTurnAsync();
+    }
+
+    /// <summary>
+    /// Records a thumbs up or down on a reply, with an optional note, for later training.
+    /// </summary>
+    /// <remarks>
+    /// Written as one JSON object per line under the profile, keyed by the agent, so a run of
+    /// feedback is a file that can be read straight into a fine-tune without any further shaping.
+    /// It is a nicety: a failure to write it is swallowed rather than allowed to disturb the chat.
+    /// </remarks>
+    private void SaveFeedback(string verdict, string note, string reply)
+    {
+        if (verdict is not ("up" or "down"))
+        {
+            return;
+        }
+
+        try
+        {
+            var folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RedBloom", "feedback");
+            Directory.CreateDirectory(folder);
+
+            var record = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                time = DateTimeOffset.Now.ToString("o"),
+                agent = _agent.Name,
+                agentId = _agent.Id,
+                model = _agent.Model,
+                verdict,
+                note,
+                reply,
+            });
+
+            File.AppendAllText(Path.Combine(folder, _agent.Id + ".jsonl"), record + Environment.NewLine);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Feedback is a nicety; failing to record it must not disturb the chat.
+        }
     }
 
     /// <summary>
