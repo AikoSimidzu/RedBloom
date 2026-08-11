@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using RedBloom.Services;
@@ -68,6 +69,7 @@ public sealed class AiAgent : INotifyPropertyChanged
     private bool _isRoleplay;
     private string _tunnelSessionId = string.Empty;
     private string? _protectedApiKey;
+    private string _approvedExample = string.Empty;
 
     /// <summary>
     /// The model a new Anthropic agent starts on. Anthropic's most capable general model at the
@@ -136,11 +138,54 @@ public sealed class AiAgent : INotifyPropertyChanged
         {
             var card = _isRoleplay ? Character.Compose() : string.Empty;
 
-            return card.Length > 0 && !string.IsNullOrWhiteSpace(_systemPrompt)
+            var basis = card.Length > 0 && !string.IsNullOrWhiteSpace(_systemPrompt)
                 ? card + "\n\n" + _systemPrompt.Trim()
                 : card.Length > 0 ? card : _systemPrompt;
+
+            var learned = Learned();
+
+            return learned.Length == 0
+                ? basis
+                : string.IsNullOrWhiteSpace(basis) ? learned : basis + "\n\n" + learned;
         }
     }
+
+    /// <summary>
+    /// What the thumbs-up and thumbs-down have taught this agent, written as standing guidance.
+    /// </summary>
+    /// <remarks>
+    /// This is how feedback rewards the agent without retraining it: a disliked answer becomes a
+    /// thing to avoid, and the most recent liked answer becomes the example to match. Placed last,
+    /// after the persona and the typed prompt, because it is a correction to how they are carried
+    /// out rather than a change to who the agent is.
+    /// </remarks>
+    private string Learned()
+    {
+        var parts = new List<string>();
+
+        if (Lessons.Count > 0)
+        {
+            var lines = string.Join("\n", Lessons.TakeLast(12).Select(lesson => "- " + lesson));
+            parts.Add("The user has corrected earlier answers. Keep to these:\n" + lines);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_approvedExample))
+        {
+            parts.Add("The user marked this earlier answer of yours as good. Match its tone, length "
+                + "and approach:\n\"\"\"\n" + _approvedExample.Trim() + "\n\"\"\"");
+        }
+
+        return string.Join("\n\n", parts);
+    }
+
+    /// <summary>
+    /// Things to avoid, gathered from thumbs-down feedback with a reason. Newest matters most; the
+    /// prompt keeps only the last handful so the guidance does not grow without bound.
+    /// </summary>
+    public List<string> Lessons { get; set; } = [];
+
+    /// <summary>The most recent answer the user marked good, kept as an example to match.</summary>
+    public string ApprovedExample { get => _approvedExample; set => Set(ref _approvedExample, value); }
 
     public AiProvider Provider { get => _provider; set => Set(ref _provider, value); }
 
@@ -382,6 +427,11 @@ public sealed class AiAgent : INotifyPropertyChanged
         IsRemoteLocal = other.IsRemoteLocal;
         IsRoleplay = other.IsRoleplay;
         Character.CopyFrom(other.Character);
+
+        // Copied by value, like the allowances: a running session must not widen the saved agent's
+        // learned guidance by editing a list it happens to share.
+        Lessons = [.. other.Lessons];
+        ApprovedExample = other.ApprovedExample;
 
         // Moved in its wrapped form: unwrapping and rewrapping would be pointless work and
         // would put the key in a string for no reason.

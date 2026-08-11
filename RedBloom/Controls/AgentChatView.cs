@@ -817,7 +817,54 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Feedback is a nicety; failing to record it must not disturb the chat.
+            // The log is a nicety; failing to write it must not disturb the chat or stop the
+            // reward below, which is the part the agent actually feels.
+        }
+
+        RewardAgent(verdict, note, reply);
+    }
+
+    /// <summary>
+    /// Turns a rating into guidance the agent will carry into later turns — the reward itself.
+    /// </summary>
+    /// <remarks>
+    /// A thumbs-down with a reason becomes a lesson to avoid; a thumbs-up keeps the answer as the
+    /// example to match. Applied to the running agent and to the one saved behind it, so it holds
+    /// across sessions. A local model cannot be retrained on the spot, so this feeds the ratings
+    /// back through the one channel it does read every turn — its standing instructions.
+    /// </remarks>
+    private void RewardAgent(string verdict, string note, string reply)
+    {
+        var saved = ThemeService.Settings.Agents.FirstOrDefault(a => a.Id == _agent.Id);
+
+        foreach (var agent in new[] { _agent, saved })
+        {
+            if (agent is null)
+            {
+                continue;
+            }
+
+            if (verdict == "up")
+            {
+                agent.ApprovedExample = reply;
+            }
+            else if (!string.IsNullOrWhiteSpace(note))
+            {
+                // Kept unique and bounded: the same complaint twice is one lesson, and only the
+                // most recent dozen are ever sent, so the prompt cannot grow without end.
+                agent.Lessons.RemoveAll(l => string.Equals(l, note, StringComparison.OrdinalIgnoreCase));
+                agent.Lessons.Add(note.Trim());
+
+                while (agent.Lessons.Count > 24)
+                {
+                    agent.Lessons.RemoveAt(0);
+                }
+            }
+        }
+
+        if (saved is not null)
+        {
+            ThemeService.Save();
         }
     }
 
