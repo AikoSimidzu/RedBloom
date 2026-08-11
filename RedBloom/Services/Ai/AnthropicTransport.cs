@@ -51,7 +51,8 @@ public sealed class AnthropicTransport : IAgentTransport
         };
     }
 
-    private bool ToolsEnabled => _tools is not null && (_tools.Enabled || _tools.ImagesEnabled);
+    private bool ToolsEnabled =>
+        _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled);
 
     public IAsyncEnumerable<AgentEvent> SendAsync(
         IReadOnlyList<AgentMessage> conversation,
@@ -279,6 +280,24 @@ public sealed class AnthropicTransport : IAgentTransport
                     continue;
                 }
 
+                // Asking another agent runs it and returns what it produced; no approval, the same
+                // as the other tools that make rather than change.
+                if (call.Name == AgentTransports.Ask.Name)
+                {
+                    var (who, request) = ReadAsk(call.Arguments);
+
+                    yield return AgentEvent.Doing(AgentPhase.Asking);
+
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.AskAgentAsync(who, request, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
                 var command = ReadCommand(call.Arguments);
                 var elevated = ReadElevated(call.Arguments);
 
@@ -480,6 +499,18 @@ public sealed class AnthropicTransport : IAgentTransport
         var arguments = ParseArguments(json);
 
         return (Text(AgentTransports.Image.Parameter), Text(AgentTransports.Image.Negative));
+
+        string Text(string name) =>
+            arguments.TryGetValue(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+    }
+
+    private static (string Agent, string Request) ReadAsk(string json)
+    {
+        var arguments = ParseArguments(json);
+
+        return (Text(AgentTransports.Ask.Parameter), Text(AgentTransports.Ask.Request));
 
         string Text(string name) =>
             arguments.TryGetValue(name, out var value) && value.ValueKind == JsonValueKind.String
@@ -693,6 +724,24 @@ public sealed class AnthropicTransport : IAgentTransport
                         [AgentTransports.Image.Negative] = Schema("string", AgentTransports.Image.NegativeDescription),
                     },
                     Required = [AgentTransports.Image.Parameter],
+                },
+            });
+        }
+
+        if (_tools is { AgentsEnabled: true })
+        {
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Ask.Name,
+                Description = AgentTransports.Ask.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Ask.Parameter] = Schema("string", AgentTransports.Ask.ParameterDescription),
+                        [AgentTransports.Ask.Request] = Schema("string", AgentTransports.Ask.RequestDescription),
+                    },
+                    Required = [AgentTransports.Ask.Parameter, AgentTransports.Ask.Request],
                 },
             });
         }

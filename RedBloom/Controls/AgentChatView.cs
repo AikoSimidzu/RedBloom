@@ -554,6 +554,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             bits.Add("can draw pictures");
         }
 
+        if (_agent.AllowAgents)
+        {
+            bits.Add("can call other agents");
+        }
+
         Post(new { t = "note", html = Markdown.Escape($"{BotName} — {string.Join(" · ", bits)}") });
 
         // Everything said before this run is redrawn, so reopening a chat looks like scrolling
@@ -1027,6 +1032,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             AgentPhase.Writing => "L_PhaseWriting",
             AgentPhase.Sharing => "L_PhaseSharing",
             AgentPhase.Drawing => "L_PhaseDrawing",
+            AgentPhase.Asking => "L_PhaseAsking",
             AgentPhase.WrappingUp => "L_PhaseWrappingUp",
             _ => "L_PhaseThinking",
         });
@@ -1058,6 +1064,9 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
     /// <inheritdoc />
     public bool ImagesEnabled => _agent.AllowImages;
+
+    /// <inheritdoc />
+    public bool AgentsEnabled => _agent.AllowAgents;
 
     /// <inheritdoc />
     /// <remarks>
@@ -1194,6 +1203,90 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         return "The picture was generated and is now shown to the user in the chat at full size. "
             + "They can see it; do not describe what is in it.";
+    }
+
+    /// <summary>
+    /// Puts a request to another configured agent, shows what it produced, and returns it so the
+    /// caller can build on it.
+    /// </summary>
+    /// <remarks>
+    /// The agent that is called runs with no tool host of its own, so it answers or draws but
+    /// cannot ask a third agent in turn — a call is one level deep by construction, which is what
+    /// keeps a mistake from becoming an unbounded chain.
+    /// </remarks>
+    public async Task<string> AskAgentAsync(string agentName, string request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(agentName))
+        {
+            return "No agent was named.";
+        }
+
+        var target = ThemeService.Settings.Agents.FirstOrDefault(a =>
+            string.Equals(a.Name, agentName.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        if (target is null)
+        {
+            var names = string.Join(", ", ThemeService.Settings.Agents.Select(a => a.Name));
+
+            return $"There is no agent named \"{agentName}\". The configured agents are: {names}.";
+        }
+
+        if (target.Id == _agent.Id)
+        {
+            return "An agent cannot ask itself; name a different one.";
+        }
+
+        // Cloned and handed no tool host, so it runs on its own and cannot call back into this.
+        using var transport = AgentTransports.For(target.Clone());
+        var conversation = new List<AgentMessage> { new(AgentRole.User, request) };
+
+        var text = new StringBuilder();
+        string? image = null;
+
+        try
+        {
+            await foreach (var item in transport.SendAsync(conversation, cancellationToken).ConfigureAwait(true))
+            {
+                switch (item.Kind)
+                {
+                    case AgentEventKind.Text:
+                        text.Append(item.Text);
+                        break;
+
+                    case AgentEventKind.Image:
+                        image = item.Text;
+                        break;
+
+                    case AgentEventKind.Failed:
+                        return $"{target.Name} could not answer: {item.Text}";
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return $"{target.Name} could not answer: {ex.Message}";
+        }
+
+        if (image is not null)
+        {
+            _shared.Add(image);
+            Post(new { t = "image", label = target.Name, src = ImageDataUri(image), path = image });
+
+            return $"{target.Name} drew a picture; it is shown to the user in the chat.";
+        }
+
+        var answer = text.ToString().Trim();
+
+        if (answer.Length == 0)
+        {
+            return $"{target.Name} returned nothing.";
+        }
+
+        // Shown as its own reply under the agent that gave it, and returned so the caller can use it.
+        Post(new { t = "assistant", label = target.Name, html = Markdown.ToHtml(answer) });
+        Post(new { t = "endTurn" });
+
+        return answer;
     }
 
     /// <summary>The picture inlined as a data URI, or empty when it is missing or too large to embed.</summary>

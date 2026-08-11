@@ -88,6 +88,11 @@ public static class LocalizationService
                                     + "shaped by whatever it has read along the way, so leave the "
                                     + "approval prompt on unless you are watching the session.",
         ["L_AiAskBeforeRun"] = "Ask before each command",
+        ["L_AiAllowAgents"] = "Let this agent call other agents",
+        ["L_AiAllowAgentsNote"] = "The agent gets a tool that hands a request to another of your agents "
+                                  + "by name and gets back what it made — most usefully an image agent, "
+                                  + "which draws a picture. The agent it calls runs on its own, without "
+                                  + "tools, so calls do not chain.",
         ["L_AiAllowImages"] = "Let this agent draw pictures",
         ["L_AiAllowImagesNote"] = "The agent gets a tool that draws a picture from a prompt with the "
                                   + "local image model (stable-diffusion.cpp) and shows it in the chat. "
@@ -354,6 +359,7 @@ public static class LocalizationService
         ["L_PhaseWriting"] = "writing the answer",
         ["L_PhaseSharing"] = "sharing a file",
         ["L_PhaseDrawing"] = "drawing a picture",
+        ["L_PhaseAsking"] = "asking another agent",
         ["L_PhaseWrappingUp"] = "out of command rounds — writing up what was found",
         ["L_FitGood"] = "runs well",
         ["L_FitTight"] = "tight",
@@ -572,6 +578,11 @@ public static class LocalizationService
                                     + "всё прочитанное по дороге, поэтому подтверждение лучше не "
                                     + "выключать, если не смотришь за сессией.",
         ["L_AiAskBeforeRun"] = "Спрашивать перед каждой командой",
+        ["L_AiAllowAgents"] = "Разрешить агенту звать других агентов",
+        ["L_AiAllowAgentsNote"] = "Агент получает инструмент, который передаёт запрос другому твоему агенту "
+                                  + "по имени и получает результат — особенно полезно с image-агентом, "
+                                  + "который рисует картинку. Вызванный агент работает сам, без инструментов, "
+                                  + "поэтому вызовы не идут по цепочке.",
         ["L_AiAllowImages"] = "Разрешить агенту рисовать картинки",
         ["L_AiAllowImagesNote"] = "Агент получает инструмент, который рисует картинку по описанию "
                                   + "локальной image-моделью (stable-diffusion.cpp) и показывает её в чате. "
@@ -826,6 +837,7 @@ public static class LocalizationService
         ["L_PhaseWriting"] = "пишу ответ",
         ["L_PhaseSharing"] = "передаю файл",
         ["L_PhaseDrawing"] = "рисую картинку",
+        ["L_PhaseAsking"] = "спрашиваю другого агента",
         ["L_PhaseWrappingUp"] = "команды кончились — подвожу итог",
         ["L_FitGood"] = "потянет",
         ["L_FitTight"] = "впритык",

@@ -43,7 +43,8 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         }
     }
 
-    private bool ToolsEnabled => _tools is not null && (_tools.Enabled || _tools.ImagesEnabled);
+    private bool ToolsEnabled =>
+        _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled);
 
     public IAsyncEnumerable<AgentEvent> SendAsync(
         IReadOnlyList<AgentMessage> conversation,
@@ -158,6 +159,23 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                         role = "tool",
                         tool_call_id = id,
                         content = await _tools!.GenerateImageAsync(call.Command, call.Note, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                // Asking another agent runs it and returns what it made. The agent name rides in
+                // Path and the request in Note.
+                if (call.Name == AgentTransports.Ask.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Asking);
+
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.AskAgentAsync(call.Path, call.Note, cancellationToken)
                             .ConfigureAwait(false),
                     });
 
@@ -300,6 +318,21 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     continue;
                 }
 
+                // The agent name rides in Path and the request in Note, reusing the two string
+                // slots the share tool already uses.
+                if (name == AgentTransports.Ask.Name)
+                {
+                    calls.Add(new Call(
+                        Id(id),
+                        name,
+                        string.Empty,
+                        false,
+                        Text(root, AgentTransports.Ask.Parameter),
+                        Text(root, AgentTransports.Ask.Request)));
+
+                    continue;
+                }
+
                 if (root.TryGetProperty(AgentTransports.Command.Parameter, out var command)
                     && command.ValueKind == JsonValueKind.String)
                 {
@@ -398,6 +431,15 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     [AgentTransports.Image.Parameter] = Property("string", AgentTransports.Image.ParameterDescription),
                     [AgentTransports.Image.Negative] = Property("string", AgentTransports.Image.NegativeDescription),
                 }, AgentTransports.Image.Parameter));
+            }
+
+            if (_tools is { AgentsEnabled: true })
+            {
+                tools.Add(Function(AgentTransports.Ask.Name, AgentTransports.Ask.Description, new()
+                {
+                    [AgentTransports.Ask.Parameter] = Property("string", AgentTransports.Ask.ParameterDescription),
+                    [AgentTransports.Ask.Request] = Property("string", AgentTransports.Ask.RequestDescription),
+                }, AgentTransports.Ask.Parameter));
             }
 
             if (tools.Count == 0)

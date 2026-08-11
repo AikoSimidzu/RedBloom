@@ -92,6 +92,7 @@ public static class AgentPhase
     public const string Running = "running";
     public const string RunningElevated = "running-elevated";
     public const string Drawing = "drawing";
+    public const string Asking = "asking";
     public const string ReadingOutput = "reading-output";
     public const string Writing = "writing";
     public const string Sharing = "sharing";
@@ -156,6 +157,9 @@ public interface IAgentToolHost
     /// <summary>True when this agent may draw pictures, in which case the image tool is offered.</summary>
     bool ImagesEnabled { get; }
 
+    /// <summary>True when this agent may call other agents, in which case the ask tool is offered.</summary>
+    bool AgentsEnabled { get; }
+
     /// <summary>Puts the command to the user. False means it must not run.</summary>
     Task<bool> ApproveAsync(string command, bool elevated, CancellationToken cancellationToken);
 
@@ -171,6 +175,12 @@ public interface IAgentToolHost
     /// Draws a picture from a prompt and shows it in the chat, reporting back what happened.
     /// </summary>
     Task<string> GenerateImageAsync(string prompt, string negative, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts a request to another named agent and returns what it produced, showing any picture it
+    /// drew in the chat.
+    /// </summary>
+    Task<string> AskAgentAsync(string agentName, string request, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds the transport an agent's provider calls for.</summary>
@@ -246,6 +256,36 @@ public static class AgentTransports
 
         public const string NegativeDescription =
             "Optional. Comma-separated tags for what to keep out of the picture.";
+    }
+
+    /// <summary>
+    /// Handing a request to another configured agent, described the same way to both APIs.
+    /// </summary>
+    /// <remarks>
+    /// The named agent answers on its own — a language agent replies in words, an image agent
+    /// draws a picture — and what it produces comes back so this one can use it. It is how an
+    /// assistant reaches a specialist it does not embody itself, an image model above all.
+    /// </remarks>
+    public static class Ask
+    {
+        public const string Name = "ask_agent";
+
+        public const string Description =
+            "Send a request to another of the user's configured agents and get what it produces "
+            + "back. Use it to reach a capability you do not have yourself — above all an image "
+            + "agent, which draws a picture from a description and shows it to the user. Name the "
+            + "agent exactly as it is configured. The agent you call answers on its own and cannot "
+            + "call others in turn, so give it everything it needs in one request.";
+
+        public const string Parameter = "agent";
+
+        public const string ParameterDescription = "The exact name of the agent to ask.";
+
+        public const string Request = "request";
+
+        public const string RequestDescription =
+            "What to ask it for — a question for a language agent, or a full image description for "
+            + "an image agent.";
     }
 
     /// <summary>The command tool, described the same way to both APIs.</summary>

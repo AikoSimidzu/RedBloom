@@ -157,6 +157,7 @@ public partial class AiSettingsPage : UserControl
             ThinkingBox.IsChecked = agent.Thinking;
             AllowCommandsBox.IsChecked = agent.AllowCommands;
             AllowImagesBox.IsChecked = agent.AllowImages;
+            AllowAgentsBox.IsChecked = agent.AllowAgents;
             AskBeforeRunBox.IsChecked = agent.AskBeforeRun;
             AllowedCommandsBox.Text = string.Join(Environment.NewLine, agent.AllowedCommands);
             SystemPromptBox.Text = agent.SystemPrompt;
@@ -345,6 +346,7 @@ public partial class AiSettingsPage : UserControl
         agent.Thinking = ThinkingBox.IsChecked == true;
         agent.AllowCommands = AllowCommandsBox.IsChecked == true;
         agent.AllowImages = AllowImagesBox.IsChecked == true;
+        agent.AllowAgents = AllowAgentsBox.IsChecked == true;
         agent.AskBeforeRun = AskBeforeRunBox.IsChecked == true;
 
         agent.IsRoleplay = RoleplayBox.IsChecked == true;

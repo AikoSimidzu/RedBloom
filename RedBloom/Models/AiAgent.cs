@@ -62,6 +62,7 @@ public sealed class AiAgent : INotifyPropertyChanged
     private string _nameColor = string.Empty;
     private bool _allowCommands;
     private bool _allowImages;
+    private bool _allowAgents;
     private bool _askBeforeRun = true;
     private bool _isRemoteLocal;
     private bool _isRoleplay;
@@ -219,6 +220,16 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// </remarks>
     public bool AllowImages { get => _allowImages; set => Set(ref _allowImages, value); }
 
+    /// <summary>
+    /// Whether this agent is offered a tool for handing requests to other configured agents.
+    /// </summary>
+    /// <remarks>
+    /// How an assistant reaches a specialist it is not — an image agent most of all. The agent it
+    /// calls runs without tools of its own, so a call cannot spiral into agents calling agents
+    /// without end.
+    /// </remarks>
+    public bool AllowAgents { get => _allowAgents; set => Set(ref _allowAgents, value); }
+
     /// <summary>Whether each command is shown for approval before it runs. On by default.</summary>
     public bool AskBeforeRun { get => _askBeforeRun; set => Set(ref _askBeforeRun, value); }
 
@@ -360,6 +371,7 @@ public sealed class AiAgent : INotifyPropertyChanged
         NameColor = other.NameColor;
         AllowCommands = other.AllowCommands;
         AllowImages = other.AllowImages;
+        AllowAgents = other.AllowAgents;
         AskBeforeRun = other.AskBeforeRun;
 
         // Copied by value: a running session must not be able to widen the saved agent's

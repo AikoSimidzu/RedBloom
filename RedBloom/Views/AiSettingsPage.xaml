@@ -320,6 +320,15 @@
                                Style="{StaticResource SectionNote}"
                                Margin="150,2,0,14" />
 
+                    <CheckBox x:Name="AllowAgentsBox"
+                              Content="{DynamicResource L_AiAllowAgents}"
+                              Margin="150,0,0,4"
+                              Checked="Field_Changed"
+                              Unchecked="Field_Changed" />
+                    <TextBlock Text="{DynamicResource L_AiAllowAgentsNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,14" />
+
                     <TextBlock Text="{DynamicResource L_AiSystemPrompt}" Style="{StaticResource RowLabel}" Margin="0,0,0,4" />
                     <TextBox x:Name="SystemPromptBox"
                              AcceptsReturn="True"
