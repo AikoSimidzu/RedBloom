@@ -12,6 +12,15 @@ public sealed class ChatTurn
     public string Text { get; set; } = string.Empty;
 
     /// <summary>
+    /// Who said this, in a room where several agents talk. Empty in an ordinary one-agent chat,
+    /// where the role alone says whether it was the user or the agent.
+    /// </summary>
+    public string Speaker { get; set; } = string.Empty;
+
+    /// <summary>A picture this turn is, by path, when an image agent drew it. Empty otherwise.</summary>
+    public string Image { get; set; } = string.Empty;
+
+    /// <summary>
     /// What was attached to this message, by path.
     /// </summary>
     /// <remarks>

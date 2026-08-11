@@ -176,6 +176,47 @@
             </Grid>
         </DataTemplate>
 
+        <DataTemplate x:Key="RoomTemplate" DataType="{x:Type models:ChatRoom}">
+            <Grid ColumnDefinitions="Auto,*,Auto"
+                  Background="Transparent"
+                  MouseRightButtonUp="RoomList_RightClick">
+                <Border Grid.Column="0"
+                        Width="3" Height="26"
+                        CornerRadius="2"
+                        Background="{DynamicResource Accent}"
+                        Margin="0,0,9,0" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Title}"
+                               Foreground="{DynamicResource TextPrimary}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Summary}"
+                               Foreground="{DynamicResource TextFaint}"
+                               FontFamily="{DynamicResource UiFont}"
+                               FontSize="10.5"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,1,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource IconButton}"
+                            Content="&#xE713;"
+                            FontSize="10"
+                            Width="20" Height="20"
+                            Click="EditRoom_Click"
+                            Tag="{Binding}"
+                            ToolTip="{DynamicResource L_RoomEdit}" />
+                    <Button Style="{StaticResource IconButton}"
+                            Content="&#xE74D;"
+                            FontSize="10"
+                            Width="20" Height="20"
+                            Click="DeleteRoom_Click"
+                            Tag="{Binding}"
+                            ToolTip="{DynamicResource L_Delete}" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+
         <DataTemplate x:Key="SessionTemplate" DataType="{x:Type models:SshSession}">
             <Grid ColumnDefinitions="Auto,*,Auto">
                 <Border Grid.Column="0"
@@ -390,23 +431,30 @@
 
                 <!-- Which half of the sidebar is showing. Saved connections and saved chats are
                      both lists of things to open, but they have nothing to say to each other,
-                     so they take turns rather than sharing the column. -->
+                     so they take turns rather than sharing the column. Rooms sit on their own row
+                     below, so the SSH/AI pair keeps its width and the room label is not squeezed. -->
                 <Border Grid.Row="0"
                         Margin="12,12,12,8"
                         Background="{DynamicResource Chrome}"
                         CornerRadius="6"
                         Padding="2">
-                    <Grid ColumnDefinitions="*,*">
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" >
                         <RadioButton x:Name="SshModeButton"
-                                     Grid.Column="0"
+                                     Grid.Row="0" Grid.Column="0"
                                      Style="{StaticResource SegmentedRadio}"
                                      Content="SSH"
                                      IsChecked="True"
                                      Checked="SidebarMode_Changed" />
                         <RadioButton x:Name="AiModeButton"
-                                     Grid.Column="1"
+                                     Grid.Row="0" Grid.Column="1"
                                      Style="{StaticResource SegmentedRadio}"
                                      Content="AI"
+                                     Checked="SidebarMode_Changed" />
+                        <RadioButton x:Name="RoomsModeButton"
+                                     Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                     Margin="0,2,0,0"
+                                     Style="{StaticResource SegmentedRadio}"
+                                     Content="{DynamicResource L_RoomsTab}"
                                      Checked="SidebarMode_Changed" />
                     </Grid>
                 </Border>
@@ -532,6 +580,55 @@
                                     IsHitTestVisible="False"
                                     Visibility="Collapsed">
                             <TextBlock Text="{DynamicResource L_AiNoChats}"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       FontFamily="{DynamicResource UiFont}"
+                                       FontSize="11.5"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- ============ rooms panel ============ -->
+                <Grid x:Name="RoomsPanel"
+                      Grid.Row="1"
+                      RowDefinitions="Auto,*"
+                      Visibility="Collapsed">
+
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="14,12,8,6">
+                        <TextBlock Grid.Column="0"
+                                   Text="{DynamicResource L_RoomsTab}"
+                                   Foreground="{DynamicResource TextFaint}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                x:Name="NewRoomButton"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE710;"
+                                Width="22" Height="22"
+                                Click="NewRoom_Click"
+                                ToolTip="{DynamicResource L_RoomNew}" />
+                    </Grid>
+
+                    <Grid Grid.Row="1">
+                        <ListBox x:Name="RoomList"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 ItemTemplate="{StaticResource RoomTemplate}"
+                                 ItemContainerStyle="{StaticResource SessionItemStyle}"
+                                 HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 MouseDoubleClick="RoomList_MouseDoubleClick"
+                                 MouseRightButtonUp="RoomList_RightClick" />
+
+                        <StackPanel x:Name="NoRooms"
+                                    VerticalAlignment="Center"
+                                    Margin="24,0"
+                                    IsHitTestVisible="False"
+                                    Visibility="Collapsed">
+                            <TextBlock Text="{DynamicResource L_RoomNone}"
                                        Foreground="{DynamicResource TextFaint}"
                                        FontFamily="{DynamicResource UiFont}"
                                        FontSize="11.5"

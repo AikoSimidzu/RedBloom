@@ -332,6 +332,11 @@ public static partial class Markdown
         html = MarkdownLink().Replace(html, m =>
             $"<a href=\"{m.Groups[2].Value}\" target=\"_blank\" rel=\"noreferrer\">{m.Groups[1].Value}</a>");
 
+        // An @-mention of an agent is drawn like inline code. Only one that opens a token — at the
+        // start or after whitespace — so an address like "a@b" is left alone, and one already
+        // inside a code span or a link is preceded by ">" and so is not matched a second time.
+        html = MentionText().Replace(html, m => $"<code class=\"mention\">@{m.Groups[1].Value}</code>");
+
         return html.Replace("\n", "<br>", StringComparison.Ordinal);
     }
 
@@ -377,4 +382,8 @@ public static partial class Markdown
 
     [GeneratedRegex(@"\[([^\]]+)\]\((https?://[^\s)]+)\)")]
     private static partial Regex MarkdownLink();
+
+    /// <summary>An @-mention token, opening at the start of a line or after whitespace.</summary>
+    [GeneratedRegex(@"(?<=^|\s)@([\p{L}\p{N}_-]+)")]
+    private static partial Regex MentionText();
 }

@@ -1,0 +1,107 @@
+<Window x:Class="RedBloom.Views.RoomDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Room"
+        Width="440"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+
+    <Border Background="{DynamicResource Chrome}"
+            BorderBrush="{DynamicResource Divider}"
+            BorderThickness="1"
+            CornerRadius="9"
+            MouseLeftButtonDown="Root_MouseLeftButtonDown">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="26" ShadowDepth="6" Opacity="0.6" Color="Black" />
+        </Border.Effect>
+
+        <StackPanel Margin="22,20,22,18">
+            <TextBlock Text="{DynamicResource L_RoomTitle}"
+                       Foreground="{DynamicResource TextPrimary}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,14" />
+
+            <TextBlock Text="{DynamicResource L_RoomName}"
+                       Foreground="{DynamicResource TextMuted}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="12"
+                       Margin="0,0,0,4" />
+            <TextBox x:Name="NameBox" Padding="7,5" Margin="0,0,0,12" />
+
+            <TextBlock Text="{DynamicResource L_RoomParticipants}"
+                       Foreground="{DynamicResource TextMuted}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="12"
+                       Margin="0,0,0,4" />
+            <Border Background="{DynamicResource Surface}"
+                    BorderBrush="{DynamicResource Divider}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Margin="0,0,0,12">
+                <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="AgentsList" Margin="8,6">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Content="{Binding Name}"
+                                          IsChecked="{Binding Chosen, Mode=TwoWay}"
+                                          Margin="0,3"
+                                          Foreground="{DynamicResource TextPrimary}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+
+            <TextBlock Text="{DynamicResource L_RoomMode}"
+                       Foreground="{DynamicResource TextMuted}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="12"
+                       Margin="0,0,0,4" />
+            <ComboBox x:Name="PolicyBox" Margin="0,0,0,4" SelectionChanged="Policy_Changed">
+                <ComboBoxItem Content="{DynamicResource L_RoomPolicyMention}" />
+                <ComboBoxItem Content="{DynamicResource L_RoomPolicyRoundRobin}" />
+                <ComboBoxItem Content="{DynamicResource L_RoomPolicyAll}" />
+                <ComboBoxItem Content="{DynamicResource L_RoomPolicyModerator}" />
+            </ComboBox>
+            <TextBlock x:Name="PolicyNote"
+                       Foreground="{DynamicResource TextFaint}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,10" />
+
+            <StackPanel x:Name="ModeratorRow" Margin="0,0,0,4">
+                <TextBlock Text="{DynamicResource L_RoomModerator}"
+                           Foreground="{DynamicResource TextMuted}"
+                           FontFamily="{DynamicResource UiFont}"
+                           FontSize="12"
+                           Margin="0,0,0,4" />
+                <ComboBox x:Name="ModeratorBox" DisplayMemberPath="Name" />
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button Content="{DynamicResource L_Cancel}"
+                        Style="{StaticResource GhostButton}"
+                        Padding="14,6"
+                        Click="Cancel_Click" />
+                <Button Content="{DynamicResource L_RoomOpen}"
+                        Style="{StaticResource AccentButton}"
+                        Padding="14,6"
+                        Margin="8,0,0,0"
+                        Click="Ok_Click" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

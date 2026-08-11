@@ -168,6 +168,10 @@
     padding: 1px 4px;
   }
 
+  /* An @-mention of an agent: an inline-code chip, its text in the accent so a tag reads apart
+     from an ordinary code snippet. */
+  .body code.mention { color: var(--accent); font-weight: 600; }
+
   /* ---- tables ---- */
 
   /* Scrolls inside its own box rather than squeezing columns: the chat is a narrow panel, and a
@@ -437,20 +441,67 @@
   /* ---- composer ---- */
 
   #bar {
+    position: relative;
     border-top: 1px solid var(--divider);
     padding: 9px 12px 11px;
     background: var(--bar);
   }
 
-  #meta {
+  /* The @-mention picker, floating just above the composer like a group chat's. */
+  /* Left edge lined up with the chat's own content (its #log left padding), not with the bar. */
+  #mentions {
+    position: absolute;
+    left: 18px;
+    bottom: calc(100% - 6px);
+    min-width: 190px;
+    max-width: 320px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--raised);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, .45);
+    padding: 4px;
+    z-index: 40;
+  }
+  #mentions[hidden] { display: none; }
+  #mentions .mrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 12.5px;
+  }
+  #mentions .mrow.active, #mentions .mrow:hover { background: var(--chrome); }
+  #mentions .mrow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
+
+  /* The roleplay actions (when shown) and the model/tokens/context, on a single line: rp on the
+     left, meta on the right. Wraps only if the panel is too narrow to hold both. */
+  #toprow {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 5px;
+    gap: 10px 14px;
+    flex-wrap: wrap;
+    margin-bottom: 7px;
   }
 
-  #status { font-size: 11.5px; color: var(--faint); min-height: 15px; min-width: 0; }
+  #meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  /* The textual status ("thinking", the origin) is hidden: the chat shows what is happening on
+     its own, in the thinking bubble, so a second copy up here only added height. The element
+     stays in the DOM because the status message still drives the Send/Stop swap. */
+  #status { display: none; }
 
   /* Which model is answering, changeable mid-conversation. Sits in the bar rather than in a
      settings page because it is a property of this chat, and the reason to change it — a reply
@@ -655,6 +706,8 @@
 
   button.attach svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; }
   button.attach:hover { color: var(--accent); border-color: var(--accent); }
+  button.attach.glyphbtn { font-size: 18px; font-weight: 600; }
+  button.attach[hidden] { display: none; }
 
   #row { display: flex; gap: 8px; align-items: flex-end; }
 
@@ -756,6 +809,32 @@
   /* How long the model spent before answering, tucked under the reply. */
   .thinktime { display: block; text-align: right; color: var(--faint); font-size: 10.5px; margin-top: 5px; }
 
+  /* Roleplay quick actions, above the composer, shown only for a roleplay agent. */
+  #rpbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  #rpbar[hidden] { display: none; }
+  #rpbar button {
+    background: var(--chrome);
+    color: var(--muted);
+    border: 1px solid var(--divider);
+    border-radius: 14px;
+    padding: 4px 11px;
+    font-family: var(--ui-font);
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+  #rpbar button:hover { color: var(--text); border-color: var(--accent); }
+
+  /* The "me / the agent" selector: who the next quick action is about. */
+  #rpwho { display: inline-flex; border: 1px solid var(--divider); border-radius: 14px; overflow: hidden; }
+  #rpwho button {
+    border: 0;
+    border-radius: 0;
+    padding: 4px 10px;
+    background: transparent;
+  }
+  #rpwho button.on { background: var(--accent-dim); color: #fff; }
+  #rpwho button.on:hover { color: #fff; }
+
   /* ---- image lightbox ---- */
   #lightbox {
     position: fixed;
@@ -805,20 +884,34 @@
     </div>
   </div>
   <div id="bar">
+    <div id="mentions" hidden></div>
     <div id="chips"></div>
-    <div id="meta">
-      <div id="status"></div>
-      <div id="modelPick" hidden>
-        <select id="model" title="Model answering this chat"></select>
-        <input id="modelText" hidden spellcheck="false" placeholder="model name" />
+    <div id="toprow">
+      <div id="rpbar" hidden>
+        <span id="rpwho">
+          <button data-who="me" class="on"></button>
+          <button data-who="agent"></button>
+        </span>
+        <button data-rp="act"></button>
+        <button data-rp="state"></button>
+        <button data-rp="status"></button>
+        <button data-rp="attempt"></button>
       </div>
-      <span id="spent" hidden></span>
-      <div id="gauge" hidden>
-        <div id="track"><div id="fill"></div></div>
-        <span id="gaugeText"></span>
+      <div id="meta">
+        <div id="status"></div>
+        <div id="modelPick" hidden>
+          <select id="model" title="Model answering this chat"></select>
+          <input id="modelText" hidden spellcheck="false" placeholder="model name" />
+        </div>
+        <span id="spent" hidden></span>
+        <div id="gauge" hidden>
+          <div id="track"><div id="fill"></div></div>
+          <span id="gaugeText"></span>
+        </div>
       </div>
     </div>
     <div id="row">
+      <button class="attach glyphbtn" id="mentionBtn" hidden title="Mention an agent" aria-label="Mention an agent">@</button>
       <button class="attach" id="attachFile" title="Attach a file" aria-label="Attach a file">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 1 1 5 5l-8 8a2 2 0 0 1-3-3l7.5-7.5" />
@@ -903,6 +996,22 @@
     DislikeAsk: "What was wrong? (optional — helps train it)",
     DislikeSend: "Send",
     Think: "thought for {0}",
+    RpAct: "Action",
+    RpState: "State",
+    RpStatus: "Status",
+    RpAttempt: "Attempt",
+    RpMe: "Me",
+    RpAgent: "Agent",
+    RpActPrompt: "(Have your character do something in the scene now, and narrate it.)",
+    RpStatePrompt: "(Describe your character's current state right now: mood, feelings, posture, condition.)",
+    RpStatusPrompt: "(Show a status block for your character: key traits, condition, inventory and relationships.)",
+    RpAttemptOk: "(Attempt: SUCCESS. Narrate it working out.)",
+    RpAttemptFail: "(Attempt: FAILURE. Narrate it going wrong.)",
+    RpStateWord: "state: ",
+    RpStatusWord: "status: ",
+    RpAttemptWord: "attempt: ",
+    RpSuccess: "success",
+    RpFail: "failure",
   };
 
   /** Token counts, short enough to sit in a status line. */
@@ -1051,12 +1160,14 @@
     for (const node of log.querySelectorAll('[data-thinking="1"]')) node.remove();
   }
 
-  function avatarFor(who) {
+  function avatarFor(who, src) {
     if (who !== "agent") return null;
-    if (avatarSrc) {
+    // A per-message picture (a room, where each speaker differs) wins over the chat's one.
+    const picture = src !== undefined ? src : avatarSrc;
+    if (picture) {
       const img = document.createElement("img");
       img.className = "avatar";
-      img.src = avatarSrc;
+      img.src = picture;
       img.alt = "";
       return img;
     }
@@ -1064,14 +1175,20 @@
     return el("div", "avatar blank", "\u25c6");
   }
 
-  function turn(who, label) {
+  function turn(who, label, opts) {
+    opts = opts || {};
     const node = el("div", "turn " + who);
 
-    const face = avatarFor(who);
+    const face = avatarFor(who, opts.avatar);
     if (face) node.appendChild(face);
 
     const side = el("div", "side");
-    if (label) side.appendChild(el("div", "who", label));
+    if (label) {
+      const whoEl = el("div", "who", "");
+      whoEl.textContent = label;
+      if (opts.color) whoEl.style.color = opts.color;
+      side.appendChild(whoEl);
+    }
     const body = el("div", "body");
     side.appendChild(body);
     node.appendChild(side);
@@ -1367,7 +1484,7 @@
     // re-renders the markdown as it grows, and a half-written fence is not valid on its own.
     assistant(m) {
       stopThinking();
-      if (!openTurn) openTurn = turn("agent", m.label || "agent");
+      if (!openTurn) openTurn = turn("agent", m.label || "agent", { color: m.color, avatar: m.avatar });
       openTurn.innerHTML = m.html;
       openTurn.classList.add("streaming");
       follow();
@@ -1444,6 +1561,19 @@
       if (fold.open) follow();
     },
 
+    /// Turns the roleplay quick-action bar on or off, for a roleplay agent.
+    rp(m) {
+      rpBar.hidden = !m.on;
+      if (m.on) labelRpBar();
+    },
+
+    /// The agents that can be @-mentioned here — the participants of a room. The button next to
+    /// the composer shows only when there is someone to mention.
+    mentions(m) {
+      mentionNames = Array.isArray(m.names) ? m.names.filter(Boolean) : [];
+      mentionBtn.hidden = mentionNames.length === 0;
+    },
+
     /// The window's language. Applied to what is already on screen as well as kept for what
     /// is drawn later.
     strings(m) {
@@ -1468,6 +1598,8 @@
 
       const lbTitle = { copy: S.CopyImage, download: S.Download, open: S.OpenExternal, close: S.Close, prev: S.Prev, next: S.Next };
       for (const button of lightbox.querySelectorAll("button[data-lb]")) button.title = lbTitle[button.dataset.lb] || "";
+
+      if (!rpBar.hidden) labelRpBar();
     },
 
     /// A file the agent is handing over. Drawn as its own card rather than inside the reply,
@@ -1493,6 +1625,7 @@
       openTurn = null;
 
       const fig = el("figure", "genimg");
+      if (m.label) { const cap = el("figcaption", "", ""); cap.textContent = m.label; fig.appendChild(cap); }
       const img = document.createElement("img");
       img.src = m.src || "";
       img.alt = "";
@@ -1651,7 +1784,160 @@
     if (!text) return;
     input.value = "";
     input.style.height = "auto";
+    hideMentions();
     post({ t: "send", text });
+  }
+
+  // ---- roleplay quick actions ----
+
+  const rpBar = document.getElementById("rpbar");
+  let rpSubject = "me";
+
+  function labelRpBar() {
+    const labels = { act: S.RpAct, state: S.RpState, status: S.RpStatus, attempt: S.RpAttempt };
+    for (const button of rpBar.querySelectorAll("button[data-rp]")) button.textContent = labels[button.dataset.rp] || "";
+    const who = { me: S.RpMe, agent: S.RpAgent };
+    for (const button of rpBar.querySelectorAll("button[data-who]")) button.textContent = who[button.dataset.who] || "";
+  }
+
+  /** Puts a snippet into the composer on a fresh line, cursor where the caret marker sat. */
+  function insertLine(snippet) {
+    const caret = snippet.indexOf("│");
+    const clean = snippet.replace("│", "");
+    const prefix = input.value.length && !input.value.endsWith("\n") ? "\n" : "";
+    const at = input.value.length + prefix.length + (caret < 0 ? clean.length : caret);
+
+    input.value += prefix + clean;
+    input.focus();
+    input.selectionStart = input.selectionEnd = at;
+    input.dispatchEvent(new Event("input"));
+  }
+
+  rpBar.addEventListener("click", (e) => {
+    const who = e.target.closest("button[data-who]");
+    if (who) {
+      rpSubject = who.dataset.who;
+      for (const b of rpBar.querySelectorAll("button[data-who]")) b.classList.toggle("on", b === who);
+      return;
+    }
+
+    const button = e.target.closest("button[data-rp]");
+    if (!button) return;
+
+    const kind = button.dataset.rp;
+    const roll = Math.random() < 0.5;
+
+    // "Me": the action is mine, so it is written into my own message, marked with the asterisks
+    // roleplay uses for a narrated action, on a fresh line. "Agent": it is a request to the
+    // character, sent as an out-of-character line for them to act on.
+    if (rpSubject === "me") {
+      switch (kind) {
+        case "act": insertLine("*│*"); break;
+        case "state": insertLine("*" + S.RpStateWord + "│*"); break;
+        case "status": insertLine("*" + S.RpStatusWord + "│*"); break;
+        case "attempt": insertLine("*" + S.RpAttemptWord + (roll ? S.RpSuccess : S.RpFail) + "*"); break;
+      }
+      return;
+    }
+
+    switch (kind) {
+      case "act": post({ t: "send", text: S.RpActPrompt }); break;
+      case "state": post({ t: "send", text: S.RpStatePrompt }); break;
+      case "status": post({ t: "send", text: S.RpStatusPrompt }); break;
+      case "attempt": post({ t: "send", text: roll ? S.RpAttemptOk : S.RpAttemptFail }); break;
+    }
+  });
+
+  // ---- @-mention picker ----
+
+  const mentionsBox = document.getElementById("mentions");
+  const mentionBtn = document.getElementById("mentionBtn");
+  let mentionNames = [];
+  let mentionMatches = [];
+  let mentionAt = 0;
+
+  // The composer button: drops an "@" at the caret and opens the picker to choose from.
+  mentionBtn.onclick = () => {
+    const pos = input.selectionStart;
+    const before = input.value.slice(0, pos);
+    const lead = before.length && !/\s$/.test(before) ? " " : "";
+    input.value = before + lead + "@" + input.value.slice(pos);
+    input.selectionStart = input.selectionEnd = pos + lead.length + 1;
+    input.focus();
+    input.dispatchEvent(new Event("input"));
+    updateMentions();
+  };
+
+  /** The @-fragment the caret is sitting in, or null when it is not in one. */
+  function mentionQuery() {
+    if (mentionNames.length === 0) return null;
+
+    const pos = input.selectionStart;
+    const head = input.value.slice(0, pos);
+    const at = head.lastIndexOf("@");
+    if (at < 0) return null;
+
+    // The @ must open a token: at the start, or just after whitespace.
+    const before = at === 0 ? " " : head[at - 1];
+    if (!/\s/.test(before)) return null;
+
+    const frag = head.slice(at + 1);
+    if (frag.includes("\n")) return null;
+
+    return { at, frag };
+  }
+
+  function updateMentions() {
+    const q = mentionQuery();
+
+    if (!q) { hideMentions(); return; }
+
+    const needle = q.frag.toLowerCase();
+    mentionMatches = mentionNames.filter(n => n.toLowerCase().startsWith(needle));
+
+    // An exact single match already fully typed is not worth a popup over.
+    if (mentionMatches.length === 0 || (mentionMatches.length === 1 && mentionMatches[0].toLowerCase() === needle)) {
+      hideMentions();
+      return;
+    }
+
+    mentionAt = 0;
+    renderMentions();
+    mentionsBox.hidden = false;
+  }
+
+  function renderMentions() {
+    mentionsBox.innerHTML = "";
+    mentionMatches.forEach((name, i) => {
+      const row = el("div", "mrow" + (i === mentionAt ? " active" : ""));
+      row.appendChild(el("span", "dot"));
+      const label = el("span", null, "");
+      label.textContent = name;
+      row.appendChild(label);
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); applyMention(name); });
+      mentionsBox.appendChild(row);
+    });
+  }
+
+  function hideMentions() {
+    mentionsBox.hidden = true;
+    mentionMatches = [];
+  }
+
+  function mentionsOpen() { return !mentionsBox.hidden && mentionMatches.length > 0; }
+
+  function applyMention(name) {
+    const q = mentionQuery();
+    if (!q) { hideMentions(); return; }
+
+    const pos = input.selectionStart;
+    const head = input.value.slice(0, q.at) + "@" + name + " ";
+    input.value = head + input.value.slice(pos);
+    input.selectionStart = input.selectionEnd = head.length;
+
+    hideMentions();
+    input.focus();
+    input.dispatchEvent(new Event("input"));
   }
 
   send.onclick = submit;
@@ -1665,6 +1951,32 @@
   };
 
   input.addEventListener("keydown", (e) => {
+    // While the mention picker is open it owns the arrows, Enter/Tab and Escape.
+    if (mentionsOpen()) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        mentionAt = (mentionAt + 1) % mentionMatches.length;
+        renderMentions();
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        mentionAt = (mentionAt - 1 + mentionMatches.length) % mentionMatches.length;
+        renderMentions();
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applyMention(mentionMatches[mentionAt]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideMentions();
+        return;
+      }
+    }
+
     // Enter sends; Shift+Enter is how a multi-line question gets written.
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1675,7 +1987,14 @@
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 180) + "px";
+    updateMentions();
   });
+
+  // A click elsewhere, or moving the caret, dismisses the picker.
+  input.addEventListener("keyup", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") updateMentions();
+  });
+  input.addEventListener("blur", () => setTimeout(hideMentions, 120));
 
   post({ t: "ready" });
   input.focus();

@@ -45,6 +45,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Services.Ai.AgentTunnel.IsTrusted = _hostKeyPolicy.IsTrusted;
         Services.Ai.AgentTunnel.ApproveAsync = _hostKeyPolicy.ApproveAsync;
         ChatStore.Load();
+        RoomStore.Load();
 
         SessionsView = CollectionViewSource.GetDefaultView(_store.Sessions);
         SessionsView.Filter = FilterSession;
@@ -58,6 +59,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // A chat becomes real the first time it is answered, which happens in a tab rather than
         // in the sidebar — so the list follows the store instead of being rebuilt by hand.
         ChatStore.Chats.CollectionChanged += (_, _) => RefreshChats();
+        RoomStore.Rooms.CollectionChanged += (_, _) => RefreshRooms();
 
         Loaded += OnFirstLoad;
     }
@@ -305,18 +307,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SidebarMode_Changed(object sender, RoutedEventArgs e)
     {
         // Fires during XAML load, before the panels exist.
-        if (SshPanel is null || AiPanel is null)
+        if (SshPanel is null || AiPanel is null || RoomsPanel is null)
         {
             return;
         }
 
         var ai = AiModeButton.IsChecked == true;
-        SshPanel.Visibility = ai ? Visibility.Collapsed : Visibility.Visible;
+        var rooms = RoomsModeButton.IsChecked == true;
+        var ssh = !ai && !rooms;
+
+        SshPanel.Visibility = ssh ? Visibility.Visible : Visibility.Collapsed;
         AiPanel.Visibility = ai ? Visibility.Visible : Visibility.Collapsed;
+        RoomsPanel.Visibility = rooms ? Visibility.Visible : Visibility.Collapsed;
 
         if (ai)
         {
             RefreshAgents();
+        }
+        else if (rooms)
+        {
+            RefreshRooms();
         }
     }
 
@@ -388,6 +398,121 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             OpenAgentTab(agent.Clone());
         }
+    }
+
+    // ---- rooms ----
+
+    private void RefreshRooms()
+    {
+        if (RoomList is null || NoRooms is null)
+        {
+            return;
+        }
+
+        var rooms = RoomStore.Rooms.OrderByDescending(r => r.UpdatedAt).ToList();
+        RoomList.ItemsSource = rooms;
+        NoRooms.Visibility = rooms.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void EditRoom_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: ChatRoom room } && RoomDialog.Edit(this, room))
+        {
+            RoomStore.Save(room);
+            RefreshRooms();
+        }
+    }
+
+    private void DeleteRoom_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: ChatRoom room })
+        {
+            RoomStore.Delete(room);
+            RefreshRooms();
+        }
+    }
+
+    private void NewRoom_Click(object sender, RoutedEventArgs e)
+    {
+        if (ThemeService.Settings.Agents.Count == 0)
+        {
+            MessageBox.Show(this, LocalizationService.T("L_RoomNeedAgents"),
+                LocalizationService.T("L_RoomTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var room = new ChatRoom();
+
+        if (RoomDialog.Edit(this, room))
+        {
+            RoomStore.Save(room);
+            RefreshRooms();
+            OpenRoomTab(room);
+        }
+    }
+
+    private void RoomList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (RoomList.SelectedItem is ChatRoom room)
+        {
+            OpenRoomTab(room);
+        }
+    }
+
+    private void RoomList_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (RoomList.SelectedItem is not ChatRoom room)
+        {
+            return;
+        }
+
+        var menu = new ContextMenu();
+
+        var edit = new MenuItem { Header = LocalizationService.T("L_RoomEdit") };
+        edit.Click += (_, _) =>
+        {
+            if (RoomDialog.Edit(this, room))
+            {
+                RoomStore.Save(room);
+                RefreshRooms();
+            }
+        };
+
+        var delete = new MenuItem { Header = LocalizationService.T("L_Delete") };
+        delete.Click += (_, _) =>
+        {
+            RoomStore.Delete(room);
+            RefreshRooms();
+        };
+
+        menu.Items.Add(edit);
+        menu.Items.Add(delete);
+        menu.IsOpen = true;
+    }
+
+    private void OpenRoomTab(ChatRoom room)
+    {
+        if (Tabs.FirstOrDefault(t => t.Room?.Id == room.Id) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        var tab = AddTab(
+            new RoomChatView(room),
+            room.Title,
+            AiGlyph,
+            room.Title);
+
+        tab.Room = room;
+        tab.Card = room.Card;
+
+        room.Card.Changed += () => RoomStore.Save(room);
+        room.Changed += () =>
+        {
+            tab.Title = room.Title;
+            RefreshRooms();
+        };
     }
 
     private void ChatList_MouseDoubleClick(object sender, MouseButtonEventArgs e)

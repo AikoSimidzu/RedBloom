@@ -445,6 +445,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatRegenerate", "L_ChatDislikeAsk", "L_ChatDislikeSend", "L_ChatThink",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext",
+            "L_ChatRpAct", "L_ChatRpState", "L_ChatRpStatus", "L_ChatRpAttempt",
+            "L_ChatRpMe", "L_ChatRpAgent", "L_ChatRpActPrompt",
+            "L_ChatRpStatePrompt", "L_ChatRpStatusPrompt", "L_ChatRpAttemptOk", "L_ChatRpAttemptFail",
+            "L_ChatRpStateWord", "L_ChatRpStatusWord", "L_ChatRpAttemptWord", "L_ChatRpSuccess", "L_ChatRpFail",
         ];
 
         Post(new
@@ -551,6 +555,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     private void Greet()
     {
         Post(new { t = "avatar", src = AvatarDataUri() });
+
+        // The roleplay quick actions are for a character, not an assistant, so they show only
+        // when this agent is one.
+        Post(new { t = "rp", on = _agent.IsRoleplay });
 
         var bits = new List<string> { _agent.Model };
 

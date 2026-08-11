@@ -81,6 +81,9 @@ public sealed class TerminalTab : INotifyPropertyChanged
     /// <summary>The saved chat behind this tab, for the same reason. Null for everything else.</summary>
     public ChatSession? Chat { get; set; }
 
+    /// <summary>The saved room behind this tab, when it is a group chat. Null otherwise.</summary>
+    public ChatRoom? Room { get; set; }
+
     private TabCardStyle? _card;
 
     /// <summary>This tab's own card look, or null to use the theme default.</summary>
