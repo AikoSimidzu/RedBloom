@@ -326,8 +326,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void RefreshAgents()
     {
         // The downloaded files are a directory listing, so they go in with the saved agents
-        // straight away; only what the engine is serving has to be waited for.
-        Show([.. ThemeService.Settings.Agents, .. Services.Ai.LocalAgents.FromFiles()]);
+        // straight away; only what the engine is serving has to be waited for. The installed
+        // command-line tool, if there is one, is a file check and costs nothing either.
+        Show([.. ThemeService.Settings.Agents, .. Stock(), .. Services.Ai.LocalAgents.FromFiles()]);
 
         _ = AddLocalAgentsAsync();
 
@@ -342,6 +343,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RefreshChats();
         }
 
+        // Agents that are simply there when the thing behind them is installed, with nothing to
+        // configure: no key, no endpoint, and credentials the tool keeps itself.
+        static IEnumerable<AiAgent> Stock() =>
+            Services.Ai.ClaudeCli.IsInstalled ? [Services.Ai.ClaudeCli.Agent] : [];
+
         async Task AddLocalAgentsAsync()
         {
             var local = await Services.Ai.LocalAgents.DiscoverAsync().ConfigureAwait(true);
@@ -350,7 +356,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             // an agent may have been added or removed in it.
             if (local.Count > 0)
             {
-                Show([.. ThemeService.Settings.Agents, .. local]);
+                Show([.. ThemeService.Settings.Agents, .. Stock(), .. local]);
             }
         }
     }
@@ -404,12 +410,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RemoveChat(chat);
             e.Handled = true;
         }
-        else if (e.Key == Key.F2
-            && ChatList.ItemContainerGenerator.ContainerFromItem(chat) is UIElement row)
+        else if (e.Key == Key.F2)
         {
-            OpenCardEditor(chat.Card, row, tab: null, chat);
-            CardNameBox.Focus();
-            CardNameBox.SelectAll();
+            RenameChat(chat);
             e.Handled = true;
         }
     }
@@ -419,6 +422,45 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (sender is FrameworkElement { Tag: ChatSession chat })
         {
             RemoveChat(chat);
+        }
+    }
+
+    /// <summary>
+    /// Names a chat and the agent inside it, from the list where both are seen.
+    /// </summary>
+    /// <remarks>
+    /// The tab's own tab is only its paintwork; a name is how the chat is found, which is a
+    /// sidebar matter. Reached with F2 or from the rename button on the row.
+    /// </remarks>
+    private void RenameChat(ChatSession chat)
+    {
+        var dialog = new Views.ChatNamesDialog(chat) { Owner = this };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        ChatStore.Save(chat);
+        RefreshChats();
+
+        // An open tab is still showing the old name until it is told.
+        if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id) is { } tab)
+        {
+            tab.Title = chat.Title;
+
+            if (tab.Content is AgentChatView view)
+            {
+                view.RefreshBotName();
+            }
+        }
+    }
+
+    private void RenameChat_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: ChatSession chat })
+        {
+            RenameChat(chat);
         }
     }
 
@@ -873,26 +915,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var forChat = chat is not null ? Visibility.Visible : Visibility.Collapsed;
 
-        CardNameRow.Visibility = forChat;
-        CardNameBox.Text = chat?.Title ?? string.Empty;
-        CardBotBox.Text = chat?.BotName ?? string.Empty;
-
         CardAvatarRow.Visibility = forChat;
         CardAvatarBox.Text = chat?.AvatarPath ?? string.Empty;
 
         TabCardPopup.DataContext = card;
         TabCardPopup.PlacementTarget = target;
         TabCardPopup.IsOpen = true;
-    }
-
-    /// <summary>Enter in the name box applies the new name and shuts the editor.</summary>
-    private void CardName_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            TabCardPopup.IsOpen = false;
-            e.Handled = true;
-        }
     }
 
     private void CardImageBrowse_Click(object sender, RoutedEventArgs e)
@@ -1009,27 +1037,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (_cardEditChat is { } chat)
         {
             chat.AvatarPath = CardAvatarBox.Text.Trim();
-            chat.BotName = CardBotBox.Text.Trim();
-
-            // An empty name means "go back to being named after the first question", which is
-            // what the chat is called until someone renames it.
-            var named = CardNameBox.Text.Trim();
-            chat.Title = named.Length > 0 ? named
-                : chat.Turns.FirstOrDefault(t => t.Role == "user") is { } first ? ChatSession.TitleFrom(first.Text)
-                : string.Empty;
-
             ChatStore.Save(chat);
 
-            // The open tab, if there is one, is showing the old name and picture until it is told.
-            if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id) is { } tab)
+            // The open tab, if there is one, is showing the old picture until it is told.
+            if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id)?.Content is AgentChatView view)
             {
-                tab.Title = chat.Title;
-
-                if (tab.Content is AgentChatView view)
-                {
-                    view.RefreshAvatar();
-                    view.RefreshBotName();
-                }
+                view.RefreshAvatar();
             }
         }
 

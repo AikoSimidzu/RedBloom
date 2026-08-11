@@ -563,19 +563,17 @@ public partial class LocalModelsPage : UserControl
         }
     }
 
-    private static AiAgent AgentFor(RunnerState runner, string model) => new()
-    {
-        Name = $"{model} (local)",
-        Provider = AiProvider.OpenAiCompatible,
-        BaseUrl = runner.BaseUrl,
-        Model = model,
-
-        // Local servers ignore the key but the transport insists on one being present, and an
-        // obviously fake value says plainly that nothing secret is being kept here.
-        ApiKey = "local",
-        ContextWindow = 8192,
-        Thinking = false,
-    };
+    /// <summary>
+    /// The agent for a model the engine is serving.
+    /// </summary>
+    /// <remarks>
+    /// Built by <see cref="LocalAgents"/> rather than here, so it carries the same id as the
+    /// entry in the sidebar. Made locally it got a fresh identity each time, and chats — which
+    /// are filed under the agent's id — ended up scattered across ids that nothing listed
+    /// afterwards. They were being saved; there was simply no longer an agent claiming them.
+    /// </remarks>
+    private static AiAgent AgentFor(RunnerState runner, string model) =>
+        LocalAgents.For(model, runner.BaseUrl);
 
     private void Use_Click(object sender, RoutedEventArgs e)
     {

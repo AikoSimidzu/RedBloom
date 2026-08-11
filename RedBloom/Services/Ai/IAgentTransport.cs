@@ -34,7 +34,14 @@ public enum AgentEventKind
     /// <summary>A fragment of the visible answer. Arrives many times per turn.</summary>
     Text,
 
-    /// <summary>The model started thinking. Carries no content — the raw reasoning is never returned.</summary>
+    /// <summary>
+    /// A fragment of the model's own reasoning, where the endpoint returns it.
+    /// </summary>
+    /// <remarks>
+    /// Shown folded away rather than inline: it is working-out, not an answer, and it is often
+    /// longer than the reply it leads to. Not every endpoint sends it, so a turn with none is
+    /// ordinary rather than a failure.
+    /// </remarks>
     Thinking,
 
     /// <summary>The turn finished cleanly. <see cref="AgentEvent.Text"/> holds a usage line.</summary>
@@ -157,6 +164,9 @@ public static class AgentTransports
     {
         AiProvider.Anthropic => new AnthropicTransport(agent, tools),
         AiProvider.OpenAiCompatible => new OpenAiCompatibleTransport(agent, tools),
+
+        // No tool host: this one brings its own tools and asks for its own permissions.
+        AiProvider.ClaudeCli => new ClaudeCliTransport(agent),
         _ => throw new ArgumentOutOfRangeException(nameof(agent)),
     };
 

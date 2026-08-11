@@ -56,7 +56,9 @@ public static class ChatContext
         }
 
         var text = new StringBuilder();
-        text.AppendLine("The user has attached the following for reference.");
+        text.AppendLine("The user has attached the following for reference. Items introduced as "
+            + "\"file\" or \"folder\" are contents to read; an \"ssh connection\" is not a file at "
+            + "all — it is a machine described so you can write commands for it.");
 
         foreach (var path in attachments)
         {
@@ -253,17 +255,21 @@ public static class ChatContext
 
         if (session is null)
         {
-            text.AppendLine($"=== ssh session: {path} ===")
-                .AppendLine("(this session has been deleted)");
+            text.AppendLine("=== ssh connection ===")
+                .AppendLine("(this saved connection has been deleted)");
 
             return;
         }
 
-        text.AppendLine($"=== ssh session: {session.Name} ===")
+        // Introduced as a machine, not as a path. Named like a file — which the first version
+        // did — a model reads it as something to open, and answers about its contents.
+        text.AppendLine($"=== ssh connection: {session.Name} ===")
+            .AppendLine("This is a remote machine the user has saved, not a file. Nothing here")
+            .AppendLine("is to be read or opened; it is where commands would be run.")
             .AppendLine($"host: {session.Host}")
             .AppendLine($"port: {session.Port}")
             .AppendLine($"user: {session.Username}")
-            .AppendLine($"command line: ssh {SshCommandLine(session)}");
+            .AppendLine($"to connect: ssh {SshCommandLine(session)}");
 
         text.AppendLine(session.UsesPrivateKey
             ? $"authentication: private key at {session.PrivateKeyPath}"

@@ -16,6 +16,15 @@ public enum AiProvider
     /// providers implement.
     /// </summary>
     OpenAiCompatible,
+
+    /// <summary>
+    /// The installed Claude Code command-line tool, driven as a program rather than an endpoint.
+    /// </summary>
+    /// <remarks>
+    /// It signs in through the website and keeps its own credentials, so an agent on this
+    /// provider needs no key and no base URL.
+    /// </remarks>
+    ClaudeCli,
 }
 
 /// <summary>
@@ -68,6 +77,17 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// <summary>How the picker names it — local models are marked so the source is never a guess.</summary>
     [JsonIgnore]
     public string PickerName => IsLocal ? $"[L]  {_name}" : _name;
+
+    /// <summary>
+    /// Whether the chat may offer a choice of model.
+    /// </summary>
+    /// <remarks>
+    /// Only agents pointed at an endpoint that serves several. A local agent is the one model
+    /// loaded into the engine, and the command-line tool picks for itself from whatever the
+    /// signed-in plan allows — in both cases a list would offer choices that cannot be honoured.
+    /// </remarks>
+    [JsonIgnore]
+    public bool CanChooseModel => !IsLocal && _provider is AiProvider.Anthropic or AiProvider.OpenAiCompatible;
 
     public AiProvider Provider { get => _provider; set => Set(ref _provider, value); }
 
@@ -221,6 +241,16 @@ public sealed class AiAgent : INotifyPropertyChanged
     }
 
     /// <summary>Where this agent's requests actually go, once the default is filled in.</summary>
+    /// <summary>
+    /// What the chat shows as the source of the answers.
+    /// </summary>
+    /// <remarks>
+    /// Not the base URL for every agent: the command-line tool has none, and showing the
+    /// fallback would name an endpoint it never contacts.
+    /// </remarks>
+    [JsonIgnore]
+    public string Origin => _provider == AiProvider.ClaudeCli ? "Claude Code" : ResolvedBaseUrl;
+
     public string ResolvedBaseUrl =>
         string.IsNullOrWhiteSpace(BaseUrl)
             ? Provider == AiProvider.Anthropic ? "https://api.anthropic.com" : "https://api.openai.com"

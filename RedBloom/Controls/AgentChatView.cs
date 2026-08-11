@@ -55,6 +55,9 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// <summary>The reply being streamed, re-rendered as it grows.</summary>
     private readonly StringBuilder _reply = new();
 
+    /// <summary>The model's reasoning for this turn, where the endpoint returns any.</summary>
+    private readonly StringBuilder _thinking = new();
+
     private readonly DispatcherTimer _paint;
 
     private CancellationTokenSource? _turn;
@@ -353,6 +356,16 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// </remarks>
     private async Task PushModelsAsync()
     {
+        // Told to go away outright, rather than merely not being filled: saying nothing relies
+        // on the picker never having been shown, and one stray message would leave it stranded
+        // on a chat whose model cannot be changed at all.
+        if (!_agent.CanChooseModel)
+        {
+            Post(new { t = "models", hide = true });
+
+            return;
+        }
+
         Post(new { t = "models", list = Array.Empty<string>(), current = _agent.Model });
 
         var models = await ModelCatalog.FetchAsync(_agent).ConfigureAwait(true);
@@ -377,7 +390,9 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         name = name.Trim();
 
-        if (name.Length == 0 || name == _agent.Model)
+        // Refused rather than trusted: the picker is not offered to these agents, so a message
+        // asking to change their model did not come from anything this app put on screen.
+        if (!_agent.CanChooseModel || name.Length == 0 || name == _agent.Model)
         {
             return;
         }
@@ -407,6 +422,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatRun", "L_ChatSkip", "L_ChatAlways", "L_ChatAlwaysNote", "L_ChatAdminWarn",
             "L_ChatModelTitle", "L_ChatModelOther", "L_ChatModelPlaceholder",
             "L_ChatContextTip", "L_ChatSpentCounted", "L_ChatSpentEstimated", "L_ChatCopied",
+            "L_ChatReasoning",
         ];
 
         Post(new
@@ -561,7 +577,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             Post(new { t = "endTurn" });
         }
 
-        Post(new { t = "status", text = _agent.ResolvedBaseUrl, busy = false });
+        Post(new { t = "status", text = _agent.Origin, busy = false });
         PushContext();
     }
 
@@ -795,6 +811,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         _spentOut = 0;
         _counted = false;
         _shared.Clear();
+        _thinking.Clear();
         PushSpend(counted: false);
 
         Phase("thinking");
@@ -824,7 +841,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             _paint.Stop();
             PaintReply();
             Post(new { t = "endTurn" });
-            Post(new { t = "status", text = _agent.ResolvedBaseUrl, busy = false });
+            Post(new { t = "status", text = _agent.Origin, busy = false });
 
             _turn = null;
             turn.Dispose();
@@ -855,7 +872,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         switch (item.Kind)
         {
             case AgentEventKind.Thinking:
-                Phase("thinking");
+                // Rendered as markdown like the answer: models write their reasoning in the same
+                // shape, lists and code and all.
+                _thinking.Append(item.Text);
+                Post(new { t = "reasoning", html = Markdown.ToHtml(_thinking.ToString()) });
                 break;
 
             case AgentEventKind.Phase:
@@ -964,7 +984,16 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         });
 
         Post(new { t = "status", text = what + "…", busy = true });
-        Post(new { t = "thinking", on = true, label = BotName, what });
+
+        // Thinking needs no caption: the animation already says it, and a word repeating what a
+        // moving thing means is noise. The other phases name something the animation cannot.
+        Post(new
+        {
+            t = "thinking",
+            on = true,
+            label = BotName,
+            what = phase == AgentPhase.Thinking ? string.Empty : what,
+        });
     }
 
     /// <summary>What this turn has cost so far.</summary>

@@ -119,6 +119,9 @@ public static class LocalAgents
         ThemeService.Save();
     }
 
+    /// <summary>The agent for one local model, with the identity everything else files under.</summary>
+    public static AiAgent For(string model, string baseUrl) => Build(model, baseUrl);
+
     private static AiAgent Build(string model, string baseUrl) => new()
     {
         Id = Prefix + Key(model),

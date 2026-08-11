@@ -3,41 +3,147 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:RedBloom.Models"
         Title="{DynamicResource L_AiAttachSsh}"
-        Width="380" Height="440"
+        Width="440" Height="480"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="CanResize"
+        ShowInTaskbar="False"
         Background="{DynamicResource Surface}"
-        FontFamily="{DynamicResource UiFont}">
-    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
-        <TextBlock Grid.Row="0"
-                   Text="{DynamicResource L_AiAttachSshNote}"
-                   Foreground="{DynamicResource TextMuted}"
-                   FontSize="11.5"
-                   TextWrapping="Wrap"
-                   Margin="0,0,0,10" />
+        FontFamily="{DynamicResource UiFont}"
+        WindowStyle="None"
+        ResizeMode="CanResizeWithGrip"
+        AllowsTransparency="False"
+        BorderBrush="{DynamicResource Divider}"
+        BorderThickness="1">
 
-        <ListBox Grid.Row="1"
+    <!-- The system title bar is replaced: it carried the window's own look into a dialog that
+         sits inside this app's, and it offered minimise and maximise, which a picker has no use
+         for. Dragging and closing are kept, because those it does need. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" />
+    </WindowChrome.WindowChrome>
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <Style x:Key="PickRow" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="4,2" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Root"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Padding="10,8">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource ChromeHover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource SurfaceRaised}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentDim}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid RowDefinitions="Auto,*">
+        <Border Grid.Row="0"
+                Background="{DynamicResource Chrome}"
+                BorderBrush="{DynamicResource Divider}"
+                BorderThickness="0,0,0,1"
+                MouseLeftButtonDown="Bar_Drag">
+            <Grid ColumnDefinitions="*,Auto" Height="34">
+                <TextBlock Grid.Column="0"
+                           Text="{DynamicResource L_AiAttachSsh}"
+                           Foreground="{DynamicResource TextPrimary}"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           Margin="14,0,0,0" />
+                <Button Grid.Column="1"
+                        Style="{StaticResource IconButton}"
+                        Content="&#xE8BB;"
+                        FontSize="10"
+                        Width="40" Height="34"
+                        ToolTip="{DynamicResource L_Close}"
+                        Click="Close_Click" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="16" RowDefinitions="Auto,Auto,*,Auto">
+        <!-- The hint sits over the box, the same way the sidebar's filter does: WPF text boxes
+             have no placeholder of their own. -->
+        <Grid Grid.Row="0">
+            <TextBox x:Name="FilterBox"
+                     FontSize="12.5"
+                     Padding="8,6"
+                     TextChanged="Filter_Changed" />
+            <TextBlock x:Name="FilterHint"
+                       Text="{DynamicResource L_FilterHint}"
+                       Foreground="{DynamicResource TextFaint}"
+                       FontSize="12.5"
+                       Margin="10,0,0,0"
+                       VerticalAlignment="Center"
+                       IsHitTestVisible="False" />
+        </Grid>
+
+        <TextBlock Grid.Row="1"
+                   Text="{DynamicResource L_AiAttachSshNote}"
+                   Foreground="{DynamicResource TextFaint}"
+                   FontSize="10.5"
+                   TextWrapping="Wrap"
+                   Margin="2,8,2,8" />
+
+        <ListBox Grid.Row="2"
                  x:Name="List"
                  Background="Transparent"
                  BorderBrush="{DynamicResource Divider}"
                  BorderThickness="1"
                  HorizontalContentAlignment="Stretch"
+                 ItemContainerStyle="{StaticResource PickRow}"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  MouseDoubleClick="List_MouseDoubleClick">
             <ListBox.ItemTemplate>
                 <DataTemplate DataType="{x:Type models:SshSession}">
-                    <StackPanel Margin="2,4">
-                        <TextBlock Text="{Binding Name}"
-                                   Foreground="{DynamicResource TextPrimary}"
-                                   FontSize="12.5" />
-                        <TextBlock Text="{Binding DisplayTarget}"
-                                   Foreground="{DynamicResource TextFaint}"
-                                   FontSize="10.5" />
-                    </StackPanel>
+                    <Grid ColumnDefinitions="Auto,12,*">
+                        <!-- A drawn machine, so a connection never reads as a file. -->
+                        <Path Grid.Column="0"
+                              VerticalAlignment="Center"
+                              Width="18" Height="18"
+                              Stretch="Uniform"
+                              Stroke="{DynamicResource Accent}"
+                              StrokeThickness="1.6"
+                              Data="M3,4 H21 V11 H3 Z M3,13 H21 V20 H3 Z M6.5,7.5 H6.6 M6.5,16.5 H6.6" />
+
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="{Binding Name}"
+                                       Foreground="{DynamicResource TextPrimary}"
+                                       FontSize="12.5"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding DisplayTarget}"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       FontFamily="Cascadia Mono, Consolas, monospace"
+                                       FontSize="10.5"
+                                       TextTrimming="CharacterEllipsis"
+                                       Margin="0,2,0,0" />
+                            <TextBlock Text="{Binding ForwardSummary}"
+                                       Foreground="{DynamicResource AccentDim}"
+                                       FontSize="10"
+                                       Margin="0,2,0,0"
+                                       Visibility="{Binding HasForwards, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                    </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
             <Button Content="{DynamicResource L_Cancel}"
                     Style="{StaticResource GhostButton}"
                     Padding="14,6"
@@ -49,5 +155,6 @@
                     IsDefault="True"
                     Click="Choose_Click" />
         </StackPanel>
+        </Grid>
     </Grid>
 </Window>

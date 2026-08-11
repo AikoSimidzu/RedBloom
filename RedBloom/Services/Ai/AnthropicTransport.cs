@@ -115,6 +115,11 @@ public sealed class AnthropicTransport : IAgentTransport
                     yield return AgentEvent.Spent(spentIn, spentOut);
                 }
 
+                if (!string.IsNullOrEmpty(step.Thinking))
+                {
+                    yield return new AgentEvent(AgentEventKind.Thinking, step.Thinking);
+                }
+
                 if (!string.IsNullOrEmpty(step.Text))
                 {
                     if (!sawText)
@@ -454,7 +459,7 @@ public sealed class AnthropicTransport : IAgentTransport
 
     /// <summary>One read from the stream: whether it moved, what it carried, why it stopped.</summary>
     private readonly record struct Step(
-        bool Moved, string? Text, string? Error, long Input = 0, long Output = 0);
+        bool Moved, string? Text, string? Error, long Input = 0, long Output = 0, string? Thinking = null);
 
     private (IAsyncEnumerator<RawMessageStreamEvent>? Stream, string? Error) OpenStream(
         IReadOnlyList<AgentMessage> conversation, CancellationToken cancellationToken)
@@ -481,9 +486,19 @@ public sealed class AnthropicTransport : IAgentTransport
                 return new Step(false, null, null);
             }
 
-            if (stream.Current.TryPickContentBlockDelta(out var delta) && delta.Delta.TryPickText(out var text))
+            if (stream.Current.TryPickContentBlockDelta(out var delta))
             {
-                return new Step(true, text.Text, null);
+                if (delta.Delta.TryPickText(out var text))
+                {
+                    return new Step(true, text.Text, null);
+                }
+
+                // The reasoning, where the model is asked to do it aloud. Carried separately
+                // from the answer so the page can fold it away.
+                if (delta.Delta.TryPickThinking(out var thought))
+                {
+                    return new Step(true, null, null, Thinking: thought.Thinking);
+                }
             }
 
             // What the turn cost, as the endpoint counts it. The prompt total lands at the start,

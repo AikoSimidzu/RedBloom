@@ -112,6 +112,8 @@ public static class LocalizationService
         ["L_AiNoChats"] = "No chats with this agent yet",
         ["L_AiDeleteChat"] = "Delete this chat",
         ["L_AiChatName"] = "Chat name",
+        ["L_AiChatNameNote"] = "Leave empty to name it after the first question again.",
+        ["L_AiRenameChat"] = "Rename chat (F2)",
         ["L_AiBotName"] = "Agent's name here",
         ["L_AiBotNameNote"] = "Leave empty to use the agent's own name.",
         ["L_AiChatAvatar"] = "Avatar for this chat",
@@ -282,6 +284,7 @@ public static class LocalizationService
         ["L_ChatSpentEstimated"] = "Estimated while the reply arrives",
         ["L_ChatCopy"] = "copy",
         ["L_ChatCopied"] = "copied",
+        ["L_ChatReasoning"] = "Show what it is working out",
         ["L_ChatShowAll"] = "show all {0} lines",
         ["L_ChatOutput"] = "output",
         ["L_PhaseLoading"] = "loading the model — the first time takes a while",
@@ -323,6 +326,15 @@ public static class LocalizationService
             "The live background has stopped because Wallpaper Engine has paused itself. By "
             + "default it pauses while a window is maximised or fullscreen — change that under "
             + "Settings → Performance → “Other applications” in Wallpaper Engine.",
+        ["L_CliMissing"] =
+            "Claude Code is not installed on this machine. Install it, then sign in with "
+            + "“claude /login”, which opens your browser.",
+        ["L_CliNoStart"] = "Claude Code could not be started: {0}",
+        ["L_CliNoAnswer"] =
+            "Claude Code returned nothing. If it has not been signed in yet, run “claude /login” "
+            + "in a terminal tab — it opens your browser and keeps the sign-in itself.",
+        ["L_CliNotReady"] = "Claude Code is installed but did not answer.",
+        ["L_CliNothingToSay"] = "There was nothing to send.",
         ["L_Rename"] = "Rename",
         ["L_LocalInEngine"] = "in the engine's own store",
         ["L_LocalRenameTitle"] = "Name this model",
@@ -522,6 +534,8 @@ public static class LocalizationService
         ["L_AiNoChats"] = "С этим агентом ещё нет чатов",
         ["L_AiDeleteChat"] = "Удалить чат",
         ["L_AiChatName"] = "Название чата",
+        ["L_AiChatNameNote"] = "Пусто — снова назвать по первому вопросу.",
+        ["L_AiRenameChat"] = "Переименовать чат (F2)",
         ["L_AiBotName"] = "Имя агента в этом чате",
         ["L_AiBotNameNote"] = "Пусто — берётся имя агента.",
         ["L_AiChatAvatar"] = "Аватар этого чата",
@@ -680,6 +694,7 @@ public static class LocalizationService
         ["L_ChatSpentEstimated"] = "Оценка, пока идёт ответ",
         ["L_ChatCopy"] = "копировать",
         ["L_ChatCopied"] = "скопировано",
+        ["L_ChatReasoning"] = "Показать ход мысли",
         ["L_ChatShowAll"] = "показать все строки: {0}",
         ["L_ChatOutput"] = "вывод",
         ["L_PhaseLoading"] = "загружаю модель — в первый раз это небыстро",
@@ -721,6 +736,15 @@ public static class LocalizationService
             "Живой фон замер: Wallpaper Engine поставил себя на паузу. По умолчанию он делает "
             + "это, пока какое-то окно развёрнуто или на весь экран — поменять можно в его "
             + "настройках: «Производительность» → «Другие приложения».",
+        ["L_CliMissing"] =
+            "Claude Code на этой машине не установлен. Поставьте его и войдите командой "
+            + "«claude /login» — она откроет браузер.",
+        ["L_CliNoStart"] = "Не удалось запустить Claude Code: {0}",
+        ["L_CliNoAnswer"] =
+            "Claude Code ничего не вернул. Если вход ещё не выполнен, выполните «claude /login» "
+            + "во вкладке терминала — команда откроет браузер и сохранит вход у себя.",
+        ["L_CliNotReady"] = "Claude Code установлен, но не ответил.",
+        ["L_CliNothingToSay"] = "Отправлять было нечего.",
         ["L_Rename"] = "Переименовать",
         ["L_LocalInEngine"] = "в хранилище движка",
         ["L_LocalRenameTitle"] = "Название модели",

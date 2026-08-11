@@ -157,15 +157,22 @@
                                TextTrimming="CharacterEllipsis"
                                Margin="0,1,0,0" />
                 </StackPanel>
-                <Button Grid.Column="2"
-                        Style="{StaticResource IconButton}"
-                        Content="&#xE74D;"
-                        FontSize="10"
-                        Width="20" Height="20"
-                        VerticalAlignment="Center"
-                        Click="DeleteChat_Click"
-                        Tag="{Binding}"
-                        ToolTip="{DynamicResource L_AiDeleteChat}" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource IconButton}"
+                            Content="&#xE8AC;"
+                            FontSize="10"
+                            Width="20" Height="20"
+                            Click="RenameChat_Click"
+                            Tag="{Binding}"
+                            ToolTip="{DynamicResource L_AiRenameChat}" />
+                    <Button Style="{StaticResource IconButton}"
+                            Content="&#xE74D;"
+                            FontSize="10"
+                            Width="20" Height="20"
+                            Click="DeleteChat_Click"
+                            Tag="{Binding}"
+                            ToolTip="{DynamicResource L_AiDeleteChat}" />
+                </StackPanel>
             </Grid>
         </DataTemplate>
 
@@ -484,6 +491,7 @@
                                    FontWeight="SemiBold"
                                    VerticalAlignment="Center" />
                         <Button Grid.Column="1"
+                                x:Name="NewChatButton"
                                 Style="{StaticResource IconButton}"
                                 Content="&#xE710;"
                                 Width="22" Height="22"
@@ -770,35 +778,9 @@
                                FontSize="13"
                                FontWeight="SemiBold" />
 
-                    <!-- Only a chat has a name of its own to edit; a session tab is named by
-                         the session and a quick connection by its host. -->
-                    <StackPanel x:Name="CardNameRow" Visibility="Collapsed">
-                        <TextBlock Text="{DynamicResource L_AiChatName}"
-                                   Foreground="{DynamicResource TextMuted}"
-                                   FontFamily="{DynamicResource UiFont}"
-                                   FontSize="11"
-                                   Margin="0,12,0,4" />
-                        <TextBox x:Name="CardNameBox"
-                                 FontFamily="{DynamicResource UiFont}"
-                                 FontSize="12" Padding="7,4"
-                                 KeyDown="CardName_KeyDown" />
-
-                        <TextBlock Text="{DynamicResource L_AiBotName}"
-                                   Foreground="{DynamicResource TextMuted}"
-                                   FontFamily="{DynamicResource UiFont}"
-                                   FontSize="11"
-                                   Margin="0,10,0,4" />
-                        <TextBox x:Name="CardBotBox"
-                                 FontFamily="{DynamicResource UiFont}"
-                                 FontSize="12" Padding="7,4"
-                                 KeyDown="CardName_KeyDown" />
-                        <TextBlock Text="{DynamicResource L_AiBotNameNote}"
-                                   Foreground="{DynamicResource TextFaint}"
-                                   FontFamily="{DynamicResource UiFont}"
-                                   FontSize="10.5"
-                                   TextWrapping="Wrap"
-                                   Margin="0,4,0,0" />
-                    </StackPanel>
+                    <!-- Names are not edited here. This popup dresses the tab, and a name is not
+                         part of that — it belongs where chats are listed and picked. Typing in
+                         a popup that closes on any click outside itself was awkward besides. -->
 
                     <!-- Only a chat has an avatar, so this row is shown when the card being
                          edited belongs to one and hidden for tabs that do not. -->

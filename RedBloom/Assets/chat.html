@@ -27,6 +27,11 @@
 
   * { box-sizing: border-box; }
 
+  /* The browser hides [hidden] with a display rule of its own, and any author rule that sets
+     display beats it — so every flex box below that is also sometimes hidden was staying on
+     screen. This puts the attribute back in charge. */
+  [hidden] { display: none !important; }
+
   html, body {
     margin: 0;
     height: 100%;
@@ -91,13 +96,30 @@
 
   /* Only the agent is named. The user knows who they are, and the label was one more thing
      between their question and the answer. */
+  /* Drawn as a tab joined to the top of the message rather than a line floating above it, so
+     the name plainly belongs to what is underneath — with several turns on screen a detached
+     label reads as easily as a heading for the wrong one. */
   .who {
+    display: inline-block;
     font-size: 11px;
     letter-spacing: .04em;
     color: var(--nick);
-    margin-bottom: 4px;
     font-weight: 600;
+    padding: 3px 10px 4px;
+    background: var(--bubble);
+    border: 1px solid var(--divider);
+    border-bottom: 0;
+    border-radius: 7px 7px 0 0;
+    margin-bottom: -1px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
   }
+
+  /* The corner the tab sits over is squared off, the way a real tab meets its panel. */
+  .turn.agent .body { border-top-left-radius: 3px; }
 
   .body { line-height: 1.55; word-wrap: break-word; overflow-wrap: anywhere; }
 
@@ -302,8 +324,37 @@
   .thinking i:nth-child(2) { animation-delay: .18s; }
   .thinking i:nth-child(3) { animation-delay: .36s; }
 
-  /* The dots say something is happening; this says what. */
-  .doing { font-size: 11.5px; color: var(--muted); padding: 0 2px 2px; }
+  /* The dots say something is happening; this says what, when the animation cannot. */
+  .doing { font-size: 11.5px; color: var(--muted); padding: 2px 2px 0; }
+
+  /* The waiting plate is the message-to-be: same plate, so the answer does not jump when it
+     replaces it. */
+  .body.wait { padding: 7px 12px 8px; }
+
+  details.reasoning { margin-top: 6px; }
+
+  details.reasoning summary {
+    cursor: pointer;
+    font-size: 11.5px;
+    color: var(--faint);
+    list-style: none;
+  }
+
+  details.reasoning summary::before { content: "▸ "; }
+  details.reasoning[open] summary::before { content: "▾ "; }
+  details.reasoning summary:hover { color: var(--muted); }
+
+  /* Set apart from an answer: dimmer, smaller, and behind its own edge — working-out that
+     happens to be readable, not something the agent is telling you. */
+  details.reasoning .thought {
+    margin-top: 7px;
+    padding-left: 10px;
+    border-left: 2px solid var(--divider);
+    color: var(--muted);
+    font-size: 12.5px;
+    max-height: 20em;
+    overflow-y: auto;
+  }
 
   @keyframes think {
     0%, 80%, 100% { opacity: .25; transform: translateY(0); }
@@ -407,14 +458,31 @@
   /* How full the window is. An estimate, so it is a bar rather than a number pretending to
      be exact — it earns its place by warning before a limit, not by being audited. */
   /* What this turn is costing, as it is spent. Beside the context bar because the two answer
-     different questions: one is how full the window is, the other is what the answer cost. */
+     different questions: one is how full the window is, the other is what the answer cost.
+     Drawn as two small counters rather than one run of text: in and out are separate numbers
+     and were being read as one. */
   #spent {
-    font-size: 11px;
-    color: var(--faint);
-    font-family: var(--code-font);
-    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
     flex: 0 0 auto;
+    white-space: nowrap;
   }
+
+  #spent .n {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    padding: 2px 7px;
+    border-radius: 9px;
+    background: var(--chrome);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  #spent .n b { font-weight: 600; color: var(--text); }
+  #spent .n i { font-style: normal; color: var(--faint); font-size: 10px; }
+  #spent .n.est b { color: var(--muted); }
 
   #gauge { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
 
@@ -447,6 +515,26 @@
     font-size: 11.5px;
     color: var(--muted);
   }
+
+  /* Name over target, so a connection says which machine it reaches — the name is whatever the
+     user called it and often does not. */
+  .label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+  .label .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .label .detail {
+    font-family: var(--code-font);
+    font-size: 10px;
+    color: var(--faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A machine, not a document: its own edge colour and a drawn icon rather than a file glyph. */
+  .chip.ssh, .pin.ssh { border-color: var(--accent-dim); }
+  .glyph.server { display: flex; align-items: center; color: var(--accent); }
+  .glyph.server svg { width: 15px; height: 15px; }
+  .pin.ssh .glyph.server svg { width: 18px; height: 18px; }
+  .pin.ssh { cursor: default; }
 
   .chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -652,6 +740,7 @@
     SpentCounted: "Counted by the endpoint",
     SpentEstimated: "Estimated while the reply arrives",
     Copied: "copied",
+    Reasoning: "Show what it is working out",
   };
 
   /** Token counts, short enough to sit in a status line. */
@@ -717,9 +806,34 @@
       return img;
     }
 
+    // A connection gets a drawing of a machine rather than a document glyph. Wearing the same
+    // face as a file is what made it read as one, on screen and to the model alike.
+    if (file.Kind === "ssh") {
+      const box = el("span", "glyph server");
+      box.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' +
+        '<rect x="3" y="4" width="18" height="7" rx="1.5"/>' +
+        '<rect x="3" y="13" width="18" height="7" rx="1.5"/>' +
+        '<path d="M6.5 7.5h.01M6.5 16.5h.01"/></svg>';
+      return box;
+    }
+
     const mark = el("span", "glyph", "");
     mark.textContent = file.Glyph || "";
     return mark;
+  }
+
+  /** The name, with a second line under it when the name alone does not say enough. */
+  function label(file) {
+    const box = el("span", "label");
+    box.appendChild(el("span", "name", "")).textContent = file.Name;
+
+    if (file.Detail) {
+      box.appendChild(el("span", "detail", "")).textContent = file.Detail;
+    }
+
+    return box;
   }
 
   /** An attachment as it appears inside a sent message, with its menu. */
@@ -727,7 +841,8 @@
     const node = el("div", "pin");
     node.title = file.Path;
     node.appendChild(face(file));
-    node.appendChild(el("span", "name", "")).textContent = file.Name;
+    node.appendChild(label(file));
+    if (file.Kind === "ssh") node.classList.add("ssh");
 
     node.onclick = (e) => {
       e.stopPropagation();
@@ -821,7 +936,8 @@
         const chip = el("div", "chip");
         chip.title = file.Path;
         chip.appendChild(face(file));
-        chip.appendChild(el("span", "name", "")).textContent = file.Name;
+        chip.appendChild(label(file));
+        if (file.Kind === "ssh") chip.classList.add("ssh");
 
         const drop = el("button", null, "×");
         drop.title = S.Remove;
@@ -833,6 +949,16 @@
 
     /** The models this endpoint offers, and which one is answering now. */
     models(m) {
+      // Some agents have no choice of model to offer — a local one is whatever the engine has
+      // loaded, and the command-line tool decides for itself.
+      if (m.hide) {
+        modelPick.hidden = true;
+        modelText.hidden = true;
+        modelBox.innerHTML = "";
+
+        return;
+      }
+
       const list = m.list || [];
       current = m.current || "";
 
@@ -915,18 +1041,47 @@
         const face = avatarFor("agent");
         if (face) node.appendChild(face);
 
+        // Built as a turn with a plate of its own, so waiting looks like the message that is
+        // coming rather than like something happening elsewhere on the page.
         const side = el("div", "side");
         side.appendChild(el("div", "who", ""));
-        const dots = el("div", "thinking", "<i></i><i></i><i></i>");
-        side.appendChild(dots);
-        side.appendChild(el("div", "doing", ""));
+
+        const body = el("div", "body wait");
+        body.appendChild(el("div", "thinking", "<i></i><i></i><i></i>"));
+        body.appendChild(el("div", "doing", ""));
+
+        const fold = el("details", "reasoning");
+        fold.hidden = true;
+        fold.appendChild(el("summary", null, "")).textContent = S.Reasoning;
+        fold.appendChild(el("div", "thought", ""));
+        body.appendChild(fold);
+
+        side.appendChild(body);
         node.appendChild(side);
         log.appendChild(node);
       }
 
       node.querySelector(".who").textContent = m.label || "";
-      node.querySelector(".doing").textContent = m.what || "";
+
+      const doing = node.querySelector(".doing");
+      doing.textContent = m.what || "";
+      doing.hidden = !m.what;
+
       follow();
+    },
+
+    /// What the model is working out, as it works it out. Folded away: it is longer than the
+    /// answer more often than not, and it is not the answer.
+    reasoning(m) {
+      const node = log.querySelector('[data-thinking="1"]');
+      if (!node) return;
+
+      const fold = node.querySelector("details.reasoning");
+      fold.hidden = false;
+      fold.querySelector(".thought").innerHTML = m.html;
+
+      // Only the tail is worth following while it streams; the reader is watching the end.
+      if (fold.open) follow();
     },
 
     /// The window's language. Applied to what is already on screen as well as kept for what
@@ -980,7 +1135,18 @@
       if (!input && !output) { spent.hidden = true; return; }
 
       spent.hidden = false;
-      spent.textContent = (m.counted ? "" : "~") + "↑" + short(input) + " ↓" + short(output);
+      spent.innerHTML = "";
+
+      const counter = (mark, value) => {
+        const box = el("div", "n" + (m.counted ? "" : " est"));
+        box.appendChild(el("i", null, "")).textContent = mark;
+        box.appendChild(el("b", null, "")).textContent = (m.counted ? "" : "~") + short(value);
+        spent.appendChild(box);
+      };
+
+      counter("▲", input);
+      counter("▼", output);
+
       spent.title = (m.counted ? S.SpentCounted : S.SpentEstimated)
         + ": " + input + " in, " + output + " out";
     },

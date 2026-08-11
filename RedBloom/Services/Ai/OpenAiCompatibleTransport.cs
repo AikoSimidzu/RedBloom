@@ -461,6 +461,11 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     yield return AgentEvent.Spent(input, output);
                 }
 
+                if (ReadReasoning(data) is { Length: > 0 } thought)
+                {
+                    yield return new AgentEvent(AgentEventKind.Thinking, thought);
+                }
+
                 if (ReadDelta(data) is { Length: > 0 } text)
                 {
                     if (!sawText)
@@ -713,6 +718,51 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             return part.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String
                 ? content.GetString()
                 : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The model's reasoning from one streamed chunk, for endpoints that send it.
+    /// </summary>
+    /// <remarks>
+    /// Two spellings are in the wild for the same thing, and neither is in the original
+    /// specification — so both are read, and an endpoint that sends neither simply has no
+    /// reasoning to show.
+    /// </remarks>
+    private static string? ReadReasoning(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+
+            if (!document.RootElement.TryGetProperty("choices", out var choices)
+                || choices.ValueKind != JsonValueKind.Array
+                || choices.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            var choice = choices[0];
+
+            if (!choice.TryGetProperty("delta", out var part)
+                && !choice.TryGetProperty("message", out part))
+            {
+                return null;
+            }
+
+            foreach (var name in (string[])["reasoning_content", "reasoning"])
+            {
+                if (part.TryGetProperty(name, out var thought) && thought.ValueKind == JsonValueKind.String)
+                {
+                    return thought.GetString();
+                }
+            }
+
+            return null;
         }
         catch (JsonException)
         {

@@ -3,7 +3,12 @@ using System.IO;
 namespace RedBloom.Services.Ai;
 
 /// <summary>How one attachment should look in the chat, and how to reach it again.</summary>
-public sealed record AttachmentView(string Path, string Name, string Kind, string Glyph, string Preview);
+/// <param name="Detail">
+/// A second line, where the name alone does not say what this is — the account and host of a
+/// connection, for instance. Empty for things whose name is the whole story.
+/// </param>
+public sealed record AttachmentView(
+    string Path, string Name, string Kind, string Glyph, string Preview, string Detail = "");
 
 /// <summary>
 /// Describes attachments for the page: a thumbnail where one can be made, a glyph otherwise.
@@ -40,10 +45,14 @@ public static class Attachments
 
             return new AttachmentView(
                 path,
-                session?.Name ?? "(deleted session)",
+                session?.Name ?? "(deleted connection)",
                 "ssh",
                 "\uE968",
-                string.Empty);
+                string.Empty,
+
+                // The account and host, because a saved connection's name is whatever the user
+                // called it and often says nothing about which machine it reaches.
+                session?.DisplayTarget ?? string.Empty);
         }
 
         var name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
