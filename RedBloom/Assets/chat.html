@@ -92,7 +92,10 @@
     font-weight: 600;
   }
 
-  .side { min-width: 0; max-width: 82%; }
+  /* Sized to the widest thing in it, so a plate is never narrower than the name tab sitting on
+     top of it — a long nick used to hang off the edge of a short reply. Still capped, so a long
+     answer wraps rather than filling the panel. */
+  .side { min-width: 0; max-width: 82%; width: fit-content; }
 
   /* Only the agent is named. The user knows who they are, and the label was one more thing
      between their question and the answer. */
@@ -653,6 +656,30 @@
   #send:hover { border-color: var(--accent); }
   #send:disabled { opacity: .5; cursor: default; }
 
+  /* Takes the send button's place while a turn is running, rather than sitting beside it: at
+     that moment stopping is the only thing there is to do. */
+  #stop {
+    font: inherit;
+    padding: 9px 15px;
+    border-radius: 7px;
+    border: 1px solid var(--divider);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  #stop:hover { border-color: var(--accent); color: var(--text); }
+  #stop::before {
+    content: "";
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-thumb { background: #3a3636; border-radius: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -693,6 +720,7 @@
       </button>
       <textarea id="input" rows="1" placeholder="Ask the agent…" spellcheck="false"></textarea>
       <button id="send">Send</button>
+      <button id="stop" hidden>Stop</button>
     </div>
   </div>
 
@@ -703,6 +731,7 @@
   const log = document.getElementById("log");
   const input = document.getElementById("input");
   const send = document.getElementById("send");
+  const stop = document.getElementById("stop");
   const status = document.getElementById("status");
 
   const chips = document.getElementById("chips");
@@ -741,6 +770,7 @@
     SpentEstimated: "Estimated while the reply arrives",
     Copied: "copied",
     Reasoning: "Show what it is working out",
+    Stop: "Stop",
   };
 
   /** Token counts, short enough to sit in a status line. */
@@ -1091,6 +1121,8 @@
 
       input.placeholder = S.Ask;
       send.textContent = S.Send;
+      stop.textContent = S.Stop;
+      stop.disabled = false;
       modelBox.title = S.ModelTitle;
       modelText.placeholder = S.ModelPlaceholder;
 
@@ -1217,6 +1249,15 @@
     status(m) {
       status.textContent = m.text || "";
       send.disabled = !!m.busy;
+
+      // While a turn runs the send button has nothing to do, so the stop button stands in its
+      // place — one button, whichever action is the live one.
+      send.hidden = !!m.busy;
+      stop.hidden = !m.busy;
+
+      // Re-armed at the start of every turn: it disables itself once pressed so a second click
+      // cannot arrive while the turn is winding down.
+      if (m.busy) stop.disabled = false;
     },
 
     note(m) {
@@ -1267,6 +1308,11 @@
   document.getElementById("attachFile").onclick = () => post({ t: "attach" });
   document.getElementById("attachDir").onclick = () => post({ t: "attachFolder" });
   document.getElementById("attachSsh").onclick = () => post({ t: "attachSsh" });
+
+  stop.onclick = () => {
+    stop.disabled = true;
+    post({ t: "stop" });
+  };
 
   input.addEventListener("keydown", (e) => {
     // Enter sends; Shift+Enter is how a multi-line question gets written.

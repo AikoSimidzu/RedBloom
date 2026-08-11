@@ -50,6 +50,9 @@ public partial class SessionPickerDialog : Window
     /// <summary>The chosen connection, or null when the dialog was dismissed.</summary>
     public SshSession? Chosen { get; private set; }
 
+    /// <summary>Whether the user asked for its password to travel with it.</summary>
+    public bool SendsSecret { get; private set; }
+
     /// <summary>The replacement title bar drags the window, as the system one would have.</summary>
     private void Bar_Drag(object sender, MouseButtonEventArgs e)
     {
@@ -73,6 +76,7 @@ public partial class SessionPickerDialog : Window
         }
 
         Chosen = session;
+        SendsSecret = SendSecret.IsChecked == true;
         DialogResult = true;
     }
 }

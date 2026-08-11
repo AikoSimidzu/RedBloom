@@ -164,7 +164,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         if (picker.ShowDialog() == true && picker.Chosen is { } chosen)
         {
-            Attach([SessionCatalog.Reference(chosen)]);
+            Attach([SessionCatalog.Reference(chosen, picker.SendsSecret)]);
         }
     }
 
@@ -289,6 +289,13 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             case "attachSsh":
                 AttachSession();
+                break;
+
+            case "stop":
+                // Whatever has already arrived is kept: the cancelled turn is committed to the
+                // history as far as it got, so a long answer stopped halfway is still there.
+                _turn?.Cancel();
+                _approval?.TrySetResult('n');
                 break;
 
             case "detach" when message.TryGetProperty("path", out var drop):
@@ -422,7 +429,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatRun", "L_ChatSkip", "L_ChatAlways", "L_ChatAlwaysNote", "L_ChatAdminWarn",
             "L_ChatModelTitle", "L_ChatModelOther", "L_ChatModelPlaceholder",
             "L_ChatContextTip", "L_ChatSpentCounted", "L_ChatSpentEstimated", "L_ChatCopied",
-            "L_ChatReasoning",
+            "L_ChatReasoning", "L_ChatStop",
         ];
 
         Post(new
@@ -872,6 +879,13 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         switch (item.Kind)
         {
             case AgentEventKind.Thinking:
+                // An empty one only announces that thinking has begun; there is nothing to fold
+                // away until words arrive, and showing the toggle early offers an empty box.
+                if (item.Text.Length == 0)
+                {
+                    break;
+                }
+
                 // Rendered as markdown like the answer: models write their reasoning in the same
                 // shape, lists and code and all.
                 _thinking.Append(item.Text);

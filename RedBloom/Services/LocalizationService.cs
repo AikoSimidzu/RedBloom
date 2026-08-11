@@ -285,6 +285,7 @@ public static class LocalizationService
         ["L_ChatCopy"] = "copy",
         ["L_ChatCopied"] = "copied",
         ["L_ChatReasoning"] = "Show what it is working out",
+        ["L_ChatStop"] = "Stop",
         ["L_ChatShowAll"] = "show all {0} lines",
         ["L_ChatOutput"] = "output",
         ["L_PhaseLoading"] = "loading the model — the first time takes a while",
@@ -377,7 +378,13 @@ public static class LocalizationService
         ["L_AiAttachSsh"] = "Attach an SSH connection",
         ["L_AiAttachSshNote"] =
             "The agent is given the host, port, account and tunnels so it can write commands "
-            + "for this machine. The password and any key passphrase are never sent.",
+            + "for this machine, and is told that the work is meant to happen there.",
+        ["L_AiSshSendSecret"] = "Send the saved password too",
+        ["L_AiSshSendSecretNote"] =
+            "The password becomes part of the message and reaches whatever endpoint this agent "
+            + "uses, in the clear, and stays in that endpoint's logs. Turn it on only for an "
+            + "endpoint you trust with it.",
+        ["L_AiSshSecretSent"] = "password sent",
         ["L_Save"] = "Save",
         ["L_Connect"] = "Connect",
         ["L_Remove"] = "Remove",
@@ -695,6 +702,7 @@ public static class LocalizationService
         ["L_ChatCopy"] = "копировать",
         ["L_ChatCopied"] = "скопировано",
         ["L_ChatReasoning"] = "Показать ход мысли",
+        ["L_ChatStop"] = "Остановить",
         ["L_ChatShowAll"] = "показать все строки: {0}",
         ["L_ChatOutput"] = "вывод",
         ["L_PhaseLoading"] = "загружаю модель — в первый раз это небыстро",
@@ -786,7 +794,13 @@ public static class LocalizationService
         ["L_AiAttachSsh"] = "Прикрепить SSH-подключение",
         ["L_AiAttachSshNote"] =
             "Агент получит хост, порт, учётную запись и туннели, чтобы писать команды для этой "
-            + "машины. Пароль и парольная фраза ключа не передаются никогда.",
+            + "машины, и будет знать, что работать нужно именно на ней.",
+        ["L_AiSshSendSecret"] = "Передать и сохранённый пароль",
+        ["L_AiSshSendSecretNote"] =
+            "Пароль войдёт в текст сообщения и уйдёт на тот эндпоинт, которым пользуется этот "
+            + "агент, — открытым текстом, и останется в его журналах. Включайте только для "
+            + "эндпоинта, которому доверяете.",
+        ["L_AiSshSecretSent"] = "пароль передан",
         ["L_Save"] = "Сохранить",
         ["L_Connect"] = "Подключиться",
         ["L_Remove"] = "Убрать",

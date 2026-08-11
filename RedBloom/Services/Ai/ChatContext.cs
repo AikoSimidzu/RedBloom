@@ -265,7 +265,7 @@ public static class ChatContext
         // did — a model reads it as something to open, and answers about its contents.
         text.AppendLine($"=== ssh connection: {session.Name} ===")
             .AppendLine("This is a remote machine the user has saved, not a file. Nothing here")
-            .AppendLine("is to be read or opened; it is where commands would be run.")
+            .AppendLine("is to be read or opened; it is where work is to be done.")
             .AppendLine($"host: {session.Host}")
             .AppendLine($"port: {session.Port}")
             .AppendLine($"user: {session.Username}")
@@ -280,10 +280,58 @@ public static class ChatContext
             text.AppendLine($"tunnel: {forward.Display}  ({forward.SshFlag})");
         }
 
+        // Why it was attached at all. Without this a model treats it as background detail and
+        // answers about the local machine, or asks which host was meant when it has been told.
+        text.AppendLine()
+            .AppendLine("The user attached this because the task concerns this machine. Unless "
+                + "they say otherwise, assume that is where things are to be inspected, "
+                + "installed, changed or run, and write your commands to reach it over ssh "
+                + "rather than for the computer this chat is running on. When you have a tool "
+                + "for running commands, use it with the ssh line above.");
+
+        AppendSecret(text, path, session);
+    }
+
+    /// <summary>
+    /// The password, when the user chose to send it with this attachment.
+    /// </summary>
+    /// <remarks>
+    /// Withheld by default and included only on request, because it leaves the machine: it
+    /// becomes part of the prompt and reaches whatever endpoint the agent is pointed at, in the
+    /// clear, and is kept in whatever logs that endpoint keeps. The user is told this at the
+    /// moment they choose, in the attach dialog — the choice is theirs, and this only carries it
+    /// out. Nothing is written into the saved chat; the password is read fresh from the session
+    /// each time the conversation is sent.
+    /// </remarks>
+    private static void AppendSecret(StringBuilder text, string path, Models.SshSession session)
+    {
+        if (!SessionCatalog.CarriesSecret(path))
+        {
+            text.AppendLine()
+                .AppendLine("The password and any key passphrase are withheld. Do not guess at "
+                    + "them or put a placeholder in a command as though it were real; if one is "
+                    + "needed, write the command so that it asks for it, and say so.");
+
+            return;
+        }
+
+        if (session.Secret is not { Length: > 0 } secret)
+        {
+            text.AppendLine()
+                .AppendLine("The user chose to share the password, but none is saved for this "
+                    + "connection. Write commands so that they ask for it.");
+
+            return;
+        }
+
+        text.AppendLine()
+            .AppendLine(session.UsesPrivateKey
+                ? $"key passphrase: {secret}"
+                : $"password: {secret}");
+
         text.AppendLine(
-            "The password and any key passphrase are deliberately withheld. Do not guess at "
-            + "them or put a placeholder in a command as though it were real; if one is needed, "
-            + "write the command so that it asks for it, and say so.");
+            "The user shared this deliberately so you can connect without stopping to ask. Use "
+            + "it only for this machine, and do not repeat it back in your answer.");
     }
 
     private static string SshCommandLine(Models.SshSession session)

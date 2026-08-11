@@ -51,8 +51,13 @@ public static class Attachments
                 string.Empty,
 
                 // The account and host, because a saved connection's name is whatever the user
-                // called it and often says nothing about which machine it reaches.
-                session?.DisplayTarget ?? string.Empty);
+                // called it and often says nothing about which machine it reaches. A shared
+                // password is called out here too — it left the machine, and that should be
+                // visible in the transcript afterwards, not only in the dialog that asked.
+                (session?.DisplayTarget ?? string.Empty)
+                + (RedBloom.Services.SessionCatalog.CarriesSecret(path)
+                    ? "  ·  " + LocalizationService.T("L_AiSshSecretSent")
+                    : string.Empty));
         }
 
         var name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));

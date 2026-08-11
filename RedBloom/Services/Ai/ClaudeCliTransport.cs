@@ -22,6 +22,9 @@ public sealed class ClaudeCliTransport : IAgentTransport
     private readonly AiAgent _agent;
     private string? _session;
 
+    /// <summary>True once this turn's answer has arrived as fragments rather than in one piece.</summary>
+    private bool _streamed;
+
     public ClaudeCliTransport(AiAgent agent) => _agent = agent;
 
     public async IAsyncEnumerable<AgentEvent> SendAsync(
@@ -33,6 +36,8 @@ public sealed class ClaudeCliTransport : IAgentTransport
             yield return AgentEvent.Failure(LocalizationService.T("L_CliMissing"));
             yield break;
         }
+
+        _streamed = false;
 
         if (Prompt(conversation) is not { Length: > 0 } prompt)
         {
@@ -47,6 +52,12 @@ public sealed class ClaudeCliTransport : IAgentTransport
             RedirectStandardInput = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
+
+            // The input side needs saying too. Left alone it is the console's code page, which
+            // on a Russian Windows is 866 — and a question written in Cyrillic reaches the tool
+            // as a row of question marks, unrecoverably, because the conversion happens on the
+            // way out of this process.
+            StandardInputEncoding = new UTF8Encoding(false),
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -59,6 +70,10 @@ public sealed class ClaudeCliTransport : IAgentTransport
         start.ArgumentList.Add("--output-format");
         start.ArgumentList.Add("stream-json");
         start.ArgumentList.Add("--verbose");
+
+        // Asks for the fine-grained stream. Without it the tool reports only finished blocks —
+        // the answer lands in one lump at the end, and the reasoning is not reported at all.
+        start.ArgumentList.Add("--include-partial-messages");
 
         if (_session is { Length: > 0 } resume)
         {
@@ -172,6 +187,39 @@ public sealed class ClaudeCliTransport : IAgentTransport
             }
 
             var kind = root.TryGetProperty("type", out var type) ? type.GetString() : null;
+
+            // The fine-grained stream: the answer arrives a fragment at a time, and the
+            // reasoning arrives beside it under a delta of its own.
+            if (kind == "stream_event"
+                && root.TryGetProperty("event", out var raw)
+                && raw.TryGetProperty("type", out var rawKind)
+                && rawKind.GetString() == "content_block_delta"
+                && raw.TryGetProperty("delta", out var delta))
+            {
+                var shape = delta.TryGetProperty("type", out var deltaKind) ? deltaKind.GetString() : null;
+
+                if (shape == "text_delta" && delta.TryGetProperty("text", out var piece)
+                    && piece.GetString() is { Length: > 0 } fragment)
+                {
+                    _streamed = true;
+                    events.Add(AgentEvent.OfText(fragment));
+                }
+
+                if (shape == "thinking_delta" && delta.TryGetProperty("thinking", out var thought)
+                    && thought.GetString() is { Length: > 0 } reasoning)
+                {
+                    events.Add(new AgentEvent(AgentEventKind.Thinking, reasoning));
+                }
+
+                return events;
+            }
+
+            // The finished block. Skipped when the fragments already carried it, which is the
+            // usual case — kept as the way through for a version that does not stream them.
+            if (kind == "assistant" && _streamed)
+            {
+                return events;
+            }
 
             if (kind == "assistant"
                 && root.TryGetProperty("message", out var message)
