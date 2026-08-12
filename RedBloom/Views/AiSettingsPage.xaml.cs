@@ -205,6 +205,7 @@ public partial class AiSettingsPage : UserControl
                 AiProvider.Anthropic => 0,
                 AiProvider.ImageGen => 2,
                 AiProvider.ClaudeCli => 3,
+                AiProvider.Gemini => 4,
                 _ => 1,
             };
             BaseUrlBox.Text = agent.BaseUrl;
@@ -277,6 +278,16 @@ public partial class AiSettingsPage : UserControl
 
     private void Provider_Changed(object sender, SelectionChangedEventArgs e)
     {
+        // Switching to Gemini seeds a usable model, since Google's endpoint refuses a request with
+        // none. Only when the box is empty or still on the Anthropic default, so a model already
+        // typed is left alone.
+        if (!_loading
+            && ProviderBox.SelectedIndex == 4
+            && (string.IsNullOrWhiteSpace(ModelBox.Text) || ModelBox.Text.Trim() == AiAgent.DefaultAnthropicModel))
+        {
+            ModelBox.Text = AiAgent.DefaultGeminiModel;
+        }
+
         Capture();
         RefreshHints();
     }
@@ -396,6 +407,7 @@ public partial class AiSettingsPage : UserControl
             0 => AiProvider.Anthropic,
             2 => AiProvider.ImageGen,
             3 => AiProvider.ClaudeCli,
+            4 => AiProvider.Gemini,
             _ => AiProvider.OpenAiCompatible,
         };
         agent.BaseUrl = BaseUrlBox.Text.Trim();

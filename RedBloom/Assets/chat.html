@@ -481,10 +481,10 @@
   #mentions .mrow.all { color: var(--muted); border-bottom: 1px solid var(--divider); border-radius: 0; margin-bottom: 2px; }
   #mentions .mrow.all .dot { background: var(--muted); }
 
-  /* The pinned-target chip: while set, every message is addressed to this one agent. */
-  #pin { margin: 0 2px 6px; }
-  #pin[hidden] { display: none; }
-  #pin .pinchip {
+  /* The pinned-target and editing chips: a small pill above the composer. */
+  #pin, #editbar { margin: 0 2px 6px; }
+  #pin[hidden], #editbar[hidden] { display: none; }
+  .pinchip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -495,9 +495,9 @@
     color: var(--text);
     font-size: 12px;
   }
-  #pin .pinarrow { color: var(--accent); font-weight: 700; }
-  #pin .pinname { font-weight: 600; }
-  #pin .pinx {
+  .pinarrow { color: var(--accent); font-weight: 700; }
+  .pinname { font-weight: 600; }
+  .pinx {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -509,7 +509,34 @@
     font-size: 11px;
     cursor: pointer;
   }
-  #pin .pinx:hover { background: var(--accent); color: #fff; }
+  .pinx:hover { background: var(--accent); color: #fff; }
+
+  /* "Show earlier" — the top-of-log button that pages in older history. */
+  .earlierbar { display: flex; justify-content: center; padding: 6px 0 10px; }
+  .earlierbtn {
+    border: 1px solid var(--divider);
+    background: var(--raised);
+    color: var(--muted);
+    font-family: var(--ui-font);
+    font-size: 12px;
+    padding: 5px 14px;
+    border-radius: 13px;
+    cursor: pointer;
+  }
+  .earlierbtn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* The compaction progress card — a spinner and a live label while history is summarised. */
+  .compactcard {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 2px;
+    padding: 9px 12px;
+    border-radius: 9px;
+    background: var(--bubble);
+    border: 1px solid var(--divider);
+  }
+  .compactcard .clabel { color: var(--muted); font-size: 12.5px; }
 
   /* The slash-command picker, same footprint as the mentions one but with a hint under each name. */
   #slash {
@@ -970,6 +997,7 @@
     <div id="mentions" hidden></div>
     <div id="slash" hidden></div>
     <div id="pin" hidden></div>
+    <div id="editbar" hidden></div>
     <div id="chips"></div>
     <div id="toprow">
       <div id="rpbar" hidden>
@@ -1092,6 +1120,10 @@
     QuoteMe: "You",
     MentionAll: "Everyone",
     MentionAllTitle: "Address everyone again",
+    Earlier: "Show earlier ({0})",
+    Editing: "editing",
+    CancelEdit: "Cancel edit",
+    Compacting: "Compacting history…",
     DislikeAsk: "What was wrong? (optional — helps train it)",
     DislikeSend: "Send",
     Think: "thought for {0}",
@@ -1121,9 +1153,14 @@
     stuckToBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   });
 
+  // True while a page of history is being drawn in bulk. Following the tail per message during a
+  // batch is both a scroll jump and a run of layout work — the reason a long room felt slow to
+  // open — so it is held off and one scroll is done at the end instead.
+  let bulk = false;
+
   // Only follow the tail while the reader is already there; scrolling up to read something
-  // must not be undone by the next chunk of a streaming reply.
-  const follow = () => { if (stuckToBottom) log.scrollTop = log.scrollHeight; };
+  // must not be undone by the next chunk of a streaming reply, nor by a batch of old messages.
+  const follow = () => { if (!bulk && stuckToBottom) log.scrollTop = log.scrollHeight; };
 
   const el = (tag, cls, html) => {
     const node = document.createElement(tag);
@@ -1359,10 +1396,9 @@
       navigator.clipboard.writeText(text).then(() => flash(e.target, S.Copied))));
     bar.appendChild(actionButton(GLYPH.repeat, S.Repeat, () => post({ t: "send", text })));
     bar.appendChild(actionButton(GLYPH.edit, S.Edit, () => {
-      input.value = text;
-      input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 180) + "px";
-      input.focus();
+      const node = body.closest(".turn");
+      const idx = node && node.dataset.editidx !== undefined ? parseInt(node.dataset.editidx, 10) : -1;
+      startEdit(idx, text);
     }));
     if (quoteOn) bar.appendChild(quoteButton(body, text));
     body.appendChild(bar);
@@ -1522,6 +1558,62 @@
 
     clear() { log.innerHTML = ""; openTurn = null; },
 
+    /// Brackets a batch of history so it draws without a scroll jump per message; the final scroll
+    /// is done once here — to the bottom for the newest page, to the top when older ones are loaded.
+    bulk(m) {
+      bulk = !!m.on;
+      if (!m.on) {
+        if (m.scroll === "top") {
+          log.scrollTop = 0;
+          stuckToBottom = false;
+        } else {
+          stuckToBottom = true;
+          log.scrollTop = log.scrollHeight;
+        }
+      }
+    },
+
+    /// Live progress while the earlier history is folded into a summary.
+    compact(m) {
+      let card = document.getElementById("compactcard");
+
+      if (m.state === "done") { if (card) card.remove(); return; }
+
+      if (!card) {
+        card = el("div", "compactcard");
+        card.id = "compactcard";
+        card.appendChild(el("div", "thinking", "<i></i><i></i><i></i>"));
+        card.appendChild(el("div", "clabel", ""));
+        log.appendChild(card);
+      }
+
+      const label = card.querySelector(".clabel");
+      if (label) {
+        label.textContent = (S.Compacting || "Compacting history…")
+          + (m.chars ? "  " + short(m.chars) : "");
+      }
+
+      follow();
+    },
+
+    /// The "show earlier" button, pinned at the top of the log when older turns are not yet drawn.
+    earlier(m) {
+      const existing = document.getElementById("earlierbar");
+      if (existing) existing.remove();
+
+      const count = m.count || 0;
+      if (count <= 0) return;
+
+      const bar = el("div", "earlierbar");
+      bar.id = "earlierbar";
+      const btn = el("button", "earlierbtn", "");
+      btn.type = "button";
+      btn.textContent = (S.Earlier || "Show earlier ({0})").replace("{0}", count);
+      btn.onclick = () => post({ t: "loadEarlier" });
+      bar.appendChild(btn);
+      log.insertBefore(bar, log.firstChild);
+    },
+
     /// Drops the last agent reply so it can be generated afresh.
     dropLastAgent() {
       const agents = log.querySelectorAll(".turn.agent");
@@ -1603,6 +1695,12 @@
     user(m) {
       openTurn = null;
       const body = turn("user", "");
+
+      // The message's place in the history, so its edit button can point the host back at it.
+      if (m.idx !== undefined && m.idx !== null) {
+        const node = body.closest(".turn");
+        if (node) node.dataset.editidx = m.idx;
+      }
 
       if (m.files && m.files.length) {
         const strip = el("div", "files");
@@ -1943,7 +2041,13 @@
     input.style.height = "auto";
     hideMentions();
     hideSlash();
-    post({ t: "send", text, to: pinnedAgent || "" });
+
+    // Sending my own message returns the view to the bottom, even if I had scrolled up into the
+    // history a moment ago — the reply is what I want to watch for now.
+    stuckToBottom = true;
+
+    post({ t: "send", text, to: pinnedAgent || "", editIndex });
+    clearEdit();
   }
 
   // ---- roleplay quick actions ----
@@ -2042,6 +2146,55 @@
     chip.append(arrow, label, x);
     pinBar.appendChild(chip);
     pinBar.hidden = false;
+  }
+
+  // ---- editing a past message ----
+
+  const editBar = document.getElementById("editbar");
+
+  // The message being edited, by its position in the history, or -1 when composing anew. On send
+  // the host truncates the conversation back to here, so an edit replaces the message and what
+  // followed it rather than adding a duplicate at the end.
+  let editIndex = -1;
+
+  function startEdit(idx, text) {
+    if (idx < 0) return;
+    editIndex = idx;
+    input.value = text;
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+    input.focus();
+    input.selectionStart = input.selectionEnd = input.value.length;
+    renderEdit();
+  }
+
+  function clearEdit() {
+    editIndex = -1;
+    renderEdit();
+  }
+
+  function renderEdit() {
+    editBar.innerHTML = "";
+    if (editIndex < 0) { editBar.hidden = true; return; }
+
+    const chip = el("div", "pinchip");
+    const mark = el("span", "pinarrow", ""); mark.textContent = "✎";
+    const label = el("span", "pinname", ""); label.textContent = S.Editing;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "pinx";
+    x.textContent = "✕";
+    x.title = S.CancelEdit;
+    x.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      clearEdit();
+      input.value = "";
+      input.style.height = "auto";
+      input.focus();
+    });
+    chip.append(mark, label, x);
+    editBar.appendChild(chip);
+    editBar.hidden = false;
   }
 
   // The composer button: drops an "@" at the caret and opens the picker to pin a target from.

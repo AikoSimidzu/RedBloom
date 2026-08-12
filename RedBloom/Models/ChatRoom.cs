@@ -48,6 +48,20 @@ public sealed class ChatRoom : INotifyPropertyChanged
 
     public RoomPolicy Policy { get => _policy; set => Set(ref _policy, value); }
 
+    /// <summary>
+    /// Whether the agents in this room may run commands on the machine.
+    /// </summary>
+    /// <remarks>
+    /// A permission for the whole room rather than a per-agent flag here: a room is a place the
+    /// user opens deliberately, and turning this on says the cast in it is trusted to act on the
+    /// machine. Off by default, and <see cref="AskBeforeRun"/> still stands between a decision and
+    /// the machine.
+    /// </remarks>
+    public bool AllowCommands { get; set; }
+
+    /// <summary>Whether each command is shown for approval before it runs. On by default.</summary>
+    public bool AskBeforeRun { get; set; } = true;
+
     /// <summary>Where round-robin left off, so reopening the room does not restart the rotation.</summary>
     public int Rotation { get => _rotation; set => _rotation = value; }
 

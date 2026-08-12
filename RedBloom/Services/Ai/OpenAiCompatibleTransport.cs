@@ -727,7 +727,12 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
     private string Endpoint(string path)
     {
         var root = _agent.ResolvedBaseUrl;
+
+        // A base that already ends where the paths hang off it — the standard "/v1", or Google's
+        // "/v1beta/openai" for Gemini — takes the path directly; anything else gets the version
+        // segment added, the way a bare provider root is published.
         return root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+               || root.EndsWith("/openai", StringComparison.OrdinalIgnoreCase)
             ? $"{root}/{path}"
             : $"{root}/v1/{path}";
     }

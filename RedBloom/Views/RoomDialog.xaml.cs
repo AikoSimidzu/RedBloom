@@ -7,6 +7,7 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using RedBloom.Models;
 using RedBloom.Services;
+using RedBloom.Services.Ai;
 
 namespace RedBloom.Views;
 
@@ -33,6 +34,9 @@ public partial class RoomDialog : Window
 
         AgentsList.ItemsSource = _picks;
         PolicyBox.SelectedIndex = IndexOf(room.Policy);
+
+        AllowCommandsBox.IsChecked = room.AllowCommands;
+        AskBeforeRunBox.IsChecked = room.AskBeforeRun;
 
         RefreshModerators();
         ModeratorBox.SelectedItem = _picks.FirstOrDefault(p => p.Agent.Id == room.ModeratorId)?.Agent;
@@ -119,6 +123,8 @@ public partial class RoomDialog : Window
         _room.Policy = PolicyOf(PolicyBox.SelectedIndex);
         _room.ModeratorId = (ModeratorBox.SelectedItem as AiAgent)?.Id
             ?? chosen.FirstOrDefault() ?? string.Empty;
+        _room.AllowCommands = AllowCommandsBox.IsChecked == true;
+        _room.AskBeforeRun = AskBeforeRunBox.IsChecked == true;
 
         DialogResult = true;
     }
@@ -149,6 +155,59 @@ public partial class RoomDialog : Window
         }
     }
 
+    /// <summary>Opens the shared colour palette on the nick swatch, the same one the AI page uses.</summary>
+    private void ColorSwatch_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: Pick pick } anchor)
+        {
+            Controls.ColorPickerPopup.Show(anchor, pick.NameColor, hex => pick.NameColor = hex);
+        }
+    }
+
+    /// <summary>
+    /// Offers this agent's models to pick from instead of typing one — the diffusion files for an
+    /// image agent, otherwise whatever its endpoint lists.
+    /// </summary>
+    private async void PickModel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: Pick pick } button)
+        {
+            return;
+        }
+
+        button.IsEnabled = false;
+
+        List<string> names;
+        try
+        {
+            names = pick.Agent.Provider == AiProvider.ImageGen
+                ? [.. ImageGen.DiffusionModels().Select(Path.GetFileName).Where(n => !string.IsNullOrEmpty(n)).Select(n => n!)]
+                : [.. await ModelCatalog.FetchAsync(pick.Agent).ConfigureAwait(true)];
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
+
+        var menu = new ContextMenu { PlacementTarget = button };
+
+        if (names.Count == 0)
+        {
+            menu.Items.Add(new MenuItem { Header = LocalizationService.T("L_AiPickModelNone"), IsEnabled = false });
+        }
+        else
+        {
+            foreach (var name in names)
+            {
+                var item = new MenuItem { Header = name };
+                item.Click += (_, _) => pick.Model = name;
+                menu.Items.Add(item);
+            }
+        }
+
+        menu.IsOpen = true;
+    }
+
     private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
 
     private void Root_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -175,6 +234,7 @@ public partial class RoomDialog : Window
         private string _nameColor;
         private string _model;
         private string _avatarPath;
+        private int _contextWindow;
 
         public Pick(AiAgent agent)
         {
@@ -183,6 +243,7 @@ public partial class RoomDialog : Window
             _nameColor = agent.NameColor;
             _model = agent.Model;
             _avatarPath = agent.AvatarPath;
+            _contextWindow = agent.ContextWindow;
         }
 
         public AiAgent Agent { get; }
@@ -203,6 +264,16 @@ public partial class RoomDialog : Window
         {
             get => _model;
             set => Set(ref _model, value);
+        }
+
+        /// <summary>
+        /// How much conversation this agent is sent per turn. Kept small for a local model that
+        /// cannot take much context; the room trims the transcript down to it before each request.
+        /// </summary>
+        public int ContextWindow
+        {
+            get => _contextWindow;
+            set => Set(ref _contextWindow, value);
         }
 
         public string AvatarPath
@@ -255,6 +326,7 @@ public partial class RoomDialog : Window
             }
 
             Agent.AvatarPath = _avatarPath.Trim();
+            Agent.ContextWindow = _contextWindow;
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

@@ -235,7 +235,37 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             OpenExternally(args.Uri);
         };
 
+        EnableFileDrop();
         core.Navigate(PageUrl);
+    }
+
+    /// <summary>
+    /// Lets a file, folder or several dropped onto the chat be attached, the same as the paperclip.
+    /// </summary>
+    /// <remarks>
+    /// The WebView's own drop handling is turned off first — left on, it would try to open the file
+    /// as a page — so the drop reaches this side, where the paths are pinned to the composer.
+    /// </remarks>
+    private void EnableFileDrop()
+    {
+        _webView.AllowExternalDrop = false;
+        _webView.AllowDrop = true;
+
+        _webView.DragOver += (_, e) =>
+        {
+            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Handled = true;
+        };
+
+        _webView.Drop += (_, e) =>
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+            {
+                Attach(paths);
+            }
+
+            e.Handled = true;
+        };
     }
 
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -277,11 +307,16 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 break;
 
             case "send" when message.TryGetProperty("text", out var text):
+                EditTruncate(message);
                 Submit(text.GetString() ?? string.Empty);
                 break;
 
             case "regenerate":
                 Regenerate();
+                break;
+
+            case "loadEarlier":
+                LoadEarlier();
                 break;
 
             case "command" when message.TryGetProperty("name", out var command):
@@ -457,7 +492,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatLike", "L_ChatDislike",
             "L_ChatRegenerate", "L_ChatDislikeAsk", "L_ChatDislikeSend", "L_ChatThink",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
-            "L_ChatPrev", "L_ChatNext",
+            "L_ChatPrev", "L_ChatNext", "L_ChatEarlier", "L_ChatEditing", "L_ChatCancelEdit", "L_ChatCompacting",
             "L_ChatCmdCompact", "L_ChatCmdCompactHint", "L_ChatCmdRetry", "L_ChatCmdRetryHint",
             "L_ChatCtxCopy", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
             "L_ChatRpAct", "L_ChatRpState", "L_ChatRpStatus", "L_ChatRpAttempt",
@@ -601,12 +636,48 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             bits.Add("can call other agents");
         }
 
-        Post(new { t = "note", html = Markdown.Escape($"{BotName} — {string.Join(" · ", bits)}") });
+        _greeting = Markdown.Escape($"{BotName} — {string.Join(" · ", bits)}");
+        RenderHistory();
+
+        Post(new { t = "status", text = _agent.Origin, busy = false });
+        PushContext();
+    }
+
+    /// <summary>How many turns are drawn at once — a page, so a long chat opens fast.</summary>
+    private const int PageSize = 40;
+
+    /// <summary>How many of the most recent turns are currently drawn; grows a page at a time.</summary>
+    private int _shown = PageSize;
+
+    /// <summary>The one-line note that heads the chat, kept so a redraw can restore it.</summary>
+    private string _greeting = string.Empty;
+
+    /// <summary>
+    /// Draws the most recent page of the chat, so reopening a long one is not a wall of work.
+    /// </summary>
+    /// <remarks>
+    /// Only the last <see cref="_shown"/> turns are sent, bracketed as one batch so the page draws
+    /// them without following the tail per message. Older turns come in through the "show earlier"
+    /// button, which grows the window by a page and redraws.
+    /// </remarks>
+    private void RenderHistory(bool loadingMore = false)
+    {
+        // Drawn from the live working history, not the saved copy: the saved one only catches up on
+        // the next persist, and "show earlier" can be pressed between turns.
+        var turns = _history;
+        var start = Math.Max(0, turns.Count - _shown);
+
+        Post(new { t = "clear" });
+        Post(new { t = "bulk", on = true });
+        Post(new { t = "earlier", count = start });
+        Post(new { t = "note", html = _greeting });
 
         // Everything said before this run is redrawn, so reopening a chat looks like scrolling
         // back through it rather than starting over.
-        foreach (var turn in _chat.Turns)
+        for (var i = start; i < turns.Count; i++)
         {
+            var turn = turns[i];
+
             if (turn.Role == "assistant")
             {
                 Post(new { t = "assistant", label = BotName, html = Markdown.ToHtml(turn.Text) });
@@ -628,6 +699,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 Post(new
                 {
                     t = "user",
+                    idx = i,
                     html = Markdown.ToHtml(turn.Text),
                     text = turn.Text,
                     files = turn.Attachments.Select(Attachments.Describe),
@@ -637,8 +709,19 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             Post(new { t = "endTurn" });
         }
 
-        Post(new { t = "status", text = _agent.Origin, busy = false });
-        PushContext();
+        Post(new { t = "bulk", on = false, scroll = loadingMore ? "top" : "bottom" });
+    }
+
+    /// <summary>Grows the shown window by a page and redraws, for the "show earlier" button.</summary>
+    private void LoadEarlier()
+    {
+        if (_shown >= _history.Count)
+        {
+            return;
+        }
+
+        _shown = Math.Min(_history.Count, _shown + PageSize);
+        RenderHistory(loadingMore: true);
     }
 
     /// <summary>Tells the page how full the context is, and lists the attachments.</summary>
@@ -715,6 +798,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         try
         {
             await CompactAsync(force: true, work.Token).ConfigureAwait(true);
+
+            // If the history was too large to summarise in one pass, the fold above did nothing;
+            // dropping the oldest turns still frees the room the user asked for.
+            TrimToContext();
         }
         catch (OperationCanceledException)
         {
@@ -776,7 +863,17 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 .AppendLine(_history[i].Text);
         }
 
+        // A summary is itself a request to the model, and if the part being summarised is already
+        // bigger than the model can hold, that request is refused just as the real turn would be —
+        // most often on a small local model. Rather than make a call that cannot succeed, the fold
+        // is skipped here, and the oldest turns are dropped instead by TrimToContext.
+        if (ChatContext.EstimateTokens([transcript.ToString()]) > _agent.ContextWindow * 0.9)
+        {
+            return;
+        }
+
         var summary = new StringBuilder();
+        Post(new { t = "compact", state = "start" });
 
         try
         {
@@ -791,11 +888,21 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                     + transcript),
             };
 
+            var drawn = 0;
+
             await foreach (var item in plain.SendAsync(ask, cancellationToken).ConfigureAwait(true))
             {
                 if (item.Kind == AgentEventKind.Text)
                 {
                     summary.Append(item.Text);
+
+                    // The summary streams; the card is nudged every so often rather than on every
+                    // fragment, which would be dozens of messages a second for no more information.
+                    if (summary.Length - drawn >= 400)
+                    {
+                        drawn = summary.Length;
+                        Post(new { t = "compact", state = "progress", chars = summary.Length });
+                    }
                 }
             }
         }
@@ -805,6 +912,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             // goes out at full length and the endpoint decides what to do about it.
             Post(new { t = "note", html = Markdown.Escape($"Could not compact the chat: {ex.Message}") });
             return;
+        }
+        finally
+        {
+            // Whatever happened — done, failed, or stopped — the progress card is taken down.
+            Post(new { t = "compact", state = "done" });
         }
 
         if (summary.Length == 0)
@@ -827,6 +939,50 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         Persist();
     }
 
+    /// <summary>
+    /// Drops the oldest turns until the conversation fits the context window — a last resort for
+    /// when a summary could not be made, most often a local model too small to summarise its own
+    /// history in one pass.
+    /// </summary>
+    /// <remarks>
+    /// The persona and standing instructions travel as the system message, not in the history, so
+    /// they are never the part dropped — only the earliest of the back-and-forth. Their size is
+    /// still taken off the budget, because they are sent ahead of it on every request. This is what
+    /// keeps a small local model from refusing a whole long chat rather than answering the recent
+    /// part of it.
+    /// </remarks>
+    private void TrimToContext()
+    {
+        if (_agent.Provider == AiProvider.ImageGen)
+        {
+            return;
+        }
+
+        var reserved = ChatContext.EstimateTokens([_agent.Instructions]);
+        var budget = (_agent.ContextWindow * 0.85) - reserved;
+        var dropped = 0;
+
+        while (_history.Count > 2 && UsedTokens() > budget)
+        {
+            _history.RemoveAt(0);
+            dropped++;
+        }
+
+        // Both wire formats expect the first turn to be the user's; a tail left starting on a reply
+        // is dropped down to the next question.
+        while (_history.Count > 0 && _history[0].Role != "user")
+        {
+            _history.RemoveAt(0);
+            dropped++;
+        }
+
+        if (dropped > 0)
+        {
+            Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_ChatTrimmed")) });
+            Persist();
+        }
+    }
+
     /// <summary>Writes the conversation back to the chat it belongs to.</summary>
     private void Persist()
     {
@@ -842,6 +998,28 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     }
 
     // ---- a turn ----
+
+    /// <summary>
+    /// When a message carries an edit position, drops that turn and everything after it before the
+    /// edited text is sent — so an edit replaces the message and its consequences rather than piling
+    /// a near-duplicate onto the end. The view is redrawn to match before the new turn is added.
+    /// </summary>
+    private void EditTruncate(JsonElement message)
+    {
+        if (_turn is not null
+            || !message.TryGetProperty("editIndex", out var slot)
+            || !slot.TryGetInt32(out var at)
+            || at < 0
+            || at >= _history.Count)
+        {
+            return;
+        }
+
+        _history.RemoveRange(at, _history.Count - at);
+        _shown = PageSize;
+        RenderHistory();
+        Persist();
+    }
 
     private void Submit(string text)
     {
@@ -860,6 +1038,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         Post(new
         {
             t = "user",
+            idx = _history.Count,
             html = Markdown.ToHtml(question),
             text = question,
             files = turn.Attachments.Select(Attachments.Describe),
@@ -1084,6 +1263,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             await CompactIfFullAsync(turn.Token).ConfigureAwait(true);
 
+            // The guaranteed fit: whatever the summary managed, the oldest turns are dropped until
+            // the request is within the window, so a small local model answers the recent part
+            // rather than refusing the whole chat.
+            TrimToContext();
+
             await foreach (var item in _transport.SendAsync(Conversation(), turn.Token).ConfigureAwait(true))
             {
                 Handle(item);
@@ -1194,6 +1378,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             case AgentEventKind.Image:
                 // Kept with the turn as well as shown, so reopening the chat still has it.
                 _shared.Add(item.Text);
+                AgentFiles.Touched(item.Text);
                 Post(new { t = "image", label = BotName, src = ImageDataUri(item.Text), path = item.Text });
                 break;
 
@@ -1378,6 +1563,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         var full = Path.GetFullPath(path);
 
         _shared.Add(full);
+        AgentFiles.Touched(full);
 
         Post(new
         {
@@ -1411,6 +1597,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         }
 
         _shared.Add(result.PngPath);
+        AgentFiles.Touched(result.PngPath);
 
         Post(new
         {
@@ -1489,6 +1676,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         if (image is not null)
         {
             _shared.Add(image);
+            AgentFiles.Touched(image);
             Post(new { t = "image", label = target.Name, src = ImageDataUri(image), path = image });
 
             return $"{target.Name} drew a picture; it is shown to the user in the chat.";

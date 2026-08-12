@@ -109,7 +109,10 @@ public static class ModelCatalog
     {
         var root = agent.ResolvedBaseUrl;
 
+        // Google's Gemini hangs its OpenAI-shaped endpoints off "/v1beta/openai"; the standard case
+        // ends in "/v1". Either takes the path directly, a bare root gets the version added.
         return root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+               || root.EndsWith("/openai", StringComparison.OrdinalIgnoreCase)
             ? $"{root}/models"
             : $"{root}/v1/models";
     }

@@ -37,6 +37,17 @@ public enum AiProvider
     /// GGUF to load, empty for whichever one is found in the models folder.
     /// </remarks>
     ImageGen,
+
+    /// <summary>
+    /// Google's Gemini, reached through its OpenAI-compatible endpoint.
+    /// </summary>
+    /// <remarks>
+    /// Not a separate wire format: Google publishes an OpenAI-shaped endpoint for Gemini, so this
+    /// rides the same transport as any other OpenAI-compatible provider — it differs only in the
+    /// address it defaults to and the models it lists. Antigravity, which runs on Gemini models, is
+    /// configured as one of these.
+    /// </remarks>
+    Gemini,
 }
 
 /// <summary>
@@ -77,6 +88,12 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// </summary>
     public const string DefaultAnthropicModel = "claude-opus-5";
 
+    /// <summary>
+    /// The model a new Gemini agent starts on, a capable general default; the picker offers the
+    /// rest, so any other id — a newer Gemini, or an Antigravity one — can replace it.
+    /// </summary>
+    public const string DefaultGeminiModel = "gemini-2.5-pro";
+
     /// <summary>Stable identity, so a rename does not orphan the running tabs that use it.</summary>
     public string Id { get => _id; set => Set(ref _id, value); }
 
@@ -106,7 +123,8 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// </remarks>
     [JsonIgnore]
     public bool CanChooseModel =>
-        !IsLocal && !_isRemoteLocal && _provider is AiProvider.Anthropic or AiProvider.OpenAiCompatible;
+        !IsLocal && !_isRemoteLocal
+        && _provider is AiProvider.Anthropic or AiProvider.OpenAiCompatible or AiProvider.Gemini;
 
     /// <summary>
     /// A model running on another machine of the user's own, reached over the network.
@@ -204,17 +222,19 @@ public sealed class AiAgent : INotifyPropertyChanged
     public int MaxTokens { get => _maxTokens; set => Set(ref _maxTokens, Math.Clamp(value, 256, 128000)); }
 
     /// <summary>
-    /// How much the model can hold at once, used for the gauge and for deciding when to compact.
+    /// How much of the conversation to send at a time — the gauge reads against it, compaction
+    /// folds to keep under it, and the history is trimmed down to it before each request.
     /// </summary>
     /// <remarks>
     /// A setting rather than something read from the endpoint: the models endpoint reports it
     /// only on Anthropic's own API, and a proxy in front of a model is free to allow less than
-    /// the model itself would.
+    /// the model itself would. The floor is low on purpose — a small local model that only holds a
+    /// couple of thousand tokens is set down here so what is sent actually fits it.
     /// </remarks>
     public int ContextWindow
     {
         get => _contextWindow;
-        set => Set(ref _contextWindow, Math.Clamp(value, 8000, 2_000_000));
+        set => Set(ref _contextWindow, Math.Clamp(value, 1024, 2_000_000));
     }
 
     /// <summary>
@@ -389,7 +409,12 @@ public sealed class AiAgent : INotifyPropertyChanged
 
     public string ResolvedBaseUrl =>
         string.IsNullOrWhiteSpace(BaseUrl)
-            ? Provider == AiProvider.Anthropic ? "https://api.anthropic.com" : "https://api.openai.com"
+            ? Provider switch
+            {
+                AiProvider.Anthropic => "https://api.anthropic.com",
+                AiProvider.Gemini => "https://generativelanguage.googleapis.com/v1beta/openai",
+                _ => "https://api.openai.com",
+            }
             : BaseUrl.TrimEnd('/');
 
     public AiAgent Clone()

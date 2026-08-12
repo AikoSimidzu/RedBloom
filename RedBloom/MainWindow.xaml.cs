@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -55,6 +56,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _store.Sessions.CollectionChanged += OnSessionsChanged;
         Tabs.CollectionChanged += OnTabsChanged;
+
+        // The recent-files list follows what agents produce, on whatever thread they run on, so the
+        // refresh is marshalled back and only done while the browser is actually showing it.
+        AgentFiles.Changed += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (_filesMode && FilesRecentButton?.IsChecked == true)
+            {
+                RefreshFiles();
+            }
+        });
 
         // A chat becomes real the first time it is answered, which happens in a tab rather than
         // in the sidebar — so the list follows the store instead of being rebuilt by hand.
@@ -330,6 +341,167 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    // ---- files browser ----
+
+    private bool _filesMode;
+    private string _filesDir = Services.AgentFiles.Root;
+
+    /// <summary>The files button by the collapse control: toggles the browser in and out.</summary>
+    private void Files_Click(object sender, RoutedEventArgs e)
+    {
+        _filesMode = !_filesMode;
+        ApplyFilesMode();
+    }
+
+    private void ApplyFilesMode()
+    {
+        if (FilesPanel is null || ModeToggle is null)
+        {
+            return;
+        }
+
+        if (_filesMode)
+        {
+            ModeToggle.Visibility = Visibility.Collapsed;
+            SshPanel.Visibility = Visibility.Collapsed;
+            AiPanel.Visibility = Visibility.Collapsed;
+            RoomsPanel.Visibility = Visibility.Collapsed;
+            FilesPanel.Visibility = Visibility.Visible;
+            FilesToggle.Foreground = (System.Windows.Media.Brush)FindResource("Accent");
+            RefreshFiles();
+        }
+        else
+        {
+            FilesPanel.Visibility = Visibility.Collapsed;
+            ModeToggle.Visibility = Visibility.Visible;
+            FilesToggle.ClearValue(ForegroundProperty);
+
+            // Restore whichever of SSH/AI/Rooms was last chosen.
+            SidebarMode_Changed(this, new RoutedEventArgs());
+        }
+    }
+
+    private void FilesTab_Changed(object sender, RoutedEventArgs e)
+    {
+        if (FilesList is not null && _filesMode)
+        {
+            RefreshFiles();
+        }
+    }
+
+    private void FilesUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (Directory.GetParent(_filesDir) is { } parent)
+        {
+            _filesDir = parent.FullName;
+            RefreshFiles();
+        }
+    }
+
+    private void FilesList_DoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FilesList.SelectedItem is not FileRow row)
+        {
+            return;
+        }
+
+        if (row.IsDir)
+        {
+            _filesDir = row.FullPath;
+            RefreshFiles();
+        }
+        else
+        {
+            OpenFileTab(row.FullPath);
+        }
+    }
+
+    private void RefreshFiles()
+    {
+        if (FilesList is null)
+        {
+            return;
+        }
+
+        var recent = FilesRecentButton.IsChecked == true;
+        FilesPathRow.Visibility = recent ? Visibility.Collapsed : Visibility.Visible;
+
+        var rows = new List<FileRow>();
+
+        try
+        {
+            if (recent)
+            {
+                foreach (var path in Services.AgentFiles.Recent())
+                {
+                    rows.Add(FileRow.ForFile(new FileInfo(path)));
+                }
+            }
+            else
+            {
+                FilesPath.Text = _filesDir;
+                FilesUpButton.IsEnabled = Directory.GetParent(_filesDir) is not null;
+
+                var dir = new DirectoryInfo(_filesDir);
+
+                if (dir.Exists)
+                {
+                    foreach (var sub in dir.EnumerateDirectories().OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        rows.Add(FileRow.ForDir(sub));
+                    }
+
+                    foreach (var file in dir.EnumerateFiles().OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        rows.Add(FileRow.ForFile(file));
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // A folder that cannot be read simply shows empty rather than throwing.
+        }
+
+        FilesList.ItemsSource = rows;
+        NoFiles.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OpenFileTab(string path)
+    {
+        if (Tabs.FirstOrDefault(t => string.Equals(t.ToolTip, path, StringComparison.OrdinalIgnoreCase)) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        AddTab(new Controls.FileEditorView(path), Path.GetFileName(path), "", path);
+    }
+
+    /// <summary>One entry in the file browser — a folder, or a file with its size and time.</summary>
+    private sealed record FileRow(string Name, string Detail, string Glyph, string FullPath, bool IsDir)
+    {
+        public static FileRow ForDir(DirectoryInfo d) =>
+            new(d.Name, LocalizationService.T("L_FilesFolder"), "", d.FullName, true);
+
+        public static FileRow ForFile(FileInfo f) =>
+            new(f.Name, Describe(f), "", f.FullName, false);
+
+        private static string Describe(FileInfo f)
+        {
+            try
+            {
+                var kb = f.Length / 1024.0;
+                var size = kb < 1024 ? $"{kb:0.#} KB" : $"{kb / 1024:0.#} MB";
+                return $"{size} · {f.LastWriteTime:d MMM HH:mm}";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return string.Empty;
+            }
+        }
+    }
+
     /// <summary>
     /// Fills the agent picker, keeping the current choice where it still exists.
     /// </summary>
@@ -430,6 +602,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             RoomStore.Save(room);
             RefreshRooms();
+            RefreshOpenRoom(room);
+        }
+    }
+
+    /// <summary>Tells a room's open tab, if it has one, that its roster or title has changed.</summary>
+    private void RefreshOpenRoom(ChatRoom room)
+    {
+        if (Tabs.FirstOrDefault(t => t.Room?.Id == room.Id)?.Content is RoomChatView view)
+        {
+            view.RefreshParticipants();
         }
     }
 
@@ -485,6 +667,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 RoomStore.Save(room);
                 RefreshRooms();
+                RefreshOpenRoom(room);
             }
         };
 

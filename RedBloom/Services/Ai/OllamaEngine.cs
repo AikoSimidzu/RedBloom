@@ -123,6 +123,12 @@ public static class OllamaEngine
         start.Environment["OLLAMA_MODELS"] = LocalRunner.ModelsFolder;
         start.Environment["OLLAMA_HOST"] = "127.0.0.1:11434";
 
+        // Ollama loads models at 4096 tokens unless told otherwise, which a roleplay or a long chat
+        // overruns fast — and it then refuses the whole request. Raised to the app's floor for every
+        // model this Ollama serves. Only takes effect for an Ollama this app starts; one already
+        // running keeps whatever it was launched with.
+        start.Environment["OLLAMA_CONTEXT_LENGTH"] = LocalRunner.DefaultContext.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
         try
         {
             _serving = Process.Start(start);

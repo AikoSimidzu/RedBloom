@@ -32,6 +32,17 @@ public static class LocalRunner
     /// <summary>llama.cpp's own server, on its default port.</summary>
     public const string LlamaUrl = "http://127.0.0.1:8080";
 
+    /// <summary>
+    /// The context a local server is loaded with unless a larger one is asked for.
+    /// </summary>
+    /// <remarks>
+    /// Both engines default low — llama.cpp and Ollama each load a couple of thousand tokens unless
+    /// told otherwise — which a roleplay or a long chat overruns in a handful of turns, and the
+    /// server then refuses the whole request rather than forgetting the oldest of it. This is the
+    /// floor the app raises them to; the agent's own context window raises it further when set higher.
+    /// </remarks>
+    public const int DefaultContext = 8192;
+
     private static Process? _started;
 
     /// <summary>
@@ -86,7 +97,8 @@ public static class LocalRunner
     /// user's back. Ollama is left alone: it runs as a service and manages its own models, so
     /// starting a second copy of anything would only fight with it.
     /// </remarks>
-    public static async Task<string?> StartAsync(string ggufPath, CancellationToken cancellationToken = default)
+    public static async Task<string?> StartAsync(
+        string ggufPath, int contextSize = DefaultContext, CancellationToken cancellationToken = default)
     {
         if (!File.Exists(ggufPath))
         {
@@ -100,11 +112,16 @@ public static class LocalRunner
 
         Stop();
 
+        // Loaded with the asked-for context, never below the floor: the server keeps this many
+        // tokens of room, and refuses a request that would need more, so too small a value turns a
+        // long chat into an error instead of letting the app trim the oldest of it.
+        var context = Math.Max(contextSize, DefaultContext);
+
         try
         {
             _started = Process.Start(new ProcessStartInfo(exe)
             {
-                Arguments = $"-m \"{ggufPath}\" --port 8080 --host 127.0.0.1",
+                Arguments = $"-m \"{ggufPath}\" --port 8080 --host 127.0.0.1 --ctx-size {context}",
                 UseShellExecute = false,
                 CreateNoWindow = true,
             });

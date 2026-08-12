@@ -190,10 +190,11 @@ public static class LocalAgents
             return LocalizationService.T("L_LocalNoFile");
         }
 
-        // No Ollama at all: llama.cpp's server can host the file directly, if it is installed.
+        // No Ollama at all: llama.cpp's server can host the file directly, if it is installed. It is
+        // loaded with the agent's context window, so a long chat has the room the agent expects.
         if (FileFor(agent.Model) is { } file)
         {
-            return await LocalRunner.StartAsync(file, cancellationToken).ConfigureAwait(false);
+            return await LocalRunner.StartAsync(file, agent.ContextWindow, cancellationToken).ConfigureAwait(false);
         }
 
         return LocalizationService.T("L_LocalNoFile");

@@ -146,6 +146,7 @@
                             <ComboBoxItem Content="{DynamicResource L_AiOpenAiCompatible}" />
                             <ComboBoxItem Content="{DynamicResource L_AiImageModel}" />
                             <ComboBoxItem Content="{DynamicResource L_AiClaudeCli}" />
+                            <ComboBoxItem Content="Gemini" />
                         </ComboBox>
                     </Grid>
 

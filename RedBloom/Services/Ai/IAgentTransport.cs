@@ -189,7 +189,10 @@ public static class AgentTransports
     public static IAgentTransport For(AiAgent agent, IAgentToolHost? tools = null) => agent.Provider switch
     {
         AiProvider.Anthropic => new AnthropicTransport(agent, tools),
-        AiProvider.OpenAiCompatible => new OpenAiCompatibleTransport(agent, tools),
+
+        // Gemini speaks the OpenAI shape through Google's compatibility endpoint, so it rides the
+        // same transport — the provider only changes the default address and the model list.
+        AiProvider.OpenAiCompatible or AiProvider.Gemini => new OpenAiCompatibleTransport(agent, tools),
 
         // No tool host: this one brings its own tools and asks for its own permissions.
         AiProvider.ClaudeCli => new ClaudeCliTransport(agent),
