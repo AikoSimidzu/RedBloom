@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -24,6 +25,17 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
     /// <inheritdoc cref="AnthropicTransport.MaxToolSteps" />
     private const int MaxToolSteps = 40;
 
+    /// <summary>
+    /// Endpoint-and-model pairs that answered a tool request with "does not support tools".
+    /// </summary>
+    /// <remarks>
+    /// Remembered across the whole app, not just one turn: many local models are served without a
+    /// tools template, and once one has rejected tools there is no point offering them again on
+    /// every later turn only to have the whole request thrown out. Keyed by endpoint and model
+    /// together, because the same model name behind two servers is not the same deployment.
+    /// </remarks>
+    private static readonly ConcurrentDictionary<string, byte> Toolless = new();
+
     private readonly AiAgent _agent;
     private readonly IAgentToolHost? _tools;
     private readonly HttpClient _http;
@@ -43,8 +55,18 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         }
     }
 
-    private bool ToolsEnabled =>
+    /// <summary>Whether the agent asks for any tool at all.</summary>
+    private bool ToolsWanted =>
         _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled);
+
+    /// <summary>The key this endpoint-and-model pair is remembered as toolless under.</summary>
+    private string ToolKey => _agent.ResolvedBaseUrl + "\n" + _agent.Model;
+
+    /// <summary>
+    /// Whether to take the tool-running path: the agent wants tools, and this model has not already
+    /// said it cannot do them.
+    /// </summary>
+    private bool ToolsEnabled => ToolsWanted && !Toolless.ContainsKey(ToolKey);
 
     public IAsyncEnumerable<AgentEvent> SendAsync(
         IReadOnlyList<AgentMessage> conversation,
@@ -84,7 +106,22 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         {
             yield return AgentEvent.Doing(step == 0 ? AgentPhase.Thinking : AgentPhase.Deciding);
 
-            var (json, error) = await PostAsync(messages, cancellationToken).ConfigureAwait(false);
+            var (json, error, toolsUnsupported) = await PostAsync(messages, cancellationToken).ConfigureAwait(false);
+
+            // This model cannot take tools. Remember it so later turns skip them outright, and carry
+            // on for this one as a plain streamed chat rather than failing — the answer still comes,
+            // only without the ability to run a command or draw.
+            if (toolsUnsupported)
+            {
+                Toolless[ToolKey] = 1;
+
+                await foreach (var item in StreamAsync(conversation, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return item;
+                }
+
+                yield break;
+            }
 
             if (error is not null || json is null)
             {
@@ -213,7 +250,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
         // report of what was done rather than in an error that throws all of it away.
         messages.Add(new { role = "user", content = AnthropicTransport.OutOfRounds });
 
-        var (closing, failure) = await PostAsync(messages, cancellationToken, withTools: false)
+        var (closing, failure, _) = await PostAsync(messages, cancellationToken, withTools: false)
             .ConfigureAwait(false);
 
         if (failure is not null || closing is null)
@@ -370,7 +407,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 : string.Empty;
     }
 
-    private async Task<(string? Json, string? Error)> PostAsync(
+    private async Task<(string? Json, string? Error, bool ToolsUnsupported)> PostAsync(
         List<object> messages, CancellationToken cancellationToken, bool withTools = true)
     {
         try
@@ -384,19 +421,37 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-            return response.IsSuccessStatusCode
-                ? (body, null)
-                : (null, Describe(response, body));
+            if (response.IsSuccessStatusCode)
+            {
+                return (body, null, false);
+            }
+
+            // A model served without a tools template rejects the whole request the moment tools
+            // are offered. Told apart from a real failure so the turn can be retried without them
+            // rather than shown as an error, and reported up so the caller can stop offering them.
+            if (withTools && ToolsRejected(body))
+            {
+                return (null, null, true);
+            }
+
+            return (null, Describe(response, body), false);
         }
         catch (OperationCanceledException)
         {
-            return (null, null);
+            return (null, null, false);
         }
         catch (HttpRequestException ex)
         {
-            return (null, $"Could not reach {_agent.ResolvedBaseUrl}: {ex.Message}");
+            return (null, $"Could not reach {_agent.ResolvedBaseUrl}: {ex.Message}", false);
         }
     }
+
+    /// <summary>Whether an error body is the endpoint saying this model cannot take tools.</summary>
+    private static bool ToolsRejected(string body) =>
+        body.Contains("support tools", StringComparison.OrdinalIgnoreCase)
+        || body.Contains("does not support tool", StringComparison.OrdinalIgnoreCase)
+        || body.Contains("tools are not supported", StringComparison.OrdinalIgnoreCase)
+        || body.Contains("tool use is not supported", StringComparison.OrdinalIgnoreCase);
 
     private string BuildToolPayload(List<object> messages, bool withTools = true)
     {

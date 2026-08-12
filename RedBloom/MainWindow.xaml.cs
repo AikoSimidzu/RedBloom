@@ -343,7 +343,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // The downloaded files are a directory listing, so they go in with the saved agents
         // straight away; only what the engine is serving has to be waited for. The installed
         // command-line tool, if there is one, is a file check and costs nothing either.
-        Show([.. ThemeService.Settings.Agents, .. Stock(), .. Services.Ai.LocalAgents.FromFiles()]);
+        Show([.. ThemeService.Settings.Agents, .. Stock(), .. Fresh(Services.Ai.LocalAgents.FromFiles())]);
 
         _ = AddLocalAgentsAsync();
 
@@ -358,6 +358,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RefreshChats();
         }
 
+        // A discovered local model that has been adopted into the saved list is already in the
+        // picker under that entry; listing the found copy too would show it twice.
+        static IEnumerable<AiAgent> Fresh(IReadOnlyList<AiAgent> discovered)
+        {
+            var saved = ThemeService.Settings.Agents.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+            return discovered.Where(a => !saved.Contains(a.Id));
+        }
+
         // Agents that are simply there when the thing behind them is installed, with nothing to
         // configure: no key, no endpoint, and credentials the tool keeps itself.
         static IEnumerable<AiAgent> Stock() =>
@@ -369,9 +377,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             // The saved list is re-read rather than captured: the look-round takes a moment, and
             // an agent may have been added or removed in it.
-            if (local.Count > 0)
+            var offered = Fresh(local).ToList();
+
+            if (offered.Count > 0)
             {
-                Show([.. ThemeService.Settings.Agents, .. Stock(), .. local]);
+                Show([.. ThemeService.Settings.Agents, .. Stock(), .. offered]);
             }
         }
     }

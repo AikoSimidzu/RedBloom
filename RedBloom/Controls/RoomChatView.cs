@@ -41,6 +41,9 @@ public sealed class RoomChatView : UserControl, IDisposable
     private readonly ChatRoom _room;
     private readonly WebView2 _webView = new();
 
+    /// <summary>Attached in the composer and not yet sent, exactly as a one-to-one chat keeps them.</summary>
+    private readonly List<string> _pending = [];
+
     private CancellationTokenSource? _turn;
     private bool _pageReady;
     private bool _disposed;
@@ -142,11 +145,34 @@ public sealed class RoomChatView : UserControl, IDisposable
                 break;
 
             case "send" when message.TryGetProperty("text", out var text):
-                Submit(text.GetString() ?? string.Empty);
+                Submit(
+                    text.GetString() ?? string.Empty,
+                    message.TryGetProperty("to", out var to) ? to.GetString() ?? string.Empty : string.Empty);
                 break;
 
             case "stop":
                 _turn?.Cancel();
+                break;
+
+            case "web" when message.TryGetProperty("query", out var query):
+                OpenWebSearch(query.GetString() ?? string.Empty);
+                break;
+
+            case "attach":
+                AttachFiles();
+                break;
+
+            case "attachFolder":
+                AttachFolder();
+                break;
+
+            case "attachSsh":
+                AttachSession();
+                break;
+
+            case "detach" when message.TryGetProperty("path", out var drop):
+                _pending.Remove(drop.GetString() ?? string.Empty);
+                PushPending();
                 break;
 
             case "openAttachment" when message.TryGetProperty("path", out var target):
@@ -164,11 +190,72 @@ public sealed class RoomChatView : UserControl, IDisposable
         }
     }
 
+    // ---- attachments ----
+
+    private void AttachFiles()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Multiselect = true, CheckFileExists = true };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            Attach(dialog.FileNames);
+        }
+    }
+
+    private void AttachFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog();
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            Attach([dialog.FolderName]);
+        }
+    }
+
+    /// <summary>Attaches a saved SSH connection, the same way a one-to-one chat does.</summary>
+    private void AttachSession()
+    {
+        var sessions = SessionCatalog.All;
+
+        if (sessions.Count == 0)
+        {
+            Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_ChatNoSsh")) });
+            return;
+        }
+
+        var picker = new RedBloom.Views.SessionPickerDialog(sessions) { Owner = Window.GetWindow(this) };
+
+        if (picker.ShowDialog() == true && picker.Chosen is { } chosen)
+        {
+            Attach([SessionCatalog.Reference(chosen, picker.SendsSecret)]);
+        }
+    }
+
+    private void Attach(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            if (!_pending.Contains(path, StringComparer.OrdinalIgnoreCase))
+            {
+                _pending.Add(path);
+            }
+        }
+
+        PushPending();
+    }
+
+    /// <summary>Shows what is pinned to the composer but not yet sent.</summary>
+    private void PushPending() =>
+        Post(new { t = "pending", files = _pending.Select(Attachments.Describe) });
+
     // ---- rendering ----
 
     private void Greet()
     {
         Post(new { t = "avatar", src = string.Empty });
+
+        // A room names who said what, so quoting a particular message is offered here.
+        Post(new { t = "quoting", on = true });
 
         // The composer offers these as an @-mention picker, the way a group chat does.
         Post(new { t = "mentions", names = Participants().Select(a => a.Name) });
@@ -180,7 +267,13 @@ public sealed class RoomChatView : UserControl, IDisposable
         {
             if (turn.Role == "user")
             {
-                Post(new { t = "user", html = Markdown.ToHtml(turn.Text), text = turn.Text });
+                Post(new
+                {
+                    t = "user",
+                    html = Markdown.ToHtml(turn.Text),
+                    text = turn.Text,
+                    files = turn.Attachments.Select(Attachments.Describe),
+                });
             }
             else if (turn.Image.Length > 0)
             {
@@ -206,7 +299,7 @@ public sealed class RoomChatView : UserControl, IDisposable
 
     // ---- a user message and the round it starts ----
 
-    private void Submit(string text)
+    private void Submit(string text, string to)
     {
         var question = text.Trim();
 
@@ -215,14 +308,26 @@ public sealed class RoomChatView : UserControl, IDisposable
             return;
         }
 
-        _room.Turns.Add(new ChatTurn { Role = "user", Text = question });
-        Post(new { t = "user", html = Markdown.ToHtml(question), text = question });
+        // The attachments travel with the message they were pinned for, then the composer clears —
+        // a pin left in place would silently re-send the file on every later message.
+        var turn = new ChatTurn { Role = "user", Text = question, Attachments = [.. _pending] };
+        _pending.Clear();
+
+        _room.Turns.Add(turn);
+        Post(new
+        {
+            t = "user",
+            html = Markdown.ToHtml(question),
+            text = question,
+            files = turn.Attachments.Select(Attachments.Describe),
+        });
+        PushPending();
 
         _turn = new CancellationTokenSource();
-        _ = RunRoundAsync(question, _turn.Token);
+        _ = RunRoundAsync(question, to, _turn.Token);
     }
 
-    private async Task RunRoundAsync(string trigger, CancellationToken cancellationToken)
+    private async Task RunRoundAsync(string trigger, string to, CancellationToken cancellationToken)
     {
         try
         {
@@ -234,9 +339,9 @@ public sealed class RoomChatView : UserControl, IDisposable
                 return;
             }
 
-            // Who the message that opened the round hands the floor to. A user @-mention forces a
-            // speaker in every policy; otherwise the room's rule decides.
-            var queue = new Queue<AiAgent>(OpeningSpeakers(participants, trigger));
+            // Who the message that opened the round hands the floor to. A pinned target, then a
+            // user @-mention, force a speaker in every policy; otherwise the room's rule decides.
+            var queue = new Queue<AiAgent>(OpeningSpeakers(participants, trigger, to));
             var spoken = 0;
 
             while (queue.Count > 0 && spoken < MaxAgentTurnsPerMessage)
@@ -286,13 +391,23 @@ public sealed class RoomChatView : UserControl, IDisposable
     }
 
     /// <summary>Who answers first, before any agent hands the floor on.</summary>
-    private List<AiAgent> OpeningSpeakers(List<AiAgent> participants, string trigger)
+    private List<AiAgent> OpeningSpeakers(List<AiAgent> participants, string trigger, string to)
     {
+        // A "@name" typed into the message is a one-off: it wins for this message even over a pin,
+        // so the user can address someone else once without releasing the target they set.
         var forced = MentionedIn(trigger, participants);
 
         if (forced.Count > 0)
         {
             return forced;
+        }
+
+        // The pinned target otherwise holds, whatever the room's turn-taking rule is, until the
+        // user releases it.
+        if (!string.IsNullOrWhiteSpace(to)
+            && participants.FirstOrDefault(a => string.Equals(a.Name, to.Trim(), StringComparison.OrdinalIgnoreCase)) is { } pinned)
+        {
+            return [pinned];
         }
 
         switch (_room.Policy)
@@ -328,7 +443,7 @@ public sealed class RoomChatView : UserControl, IDisposable
         }
 
         using var transport = AgentTransports.For(RoomAgent(agent, participants));
-        var conversation = new List<AgentMessage> { new(AgentRole.User, Transcript(agent)) };
+        var conversation = new List<AgentMessage> { new(AgentRole.User, Transcript(agent), RoomImages()) };
 
         var reply = new StringBuilder();
 
@@ -452,9 +567,32 @@ public sealed class RoomChatView : UserControl, IDisposable
                 : turn.Speaker == self.Name ? $"{turn.Speaker} (you)" : turn.Speaker;
 
             text.Append(who).Append(": ").AppendLine(turn.Text);
+
+            // A user turn's attachments — file contents, folder listings, an SSH connection's
+            // details — are folded in under the line they were sent with, so the models actually
+            // read what was attached rather than only being told a file exists.
+            if (turn.Role == "user"
+                && turn.Attachments.Count > 0
+                && ChatContext.Build(turn.Attachments) is { } context)
+            {
+                text.AppendLine(context);
+            }
         }
 
         return text.ToString().TrimEnd();
+    }
+
+    /// <summary>Every picture attached across the user's turns, for the models that can see them.</summary>
+    private IReadOnlyList<AgentImage> RoomImages()
+    {
+        var images = new List<AgentImage>();
+
+        foreach (var turn in _room.Turns.Where(turn => turn.Role == "user" && turn.Attachments.Count > 0))
+        {
+            images.AddRange(ChatContext.Images(turn.Attachments));
+        }
+
+        return images;
     }
 
     /// <summary>A clone of an agent with a room preamble added, so it answers as one voice in a cast.</summary>
@@ -577,6 +715,9 @@ public sealed class RoomChatView : UserControl, IDisposable
             "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatThink",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext",
+            "L_ChatCtxCopy", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
+            "L_ChatQuote", "L_ChatQuoteMe",
+            "L_ChatMentionAll", "L_ChatMentionAllTitle",
         ];
 
         Post(new { t = "strings", s = keys.ToDictionary(key => key[6..], LocalizationService.T) });
@@ -623,6 +764,17 @@ public sealed class RoomChatView : UserControl, IDisposable
         }
 
         _webView.CoreWebView2?.PostWebMessageAsString(JsonSerializer.Serialize(message));
+    }
+
+    /// <summary>Opens a web search for the selected text in the user's own browser.</summary>
+    private static void OpenWebSearch(string query)
+    {
+        var wanted = query.Trim();
+
+        if (wanted.Length > 0)
+        {
+            OpenExternally("https://www.google.com/search?q=" + Uri.EscapeDataString(wanted));
+        }
     }
 
     private static void OpenExternally(string uri)

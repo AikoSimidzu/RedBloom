@@ -123,8 +123,7 @@
                                         Style="{StaticResource GhostButton}"
                                         Padding="10,4"
                                         Margin="6,0,0,0"
-                                        Tag="{Binding Path}"
-                                        Visibility="{Binding HasFile, Converter={StaticResource BoolToVis}}"
+                                        Tag="{Binding}"
                                         Click="DeleteModel_Click" />
                             </Grid>
                         </DataTemplate>

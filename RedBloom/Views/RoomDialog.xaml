@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:RedBloom"
         mc:Ignorable="d"
         Title="Room"
         Width="440"
@@ -15,6 +16,11 @@
         ShowInTaskbar="False"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Display">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <local:HexToBrushConverter x:Key="HexToBrush" />
+    </Window.Resources>
 
     <Border Background="{DynamicResource Chrome}"
             BorderBrush="{DynamicResource Divider}"
@@ -50,14 +56,85 @@
                     BorderThickness="1"
                     CornerRadius="6"
                     Margin="0,0,0,12">
-                <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
                     <ItemsControl x:Name="AgentsList" Margin="8,6">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <CheckBox Content="{Binding Name}"
-                                          IsChecked="{Binding Chosen, Mode=TwoWay}"
-                                          Margin="0,3"
-                                          Foreground="{DynamicResource TextPrimary}" />
+                                <StackPanel Margin="0,3,0,5">
+                                    <CheckBox IsChecked="{Binding Chosen, Mode=TwoWay}"
+                                              VerticalContentAlignment="Center"
+                                              Foreground="{DynamicResource TextPrimary}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}"
+                                                       FontFamily="{DynamicResource UiFont}"
+                                                       FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Kind}"
+                                                       Foreground="{DynamicResource TextFaint}"
+                                                       FontFamily="{DynamicResource UiFont}"
+                                                       FontSize="11"
+                                                       Margin="8,1,0,0" />
+                                        </StackPanel>
+                                    </CheckBox>
+
+                                    <!-- Per-agent identity, editable only for a chosen participant. Edits
+                                         are held here and written back to the agent when the room is saved. -->
+                                    <Grid Margin="24,6,4,2"
+                                          ColumnDefinitions="58,*"
+                                          Visibility="{Binding Chosen, Converter={StaticResource BoolToVis}}">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="{DynamicResource L_AiName}"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontFamily="{DynamicResource UiFont}" FontSize="11.5"
+                                                   VerticalAlignment="Center" Margin="0,0,0,4" />
+                                        <TextBox Grid.Row="0" Grid.Column="1" Padding="6,3" Margin="0,0,0,4"
+                                                 Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="{DynamicResource L_AiNameColor}"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontFamily="{DynamicResource UiFont}" FontSize="11.5"
+                                                   VerticalAlignment="Center" Margin="0,0,0,4" />
+                                        <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="26,6,*" Margin="0,0,0,4">
+                                            <Border Grid.Column="0" Width="26" Height="24" CornerRadius="5"
+                                                    Background="{Binding NameColor, Converter={StaticResource HexToBrush}}"
+                                                    BorderBrush="{DynamicResource Divider}" BorderThickness="1" />
+                                            <TextBox Grid.Column="2" Padding="6,3"
+                                                     FontFamily="Cascadia Mono, Consolas, monospace" FontSize="11.5"
+                                                     Text="{Binding NameColor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        </Grid>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="{DynamicResource L_AiAvatar}"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontFamily="{DynamicResource UiFont}" FontSize="11.5"
+                                                   VerticalAlignment="Center" Margin="0,0,0,4" />
+                                        <Grid Grid.Row="2" Grid.Column="1" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,4">
+                                            <TextBlock Grid.Column="0" Text="{Binding AvatarLabel}"
+                                                       Foreground="{DynamicResource TextFaint}"
+                                                       FontFamily="{DynamicResource UiFont}" FontSize="11.5"
+                                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            <Button Grid.Column="1" Content="{DynamicResource L_Browse}"
+                                                    Style="{StaticResource GhostButton}" Padding="9,3" Margin="6,0,0,0"
+                                                    Click="BrowseAvatar_Click" />
+                                            <Button Grid.Column="2" Content="{DynamicResource L_Clear}"
+                                                    Style="{StaticResource GhostButton}" Padding="9,3" Margin="6,0,0,0"
+                                                    Click="ClearAvatar_Click" />
+                                        </Grid>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="{DynamicResource L_AiModel}"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontFamily="{DynamicResource UiFont}" FontSize="11.5"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding ModelEditable, Converter={StaticResource BoolToVis}}" />
+                                        <TextBox Grid.Row="3" Grid.Column="1" Padding="6,3"
+                                                 Visibility="{Binding ModelEditable, Converter={StaticResource BoolToVis}}"
+                                                 Text="{Binding Model, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Grid>
+                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

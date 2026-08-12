@@ -477,6 +477,89 @@
   }
   #mentions .mrow.active, #mentions .mrow:hover { background: var(--chrome); }
   #mentions .mrow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
+  /* The "everyone" row that clears a pinned target, set apart from the names above it. */
+  #mentions .mrow.all { color: var(--muted); border-bottom: 1px solid var(--divider); border-radius: 0; margin-bottom: 2px; }
+  #mentions .mrow.all .dot { background: var(--muted); }
+
+  /* The pinned-target chip: while set, every message is addressed to this one agent. */
+  #pin { margin: 0 2px 6px; }
+  #pin[hidden] { display: none; }
+  #pin .pinchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 5px 3px 9px;
+    border-radius: 13px;
+    background: var(--bubble-user);
+    border: 1px solid var(--accent-dim);
+    color: var(--text);
+    font-size: 12px;
+  }
+  #pin .pinarrow { color: var(--accent); font-weight: 700; }
+  #pin .pinname { font-weight: 600; }
+  #pin .pinx {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 17px; height: 17px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  #pin .pinx:hover { background: var(--accent); color: #fff; }
+
+  /* The slash-command picker, same footprint as the mentions one but with a hint under each name. */
+  #slash {
+    position: absolute;
+    left: 18px;
+    bottom: calc(100% - 6px);
+    min-width: 240px;
+    max-width: 360px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--raised);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, .45);
+    padding: 4px;
+    z-index: 40;
+  }
+  #slash[hidden] { display: none; }
+  #slash .srow {
+    padding: 6px 9px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  #slash .srow.active, #slash .srow:hover { background: var(--chrome); }
+  #slash .srow .name { font-family: var(--code-font); font-size: 12.5px; color: var(--accent); }
+  #slash .srow .hint { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+  /* The selection context menu, placed at the pointer. */
+  #ctxmenu {
+    position: fixed;
+    min-width: 180px;
+    background: var(--raised);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, .45);
+    padding: 4px;
+    z-index: 60;
+  }
+  #ctxmenu[hidden] { display: none; }
+  #ctxmenu .citem {
+    padding: 7px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+  #ctxmenu .citem:hover { background: var(--chrome); }
+  #ctxmenu .csep { height: 1px; margin: 4px 6px; background: var(--divider); }
 
   /* The roleplay actions (when shown) and the model/tokens/context, on a single line: rp on the
      left, meta on the right. Wraps only if the panel is too narrow to hold both. */
@@ -885,6 +968,8 @@
   </div>
   <div id="bar">
     <div id="mentions" hidden></div>
+    <div id="slash" hidden></div>
+    <div id="pin" hidden></div>
     <div id="chips"></div>
     <div id="toprow">
       <div id="rpbar" hidden>
@@ -933,6 +1018,8 @@
       <button id="stop" hidden>Stop</button>
     </div>
   </div>
+
+  <div id="ctxmenu" hidden></div>
 
 <script>
 (function () {
@@ -993,6 +1080,18 @@
     Close: "Close",
     Prev: "Previous",
     Next: "Next",
+    CmdCompact: "compact",
+    CmdCompactHint: "Summarise the earlier part of the chat to free the context",
+    CmdRetry: "retry",
+    CmdRetryHint: "Drop the last answer and ask for another",
+    CtxCopy: "Copy",
+    CtxWeb: "Search the web",
+    CtxAsk: "Ask the agent about this",
+    CtxAskOther: "Ask another agent…",
+    Quote: "Quote",
+    QuoteMe: "You",
+    MentionAll: "Everyone",
+    MentionAllTitle: "Address everyone again",
     DislikeAsk: "What was wrong? (optional — helps train it)",
     DislikeSend: "Send",
     Think: "thought for {0}",
@@ -1178,6 +1277,7 @@
   function turn(who, label, opts) {
     opts = opts || {};
     const node = el("div", "turn " + who);
+    node.dataset.label = label || "";
 
     const face = avatarFor(who, opts.avatar);
     if (face) node.appendChild(face);
@@ -1203,6 +1303,39 @@
     copy: "", repeat: "", edit: "",
     like: "", dislike: "", regen: "",
   };
+
+  // The quote glyph, set here so the private-use icon chars above stay untouched.
+  GLYPH.quote = "";
+
+  // Whether this surface offers quoting: on in a room, off in a one-to-one chat.
+  let quoteOn = false;
+
+  /** Drops a message into the composer as a blockquote that names who said it. */
+  function quoteMessage(speaker, text) {
+    const quoted = String(text || "").trim().split("\n").map(line => "> " + line).join("\n");
+    if (!quoted) return;
+    const head = speaker ? "> **" + speaker + ":**\n" : "";
+    const lead = input.value.length && !input.value.endsWith("\n") ? "\n\n" : "";
+    input.value += lead + head + quoted + "\n\n";
+    input.focus();
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+    input.selectionStart = input.selectionEnd = input.value.length;
+    input.dispatchEvent(new Event("input"));
+  }
+
+  /** The name to attribute a quote to, read off the message the node sits in. */
+  function speakerOf(node) {
+    const turnEl = node && node.closest ? node.closest(".turn") : null;
+    if (!turnEl) return "";
+    if (turnEl.dataset.label) return turnEl.dataset.label;
+    return turnEl.classList.contains("user") ? S.QuoteMe : "";
+  }
+
+  /** A quote button for a message's action row: quotes the whole message, attributed. */
+  function quoteButton(body, text) {
+    return actionButton(GLYPH.quote, S.Quote, () => quoteMessage(speakerOf(body), text));
+  }
 
   function actionButton(glyph, title, onClick) {
     const b = document.createElement("button");
@@ -1231,6 +1364,7 @@
       input.style.height = Math.min(input.scrollHeight, 180) + "px";
       input.focus();
     }));
+    if (quoteOn) bar.appendChild(quoteButton(body, text));
     body.appendChild(bar);
   }
 
@@ -1273,6 +1407,7 @@
     bar.appendChild(like);
     bar.appendChild(dislike);
     bar.appendChild(actionButton(GLYPH.regen, S.Regenerate, () => post({ t: "regenerate" })));
+    if (quoteOn) bar.appendChild(quoteButton(body, replyText));
     body.appendChild(bar);
   }
 
@@ -1572,6 +1707,10 @@
     mentions(m) {
       mentionNames = Array.isArray(m.names) ? m.names.filter(Boolean) : [];
       mentionBtn.hidden = mentionNames.length === 0;
+
+      // A pin no longer among the participants (renamed, or this is not a room) is released, so it
+      // cannot keep addressing an agent that is not there.
+      if (pinnedAgent && !mentionNames.includes(pinnedAgent)) setPin(null);
     },
 
     /// The window's language. Applied to what is already on screen as well as kept for what
@@ -1599,7 +1738,21 @@
       const lbTitle = { copy: S.CopyImage, download: S.Download, open: S.OpenExternal, close: S.Close, prev: S.Prev, next: S.Next };
       for (const button of lightbox.querySelectorAll("button[data-lb]")) button.title = lbTitle[button.dataset.lb] || "";
 
+      // The slash commands carry their labels from the strings, so they are rebuilt when these land.
+      buildSlashCmds();
+
       if (!rpBar.hidden) labelRpBar();
+    },
+
+    /// Which slash commands this surface offers, so a room does not list ones it cannot run.
+    commands(m) {
+      slashEnabled = Array.isArray(m.names) ? m.names : [];
+      buildSlashCmds();
+    },
+
+    /// Whether quoting is offered here — on in a room, where naming who said what matters.
+    quoting(m) {
+      quoteOn = !!m.on;
     },
 
     /// A file the agent is handing over. Drawn as its own card rather than inside the reply,
@@ -1782,10 +1935,15 @@
   function submit() {
     const text = input.value.trim();
     if (!text) return;
+
+    // A bare "/command" is run rather than sent as a message.
+    if (runTypedCommand()) return;
+
     input.value = "";
     input.style.height = "auto";
     hideMentions();
-    post({ t: "send", text });
+    hideSlash();
+    post({ t: "send", text, to: pinnedAgent || "" });
   }
 
   // ---- roleplay quick actions ----
@@ -1852,11 +2010,41 @@
 
   const mentionsBox = document.getElementById("mentions");
   const mentionBtn = document.getElementById("mentionBtn");
+  const pinBar = document.getElementById("pin");
   let mentionNames = [];
   let mentionMatches = [];
   let mentionAt = 0;
 
-  // The composer button: drops an "@" at the caret and opens the picker to choose from.
+  // The pinned target: while set, every message is addressed to this one agent, until "everyone"
+  // is chosen or the chip is cleared. A sentinel stands in for the "everyone" row in the picker,
+  // chosen so it can never collide with a real agent name.
+  const ALL = " all";
+  let pinnedAgent = null;
+
+  // How the picker was opened. Typing "@" is a one-off mention written into this message; opening
+  // it with the composer button pins a target that holds until it is released.
+  let mentionViaButton = false;
+
+  function setPin(name) {
+    pinnedAgent = name || null;
+    if (!pinnedAgent) { pinBar.hidden = true; pinBar.innerHTML = ""; return; }
+
+    pinBar.innerHTML = "";
+    const chip = el("div", "pinchip");
+    const arrow = el("span", "pinarrow", ""); arrow.textContent = "→";
+    const label = el("span", "pinname", ""); label.textContent = pinnedAgent;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "pinx";
+    x.textContent = "✕";
+    x.title = S.MentionAllTitle;
+    x.addEventListener("mousedown", (e) => { e.preventDefault(); setPin(null); input.focus(); });
+    chip.append(arrow, label, x);
+    pinBar.appendChild(chip);
+    pinBar.hidden = false;
+  }
+
+  // The composer button: drops an "@" at the caret and opens the picker to pin a target from.
   mentionBtn.onclick = () => {
     const pos = input.selectionStart;
     const before = input.value.slice(0, pos);
@@ -1864,6 +2052,7 @@
     input.value = before + lead + "@" + input.value.slice(pos);
     input.selectionStart = input.selectionEnd = pos + lead.length + 1;
     input.focus();
+    mentionViaButton = true;
     input.dispatchEvent(new Event("input"));
     updateMentions();
   };
@@ -1901,6 +2090,11 @@
       return;
     }
 
+    // On a bare "@" opened by the button, the "everyone" row leads, so a pinned target can be
+    // released the same way it was set. Left out when a name is being typed, and out of the inline
+    // "@" flow entirely, which is a one-off mention with nothing to release.
+    if (mentionViaButton && needle.length === 0) mentionMatches = [ALL, ...mentionMatches];
+
     mentionAt = 0;
     renderMentions();
     mentionsBox.hidden = false;
@@ -1909,10 +2103,11 @@
   function renderMentions() {
     mentionsBox.innerHTML = "";
     mentionMatches.forEach((name, i) => {
-      const row = el("div", "mrow" + (i === mentionAt ? " active" : ""));
+      const isAll = name === ALL;
+      const row = el("div", "mrow" + (i === mentionAt ? " active" : "") + (isAll ? " all" : ""));
       row.appendChild(el("span", "dot"));
       const label = el("span", null, "");
-      label.textContent = name;
+      label.textContent = isAll ? S.MentionAll : name;
       row.appendChild(label);
       row.addEventListener("mousedown", (e) => { e.preventDefault(); applyMention(name); });
       mentionsBox.appendChild(row);
@@ -1922,23 +2117,190 @@
   function hideMentions() {
     mentionsBox.hidden = true;
     mentionMatches = [];
+    mentionViaButton = false;
   }
 
   function mentionsOpen() { return !mentionsBox.hidden && mentionMatches.length > 0; }
 
   function applyMention(name) {
+    const viaButton = mentionViaButton;
     const q = mentionQuery();
-    if (!q) { hideMentions(); return; }
 
-    const pos = input.selectionStart;
-    const head = input.value.slice(0, q.at) + "@" + name + " ";
-    input.value = head + input.value.slice(pos);
-    input.selectionStart = input.selectionEnd = head.length;
+    if (viaButton) {
+      // Opened by the button: pin the target. The "@fragment" typed to filter is removed, so the
+      // message stays prose — the target is carried by the chip, not written into the text.
+      if (q) {
+        const pos = input.selectionStart;
+        input.value = input.value.slice(0, q.at) + input.value.slice(pos);
+        input.selectionStart = input.selectionEnd = q.at;
+      }
+      hideMentions();
+      // "Everyone" releases the pin; a name sets it, and it holds until changed.
+      setPin(name === ALL ? null : name);
+    } else {
+      // Typed inline: write a one-off "@name" into this message and leave the pin, if any, alone.
+      if (!q) { hideMentions(); return; }
+      const pos = input.selectionStart;
+      const head = input.value.slice(0, q.at) + "@" + name + " ";
+      input.value = head + input.value.slice(pos);
+      input.selectionStart = input.selectionEnd = head.length;
+      hideMentions();
+    }
 
-    hideMentions();
     input.focus();
     input.dispatchEvent(new Event("input"));
   }
+
+  // ---- slash-command picker ----
+
+  const slashBox = document.getElementById("slash");
+  let slashCmds = [];
+  let slashMatches = [];
+  let slashAt = 0;
+
+  // Which commands this surface offers, set by the host: a one-to-one chat enables them, a room
+  // leaves them off since compacting and regenerating are not what its shared transcript does.
+  let slashEnabled = [];
+
+  /** The commands offered when the composer opens with a "/". Labels are filled from strings. */
+  function buildSlashCmds() {
+    const all = [
+      { id: "compact", name: S.CmdCompact, hint: S.CmdCompactHint, run: () => post({ t: "command", name: "compact" }) },
+      { id: "retry", name: S.CmdRetry, hint: S.CmdRetryHint, run: () => post({ t: "regenerate" }) },
+    ];
+    slashCmds = all.filter(c => slashEnabled.includes(c.id));
+  }
+  buildSlashCmds();
+
+  /** The command fragment the caret sits in — only when the whole line is a bare "/word". */
+  function slashQuery() {
+    if (input.value[0] !== "/") return null;
+    const pos = input.selectionStart;
+    const head = input.value.slice(0, pos);
+    // A command is one token at the very start: a space or newline means it is prose, not a command.
+    if (/[\s]/.test(head)) return null;
+    return head.slice(1);
+  }
+
+  function updateSlash() {
+    const frag = slashQuery();
+    if (frag === null) { hideSlash(); return; }
+
+    const needle = frag.toLowerCase();
+    slashMatches = slashCmds.filter(c => c.name.toLowerCase().startsWith(needle));
+    if (slashMatches.length === 0) { hideSlash(); return; }
+
+    slashAt = 0;
+    renderSlash();
+    slashBox.hidden = false;
+  }
+
+  function renderSlash() {
+    slashBox.innerHTML = "";
+    slashMatches.forEach((cmd, i) => {
+      const row = el("div", "srow" + (i === slashAt ? " active" : ""));
+      const name = el("div", "name", "");
+      name.textContent = "/" + cmd.name;
+      row.appendChild(name);
+      const hint = el("div", "hint", "");
+      hint.textContent = cmd.hint;
+      row.appendChild(hint);
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); applySlash(cmd); });
+      slashBox.appendChild(row);
+    });
+  }
+
+  function hideSlash() { slashBox.hidden = true; slashMatches = []; }
+  function slashOpen() { return !slashBox.hidden && slashMatches.length > 0; }
+
+  function applySlash(cmd) {
+    hideSlash();
+    input.value = "";
+    input.style.height = "auto";
+    cmd.run();
+    input.focus();
+  }
+
+  /** Runs a bare "/word" typed and entered without the picker. True when it was a command. */
+  function runTypedCommand() {
+    if (input.value[0] !== "/") return false;
+    const word = input.value.slice(1).trim().toLowerCase();
+    const cmd = slashCmds.find(c => c.name.toLowerCase() === word);
+    if (!cmd) return false;
+    applySlash(cmd);
+    return true;
+  }
+
+  // ---- selection context menu ----
+
+  const ctxMenu = document.getElementById("ctxmenu");
+  let ctxText = "";
+  let ctxSpeaker = "";
+
+  function selectionText() {
+    const sel = window.getSelection();
+    return sel ? sel.toString().trim() : "";
+  }
+
+  /** The message the current selection sits in, so a quote of it can be attributed. */
+  function selectionSpeaker() {
+    const sel = window.getSelection();
+    let node = sel && sel.anchorNode;
+    while (node && node.nodeType !== 1) node = node.parentNode;
+    return speakerOf(node);
+  }
+
+  function hideCtx() { ctxMenu.hidden = true; }
+
+  function showCtx(x, y, text, speaker) {
+    ctxText = text;
+    ctxSpeaker = speaker || "";
+    ctxMenu.innerHTML = "";
+
+    const add = (label, run, sep) => {
+      if (sep) ctxMenu.appendChild(el("div", "csep"));
+      const item = el("div", "citem", "");
+      item.textContent = label;
+      item.addEventListener("mousedown", (e) => { e.preventDefault(); hideCtx(); run(); });
+      ctxMenu.appendChild(item);
+    };
+
+    add(S.CtxCopy, () => navigator.clipboard.writeText(ctxText));
+    if (quoteOn) add(S.Quote, () => quoteMessage(ctxSpeaker, ctxText));
+    add(S.CtxWeb, () => post({ t: "web", query: ctxText }), true);
+    add(S.CtxAsk, () => quoteToComposer(ctxText));
+    add(S.CtxAskOther, () => post({ t: "askOther", text: ctxText }));
+
+    ctxMenu.hidden = false;
+
+    // Keep it on screen: nudge back inside the viewport if it would spill off an edge.
+    const w = ctxMenu.offsetWidth, h = ctxMenu.offsetHeight;
+    ctxMenu.style.left = Math.min(x, window.innerWidth - w - 6) + "px";
+    ctxMenu.style.top = Math.min(y, window.innerHeight - h - 6) + "px";
+  }
+
+  /** Drops the selected text into the composer as a quote, ready for a question about it. */
+  function quoteToComposer(text) {
+    const quote = text.split("\n").map(line => "> " + line).join("\n");
+    const lead = input.value.length && !input.value.endsWith("\n") ? "\n\n" : "";
+    input.value += lead + quote + "\n\n";
+    input.focus();
+    input.selectionStart = input.selectionEnd = input.value.length;
+    input.dispatchEvent(new Event("input"));
+  }
+
+  document.addEventListener("contextmenu", (e) => {
+    const text = selectionText();
+    if (!text) { hideCtx(); return; }
+    e.preventDefault();
+    showCtx(e.clientX, e.clientY, text, selectionSpeaker());
+  });
+
+  document.addEventListener("mousedown", (e) => {
+    if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtx();
+  });
+  document.addEventListener("scroll", hideCtx, true);
+  window.addEventListener("blur", hideCtx);
 
   send.onclick = submit;
   document.getElementById("attachFile").onclick = () => post({ t: "attach" });
@@ -1951,6 +2313,32 @@
   };
 
   input.addEventListener("keydown", (e) => {
+    // While the slash-command picker is open it owns the arrows, Enter/Tab and Escape.
+    if (slashOpen()) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        slashAt = (slashAt + 1) % slashMatches.length;
+        renderSlash();
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        slashAt = (slashAt - 1 + slashMatches.length) % slashMatches.length;
+        renderSlash();
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applySlash(slashMatches[slashAt]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideSlash();
+        return;
+      }
+    }
+
     // While the mention picker is open it owns the arrows, Enter/Tab and Escape.
     if (mentionsOpen()) {
       if (e.key === "ArrowDown") {
@@ -1988,13 +2376,17 @@
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 180) + "px";
     updateMentions();
+    updateSlash();
   });
 
-  // A click elsewhere, or moving the caret, dismisses the picker.
+  // A click elsewhere, or moving the caret, dismisses the pickers.
   input.addEventListener("keyup", (e) => {
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") updateMentions();
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") {
+      updateMentions();
+      updateSlash();
+    }
   });
-  input.addEventListener("blur", () => setTimeout(hideMentions, 120));
+  input.addEventListener("blur", () => setTimeout(() => { hideMentions(); hideSlash(); }, 120));
 
   post({ t: "ready" });
   input.focus();

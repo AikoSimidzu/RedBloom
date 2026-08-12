@@ -241,6 +241,62 @@ public static class OllamaEngine
         }
     }
 
+    /// <summary>
+    /// Takes a model out of the engine's own store, so it stops being served and stops being
+    /// offered. Null when it worked, and null too when there is no engine to ask — there is then
+    /// nothing of ours holding the model, which is the outcome the caller wanted.
+    /// </summary>
+    /// <remarks>
+    /// Deleting the file a model came from is not enough on its own: once it has been imported, the
+    /// engine keeps serving it from its store, so discovery finds it again and it lingers in the
+    /// list after its file is gone. This is the other half of removing it.
+    /// </remarks>
+    public static async Task<string?> RemoveAsync(
+        string model, CancellationToken cancellationToken = default)
+    {
+        var exe = IsInstalled ? Executable : SystemCopy;
+
+        if (exe is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var start = new ProcessStartInfo(exe, $"rm \"{model}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                WorkingDirectory = Folder,
+            };
+
+            start.Environment["OLLAMA_MODELS"] = LocalRunner.ModelsFolder;
+            start.Environment["OLLAMA_HOST"] = "127.0.0.1:11434";
+
+            using var process = Process.Start(start);
+
+            if (process is null)
+            {
+                return LocalizationService.T("L_EngineNoRun");
+            }
+
+            var complaint = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+            // A model the store never held reports an error that is not a failure here: the point
+            // was for it to be gone, and it is.
+            return process.ExitCode == 0 || complaint.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : complaint.Trim();
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception)
+        {
+            return ex.Message;
+        }
+    }
+
     /// <summary>The download for this machine's processor, and how big it is.</summary>
     private static async Task<(string? Url, long Size, string? Error)> FindAssetAsync(
         CancellationToken cancellationToken)

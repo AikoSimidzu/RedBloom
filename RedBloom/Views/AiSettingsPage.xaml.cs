@@ -79,6 +79,67 @@ public partial class AiSettingsPage : UserControl
         NameBox.SelectAll();
     }
 
+    /// <summary>
+    /// Adds a model found on this machine as a saved, editable agent — the same as the ones the
+    /// picker offers, but kept in the settings so its name, avatar, persona and context window can
+    /// be set like any other agent's.
+    /// </summary>
+    /// <remarks>
+    /// It keeps the discovered <c>local:</c> identity, which is what makes the rest behave: the
+    /// engine is brought up on the first message the way it is for the picker's copy, no endpoint or
+    /// key is asked for, and chats stay filed under the same id whether opened from here or the
+    /// picker. The endpoint is the local server's; there is nothing to type.
+    /// </remarks>
+    private async void AddLocal_Click(object sender, RoutedEventArgs e)
+    {
+        AddLocalButton.IsEnabled = false;
+
+        IReadOnlyList<AiAgent> found;
+        try
+        {
+            found = await LocalAgents.DiscoverAsync().ConfigureAwait(true);
+        }
+        finally
+        {
+            AddLocalButton.IsEnabled = true;
+        }
+
+        var menu = new ContextMenu { PlacementTarget = AddLocalButton };
+        var saved = _agents.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+        var offered = found.Where(model => !saved.Contains(model.Id)).ToList();
+
+        if (offered.Count == 0)
+        {
+            menu.Items.Add(new MenuItem
+            {
+                Header = LocalizationService.T(found.Count == 0 ? "L_AiAddLocalNone" : "L_AiAddLocalAll"),
+                IsEnabled = false,
+            });
+        }
+        else
+        {
+            foreach (var model in offered)
+            {
+                var item = new MenuItem { Header = model.Name };
+                item.Click += (_, _) => AdoptLocal(model);
+                menu.Items.Add(item);
+            }
+        }
+
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Puts one discovered local model into the saved list and selects it for editing.</summary>
+    private void AdoptLocal(AiAgent model)
+    {
+        var agent = model.Clone();
+        _agents.Add(agent);
+        AgentList.SelectedItem = agent;
+        Persist();
+        NameBox.Focus();
+        NameBox.SelectAll();
+    }
+
     private void DeleteAgent_Click(object sender, RoutedEventArgs e)
     {
         if (Selected is not { } agent)
@@ -143,6 +204,7 @@ public partial class AiSettingsPage : UserControl
             {
                 AiProvider.Anthropic => 0,
                 AiProvider.ImageGen => 2,
+                AiProvider.ClaudeCli => 3,
                 _ => 1,
             };
             BaseUrlBox.Text = agent.BaseUrl;
@@ -333,6 +395,7 @@ public partial class AiSettingsPage : UserControl
         {
             0 => AiProvider.Anthropic,
             2 => AiProvider.ImageGen,
+            3 => AiProvider.ClaudeCli,
             _ => AiProvider.OpenAiCompatible,
         };
         agent.BaseUrl = BaseUrlBox.Text.Trim();
@@ -431,10 +494,32 @@ public partial class AiSettingsPage : UserControl
         // are hidden and the model box is explained as the picture model to load.
         var isImage = agent.Provider == AiProvider.ImageGen;
 
-        EndpointFields.Visibility = isImage ? Visibility.Collapsed : Visibility.Visible;
-        TokenFields.Visibility = isImage ? Visibility.Collapsed : Visibility.Visible;
+        // The command-line tool signs in through the website and keeps its own credentials, and it
+        // picks its own model from whatever the plan allows: an endpoint, a key and a token budget
+        // are all meaningless for it, so those whole blocks are hidden the way the image agent's are.
+        var isCli = agent.Provider == AiProvider.ClaudeCli;
+
+        // A model on this machine, or one of the user's own reached over the network, is one fixed
+        // model at an address that is not theirs to type: the endpoint and key are the local
+        // server's and there is no list to choose a model from. So those are hidden the way the
+        // command-line tool's are — but the context window and the behaviour stay, because a local
+        // model is exactly the case where setting the window and the persona matters.
+        var isLocal = agent.IsLocal || agent.IsRemoteLocal;
+
+        EndpointFields.Visibility = isImage || isCli || isLocal ? Visibility.Collapsed : Visibility.Visible;
+        TokenFields.Visibility = isImage || isCli ? Visibility.Collapsed : Visibility.Visible;
         BehaviorFields.Visibility = isImage ? Visibility.Collapsed : Visibility.Visible;
-        ModelHint.Visibility = isImage ? Visibility.Visible : Visibility.Collapsed;
+        ModelHint.Visibility = isImage || isCli || isLocal ? Visibility.Visible : Visibility.Collapsed;
+
+        // The command-line tool and a local model each answer as one fixed model, so the row that
+        // would name one is hidden and only the note that says which model is left.
+        ModelRow.Visibility = isCli || isLocal ? Visibility.Collapsed : Visibility.Visible;
+
+        if (isCli)
+        {
+            ModelHint.Text = LocalizationService.T("L_AiClaudeCliNote");
+            return;
+        }
 
         if (isImage)
         {
@@ -446,6 +531,14 @@ public partial class AiSettingsPage : UserControl
                     string.Join(", ", models.Select(Path.GetFileName)));
 
             return;
+        }
+
+        // A local model keeps the tokens and behaviour blocks, so the flow carries on past here;
+        // only the model note is its own.
+        if (isLocal)
+        {
+            ModelHint.Text = string.Format(
+                CultureInfo.CurrentCulture, LocalizationService.T("L_AiLocalModelNote"), agent.Model);
         }
 
         BaseUrlHint.Text = string.Format(

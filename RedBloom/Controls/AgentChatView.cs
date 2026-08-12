@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -283,6 +284,18 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 Regenerate();
                 break;
 
+            case "command" when message.TryGetProperty("name", out var command):
+                RunCommand(command.GetString() ?? string.Empty);
+                break;
+
+            case "web" when message.TryGetProperty("query", out var query):
+                OpenWebSearch(query.GetString() ?? string.Empty);
+                break;
+
+            case "askOther" when message.TryGetProperty("text", out var pick):
+                AskOtherAgent(pick.GetString() ?? string.Empty);
+                break;
+
             case "feedback" when message.TryGetProperty("verdict", out var verdict):
                 SaveFeedback(
                     verdict.GetString() ?? string.Empty,
@@ -445,6 +458,8 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatRegenerate", "L_ChatDislikeAsk", "L_ChatDislikeSend", "L_ChatThink",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext",
+            "L_ChatCmdCompact", "L_ChatCmdCompactHint", "L_ChatCmdRetry", "L_ChatCmdRetryHint",
+            "L_ChatCtxCopy", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
             "L_ChatRpAct", "L_ChatRpState", "L_ChatRpStatus", "L_ChatRpAttempt",
             "L_ChatRpMe", "L_ChatRpAgent", "L_ChatRpActPrompt",
             "L_ChatRpStatePrompt", "L_ChatRpStatusPrompt", "L_ChatRpAttemptOk", "L_ChatRpAttemptFail",
@@ -556,6 +571,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         Post(new { t = "avatar", src = AvatarDataUri() });
 
+        // The slash commands this chat answers to. A room reuses the same page but offers none of
+        // these, so the set is declared per surface rather than baked into the page.
+        Post(new { t = "commands", names = new[] { "compact", "retry" } });
+
         // The roleplay quick actions are for a character, not an assistant, so they show only
         // when this agent is one.
         Post(new { t = "rp", on = _agent.IsRoleplay });
@@ -642,8 +661,6 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// </remarks>
     private async Task CompactIfFullAsync(CancellationToken cancellationToken)
     {
-        const int KeepVerbatim = 6;
-
         // An image agent has no conversation to compact — each message is a self-contained prompt,
         // and asking it to "summarise" would only set it drawing a picture of the instruction.
         if (_agent.Provider == AiProvider.ImageGen)
@@ -653,8 +670,85 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         var used = UsedTokens();
 
-        if (used < _agent.ContextWindow * 0.7 || _history.Count <= KeepVerbatim + 2)
+        if (used < _agent.ContextWindow * 0.7)
         {
+            return;
+        }
+
+        await CompactAsync(force: false, cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Runs a slash command typed in the composer. The set is small and each one maps to a thing
+    /// the chat can already do, reached by name rather than by hunting for a button.
+    /// </summary>
+    private void RunCommand(string name)
+    {
+        switch (name.Trim().ToLowerInvariant())
+        {
+            case "compact":
+                _ = CompactNowAsync();
+                break;
+
+            case "retry":
+            case "regenerate":
+                Regenerate();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Folds the earlier part of the chat into a summary on the user's say-so, whatever the window
+    /// is at. The automatic pass waits until the context is filling up; this is the same fold asked
+    /// for early, to clear room before it becomes pressing or to draw a line under a finished topic.
+    /// </summary>
+    private async Task CompactNowAsync()
+    {
+        if (_turn is not null)
+        {
+            return;
+        }
+
+        var work = new CancellationTokenSource();
+        _turn = work;
+
+        try
+        {
+            await CompactAsync(force: true, work.Token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopped by the user; the conversation is left as it was.
+        }
+        finally
+        {
+            Post(new { t = "status", text = _agent.Origin, busy = false });
+            _turn = null;
+            work.Dispose();
+        }
+
+        PushContext();
+    }
+
+    private async Task CompactAsync(bool force, CancellationToken cancellationToken)
+    {
+        const int KeepVerbatim = 6;
+
+        if (force && _agent.Provider == AiProvider.ImageGen)
+        {
+            Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_ChatCompactNothing")) });
+            return;
+        }
+
+        // Too little to fold: the tail alone is most of the chat, and there is nothing behind it a
+        // summary would stand in for. Said out loud only when the fold was asked for by hand.
+        if (_history.Count <= KeepVerbatim + 2)
+        {
+            if (force)
+            {
+                Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_ChatCompactNothing")) });
+            }
+
             return;
         }
 
@@ -1412,6 +1506,127 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         Post(new { t = "endTurn" });
 
         return answer;
+    }
+
+    /// <summary>
+    /// Opens a web search for the selected text in the user's browser.
+    /// </summary>
+    /// <remarks>
+    /// Handed to the system browser rather than fetched here: the selection is the user's to look
+    /// up where they usually do, signed in and with their own extensions, and nothing about it is
+    /// sent through the chat or its agent.
+    /// </remarks>
+    private static void OpenWebSearch(string query)
+    {
+        var wanted = query.Trim();
+
+        if (wanted.Length == 0)
+        {
+            return;
+        }
+
+        OpenExternally("https://www.google.com/search?q=" + Uri.EscapeDataString(wanted));
+    }
+
+    /// <summary>
+    /// Puts the selected text to another configured agent, chosen from a small menu, and shows the
+    /// exchange in this chat.
+    /// </summary>
+    /// <remarks>
+    /// A side question, so it is shown but not written into this chat's history: the answer comes
+    /// from a different agent, and folding it into this one's conversation would leave the model
+    /// reading a reply it never gave as if it had. The picker is built here rather than as a dialog
+    /// of its own because it is a one-line list of names that wants to appear at the pointer.
+    /// </remarks>
+    private void AskOtherAgent(string text)
+    {
+        var selection = text.Trim();
+
+        if (selection.Length == 0 || _turn is not null)
+        {
+            return;
+        }
+
+        var others = ThemeService.Settings.Agents.Where(a => a.Id != _agent.Id).ToList();
+
+        if (others.Count == 0)
+        {
+            Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_ChatNoOtherAgents")) });
+            return;
+        }
+
+        var menu = new ContextMenu();
+
+        foreach (var agent in others)
+        {
+            var item = new MenuItem { Header = agent.PickerName };
+            item.Click += (_, _) => _ = RunOtherAgentAsync(agent, selection);
+            menu.Items.Add(item);
+        }
+
+        menu.PlacementTarget = _webView;
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Runs one other agent on the selected text and draws the question and its answer.</summary>
+    private async Task RunOtherAgentAsync(AiAgent other, string selection)
+    {
+        if (_turn is not null)
+        {
+            return;
+        }
+
+        var work = new CancellationTokenSource();
+        _turn = work;
+
+        var question = string.Format(CultureInfo.CurrentCulture, LocalizationService.T("L_ChatAskAboutThis"), selection);
+
+        Post(new { t = "user", html = Markdown.ToHtml(selection), text = selection });
+        Post(new { t = "endTurn" });
+        Post(new { t = "thinking", on = true, label = other.Name, what = string.Empty });
+        Post(new { t = "status", text = other.Name + "…", busy = true });
+
+        try
+        {
+            // Cloned and handed no tool host, so it answers on its own and cannot reach back in.
+            using var transport = AgentTransports.For(other.Clone());
+            var conversation = new List<AgentMessage> { new(AgentRole.User, question) };
+            var reply = new StringBuilder();
+
+            await foreach (var item in transport.SendAsync(conversation, work.Token).ConfigureAwait(true))
+            {
+                switch (item.Kind)
+                {
+                    case AgentEventKind.Text:
+                        reply.Append(item.Text);
+                        Post(new { t = "assistant", label = other.Name, html = Markdown.ToHtml(reply.ToString()) });
+                        break;
+
+                    case AgentEventKind.Image:
+                        Post(new { t = "image", label = other.Name, src = ImageDataUri(item.Text), path = item.Text });
+                        break;
+
+                    case AgentEventKind.Failed:
+                        Post(new { t = "note", html = Markdown.Escape($"{other.Name}: {item.Text}") });
+                        break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopped by the user; whatever arrived stays on screen.
+        }
+        catch (Exception ex)
+        {
+            Post(new { t = "note", html = Markdown.Escape($"{other.Name}: {ex.Message}") });
+        }
+        finally
+        {
+            Post(new { t = "endTurn" });
+            Post(new { t = "status", text = _agent.Origin, busy = false });
+            _turn = null;
+            work.Dispose();
+        }
     }
 
     /// <summary>The picture inlined as a data URI, or empty when it is missing or too large to embed.</summary>

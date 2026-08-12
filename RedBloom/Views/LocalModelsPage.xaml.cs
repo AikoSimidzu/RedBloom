@@ -715,14 +715,13 @@ public partial class LocalModelsPage : UserControl
 
     private async void DeleteModel_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { Tag: string path })
+        if (sender is not FrameworkElement { Tag: LocalRow row })
         {
             return;
         }
 
         var confirm = MessageBox.Show(
-            string.Format(CultureInfo.CurrentCulture, LocalizationService.T("L_LocalDeleteAsk"),
-                Path.GetFileName(path)),
+            string.Format(CultureInfo.CurrentCulture, LocalizationService.T("L_LocalDeleteAsk"), row.Name),
             LocalizationService.T("L_LocalModels"),
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
@@ -732,15 +731,33 @@ public partial class LocalModelsPage : UserControl
             return;
         }
 
-        try
+        // The file, when there is one. On its own this was the whole of deletion, and the reason
+        // some models "came back": once imported, the engine keeps serving them from its store, so
+        // discovery found them again after their file was gone.
+        if (row.Path is { } path)
         {
-            File.Delete(path);
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                MessageBox.Show(ex.Message, LocalizationService.T("L_LocalModels"),
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+
+        // The store copy, so a model imported into the engine actually leaves the list. Harmless
+        // when the engine never held it.
+        if (await OllamaEngine.RemoveAsync(row.Model).ConfigureAwait(true) is { } complaint)
         {
-            MessageBox.Show(ex.Message, LocalizationService.T("L_LocalModels"),
+            MessageBox.Show(complaint, LocalizationService.T("L_LocalModels"),
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+
+        // The name given to it, so a model of the same name downloaded later starts fresh rather
+        // than inheriting a label from one that is gone.
+        LocalAgents.Rename(row.Model, string.Empty);
 
         await RefreshAsync().ConfigureAwait(true);
     }

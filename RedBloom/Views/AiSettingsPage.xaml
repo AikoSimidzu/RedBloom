@@ -102,22 +102,31 @@
                     </ListBox>
                 </Border>
 
-                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
-                    <Button Content="{DynamicResource L_AiAdd}"
+                <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="{DynamicResource L_AiAdd}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,5"
+                                Click="AddAgent_Click" />
+                        <Button x:Name="DeleteAgentButton"
+                                Content="{DynamicResource L_AiDelete}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,5"
+                                Margin="6,0,0,0"
+                                Click="DeleteAgent_Click" />
+                        <Button Content="{DynamicResource L_AiImport}"
+                                Style="{StaticResource GhostButton}"
+                                Padding="10,5"
+                                Margin="6,0,0,0"
+                                Click="Import_Click" />
+                    </StackPanel>
+                    <Button x:Name="AddLocalButton"
+                            Content="{DynamicResource L_AiAddLocal}"
                             Style="{StaticResource GhostButton}"
-                            Padding="10,5"
-                            Click="AddAgent_Click" />
-                    <Button x:Name="DeleteAgentButton"
-                            Content="{DynamicResource L_AiDelete}"
-                            Style="{StaticResource GhostButton}"
-                            Padding="10,5"
-                            Margin="6,0,0,0"
-                            Click="DeleteAgent_Click" />
-                    <Button Content="{DynamicResource L_AiImport}"
-                            Style="{StaticResource GhostButton}"
-                            Padding="10,5"
-                            Margin="6,0,0,0"
-                            Click="Import_Click" />
+                            Padding="10,6"
+                            Margin="0,6,0,0"
+                            HorizontalAlignment="Stretch"
+                            Click="AddLocal_Click" />
                 </StackPanel>
             </Grid>
 
@@ -136,6 +145,7 @@
                             <ComboBoxItem Content="Anthropic" />
                             <ComboBoxItem Content="{DynamicResource L_AiOpenAiCompatible}" />
                             <ComboBoxItem Content="{DynamicResource L_AiImageModel}" />
+                            <ComboBoxItem Content="{DynamicResource L_AiClaudeCli}" />
                         </ComboBox>
                     </Grid>
 
@@ -165,7 +175,7 @@
                     </Grid>
                     </StackPanel>
 
-                    <Grid ColumnDefinitions="150,*,Auto" Margin="0,0,0,8">
+                    <Grid x:Name="ModelRow" ColumnDefinitions="150,*,Auto" Margin="0,0,0,8">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_AiModel}" Style="{StaticResource RowLabel}" />
                         <TextBox Grid.Column="1" x:Name="ModelBox" TextChanged="Field_Changed" />
                         <Button Grid.Column="2"
