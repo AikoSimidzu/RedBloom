@@ -59,12 +59,16 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     private string _pendingCommand = string.Empty;
     private string _pendingDiff = string.Empty;
 
+    /// <summary>The room's working directory, where its commands run and its files are made.</summary>
+    private string _cwd = string.Empty;
+
     /// <summary>Raised when a room asks to open a file (a "go to file" on a diff), so the window can.</summary>
     public static event Action<string>? FileOpenRequested;
 
     public RoomChatView(ChatRoom room)
     {
         _room = room;
+        _cwd = Workspace.ForRoom(room.Id);
         ApplyWebViewBackground();
         Content = _webView;
         Loaded += OnLoaded;
@@ -110,6 +114,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         // The header's models and the task assignees follow the roster too.
         PushHead();
         PushTasks();
+        PushAgentTasks();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -231,6 +236,17 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
             case "openFile" when message.TryGetProperty("path", out var fp):
                 FileOpenRequested?.Invoke(fp.GetString() ?? string.Empty);
+                break;
+
+            case "task" when message.TryGetProperty("scope", out var scope) && scope.GetString() == "agent":
+                if (message.TryGetProperty("agent", out var who)
+                    && AgentByDisplayName(who.GetString() ?? string.Empty) is { } owner
+                    && TaskPanel.Apply(owner.Tasks, message))
+                {
+                    SaveAgentTasks(owner);
+                    PushAgentTasks();
+                }
+
                 break;
 
             case "task":
@@ -366,6 +382,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
         PushHead();
         PushTasks();
+        PushAgentTasks();
 
         RenderHistory();
 
@@ -783,9 +800,27 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         // The tool host is handed over only when the room permits commands; without it the agents
         // answer in words alone, exactly as before.
         _speaking = agent;
-        using var transport = AgentTransports.For(RoomAgent(agent, participants), _room.AllowCommands ? this : null);
+
+        // The tool host is always handed over now: even a room with commands off still offers the
+        // task tool, so the cast can keep the shared list and their notebooks. The command tool
+        // itself stays gated behind the room's permission through Enabled.
+        var roomAgent = RoomAgent(agent, participants);
+        roomAgent.EnvironmentPreamble = SystemInfo.Preamble(_cwd);
+
+        using var transport = AgentTransports.For(roomAgent, this);
         var from = FittingStart(agent);
-        var conversation = new List<AgentMessage> { new(AgentRole.User, Transcript(agent, from), RoomImages(from)) };
+
+        // The shared list and this agent's own notebook ride along on the transcript, so it starts
+        // its turn knowing the tasks and their ids without a first "list" call.
+        var transcript = Transcript(agent, from);
+        var seed = TaskPanel.SeedBlock(_room.Tasks, agent.Tasks);
+
+        if (seed.Length > 0)
+        {
+            transcript += "\n\n" + seed;
+        }
+
+        var conversation = new List<AgentMessage> { new(AgentRole.User, transcript, RoomImages(from)) };
 
         var reply = new StringBuilder();
 
@@ -1264,6 +1299,131 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     public bool AgentsEnabled => false;
 
     /// <inheritdoc />
+    /// <remarks>Always on, so the cast can keep the shared list and their own notebooks current.</remarks>
+    public bool TasksEnabled => true;
+
+    /// <inheritdoc />
+    /// <remarks>"Mine" is whichever agent is speaking at the moment the tool is called.</remarks>
+    public Task<string> ManageTasksAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var mine = _speaking?.Tasks;
+
+        var text = TaskPanel.HandleTool(
+            argumentsJson, _room.Tasks, mine,
+            out var changedShared, out var changedMine, out var report);
+
+        if (changedShared)
+        {
+            _room.Touch();
+            RoomStore.Save(_room);
+            PushTasks();
+        }
+
+        if (changedMine && _speaking is not null)
+        {
+            SaveAgentTasks(_speaking);
+            PushAgentTasks();
+        }
+
+        if (report.Length > 0)
+        {
+            Post(new { t = "note", html = Markdown.Escape($"{_speaking?.DisplayName}: {report}") });
+        }
+
+        return Task.FromResult(text);
+    }
+
+    /// <summary>Persists an agent's own task list, the notebook the model keeps as it works.</summary>
+    private static void SaveAgentTasks(AiAgent agent)
+    {
+        var saved = ThemeService.Settings.Agents.FirstOrDefault(a => a.Id == agent.Id);
+
+        if (saved is not null && !ReferenceEquals(saved, agent))
+        {
+            saved.Tasks = [.. agent.Tasks];
+        }
+
+        ThemeService.Save();
+    }
+
+    /// <summary>Hands the page each participant's private notebook, for the agent-tasks button.</summary>
+    private void PushAgentTasks() => Post(new
+    {
+        t = "agentTasks",
+        agents = Participants().Select(a => new { name = a.DisplayName, list = a.Tasks.Select(TaskPanel.Item) }),
+        statuses = TaskPanel.Statuses(),
+        labels = TaskPanel.AgentLabels(),
+    });
+
+    /// <summary>The participant shown under a display name, or null when none matches.</summary>
+    private AiAgent? AgentByDisplayName(string name) =>
+        Participants().FirstOrDefault(a => string.Equals(a.DisplayName, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Reads and listings run straight through; a write or edit is put to the user like a command,
+    /// then shown as a change card attributed to the agent that made it.
+    /// </remarks>
+    public async Task<string> FileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken)
+    {
+        if (name == AgentTransports.Files.Read)
+        {
+            return FileTools.Read(argumentsJson, _cwd);
+        }
+
+        if (name == AgentTransports.Files.List)
+        {
+            return FileTools.List(argumentsJson, _cwd);
+        }
+
+        var path = FileTools.PathOf(argumentsJson, _cwd);
+
+        if (path is null)
+        {
+            return "No path was given.";
+        }
+
+        if (!await ApproveAsync($"{name} {path}", elevated: false, cancellationToken).ConfigureAwait(true))
+        {
+            return "The user declined this change.";
+        }
+
+        var snapshot = GitDiff.Before(path);
+
+        var result = name == AgentTransports.Files.Write
+            ? FileTools.Write(argumentsJson, _cwd)
+            : FileTools.Edit(argumentsJson, _cwd);
+
+        if (result.Ok)
+        {
+            AgentFiles.Touched(path);
+            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, GitDiff.After(snapshot));
+        }
+
+        return result.Message;
+    }
+
+    /// <summary>Draws a file the speaking agent wrote or edited as a change card, kept in the room's history.</summary>
+    private void ShowFileChange(string verb, string path, string diff)
+    {
+        _activity++;
+        var pathHtml = $"<span data-file=\"{Markdown.Escape(path)}\">{Markdown.Escape(path)}</span>";
+
+        Post(new { t = "activity", id = _activity.ToString(), state = "done", label = verb, codeHtml = pathHtml });
+        Post(new { t = "activityDone", id = _activity.ToString(), diffHtml = GitDiff.RenderHtml(diff) });
+
+        _room.Turns.Add(new ChatTurn
+        {
+            Role = "command",
+            Speaker = _speaking?.DisplayName ?? string.Empty,
+            Command = $"{verb} {path}",
+            Diff = diff,
+        });
+
+        RoomStore.Save(_room);
+    }
+
+    /// <inheritdoc />
     public Task<bool> ApproveAsync(string command, bool elevated, CancellationToken cancellationToken)
     {
         var agent = _speaking;
@@ -1313,7 +1473,9 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
         if (!elevated)
         {
-            output = await CommandRunner.RunAsync(command, cancellationToken).ConfigureAwait(true);
+            var result = await CommandRunner.RunInAsync(command, _cwd, cancellationToken).ConfigureAwait(true);
+            _cwd = result.Cwd;
+            output = result.Output;
         }
         else if (!ElevatedHost.IsRunning
                  && await ElevatedHost.StartAsync(cancellationToken).ConfigureAwait(true) is { } refused)

@@ -213,11 +213,26 @@ public sealed class AiAgent : INotifyPropertyChanged
 
             var learned = Learned();
 
-            return learned.Length == 0
+            var body = learned.Length == 0
                 ? basis
                 : string.IsNullOrWhiteSpace(basis) ? learned : basis + "\n\n" + learned;
+
+            // The environment preamble leads: it tells the model what machine it is on and how to
+            // use its tools, which is the operational frame the rest of the prompt sits inside. Set
+            // fresh by the chat view before each send, never saved, so it never staleness-rots.
+            return string.IsNullOrWhiteSpace(EnvironmentPreamble)
+                ? body
+                : string.IsNullOrWhiteSpace(body) ? EnvironmentPreamble : EnvironmentPreamble + "\n\n" + body;
         }
     }
+
+    /// <summary>
+    /// The machine-and-tools preamble the chat view sets before each send, placed at the head of
+    /// <see cref="Instructions"/>. Transient — never serialised — because it describes the run, not
+    /// the agent, and it carries the live working directory.
+    /// </summary>
+    [JsonIgnore]
+    public string EnvironmentPreamble { get; set; } = string.Empty;
 
     /// <summary>
     /// What the thumbs-up and thumbs-down have taught this agent, written as standing guidance.
@@ -360,6 +375,17 @@ public sealed class AiAgent : INotifyPropertyChanged
     /// allowing.
     /// </remarks>
     public List<string> AllowedCommands { get; set; } = [];
+
+    /// <summary>
+    /// This agent's own task list — its private notebook, kept apart from any chat's or room's
+    /// shared list.
+    /// </summary>
+    /// <remarks>
+    /// Per agent rather than per conversation: it is the agent's running account of what it is
+    /// doing, which the user can look in on at any time and the agent keeps up through the
+    /// <c>manage_tasks</c> tool. Persisted with the agent, so a plan survives across chats and runs.
+    /// </remarks>
+    public List<TaskItem> Tasks { get; set; } = [];
 
     /// <summary>True when a command is covered by <see cref="AllowedCommands"/>.</summary>
     public bool IsAlwaysAllowed(string command)

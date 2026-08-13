@@ -57,7 +57,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
 
     /// <summary>Whether the agent asks for any tool at all.</summary>
     private bool ToolsWanted =>
-        _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled);
+        _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled || _tools.TasksEnabled);
 
     /// <summary>The key this endpoint-and-model pair is remembered as toolless under.</summary>
     private string ToolKey => _agent.ResolvedBaseUrl + "\n" + _agent.Model;
@@ -219,6 +219,38 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     continue;
                 }
 
+                // Keeping the task list runs nothing and needs no approval. Its whole arguments
+                // object rides in Command, so the host can parse it the same way both transports do.
+                if (call.Name == AgentTransports.Tasks.Name)
+                {
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.ManageTasksAsync(call.Command, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                // The file tools carry their own approval inside the host; the arguments ride in
+                // Command as they arrived.
+                if (AgentTransports.Files.Names.Contains(call.Name))
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.FileToolAsync(call.Name, call.Command, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
                 var command = call.Command;
                 var elevated = call.Elevated;
 
@@ -370,6 +402,15 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     continue;
                 }
 
+                // The whole arguments object is carried in Command untouched, so the host parses the
+                // task fields itself and nothing here needs to know their shape.
+                if (name == AgentTransports.Tasks.Name || AgentTransports.Files.Names.Contains(name))
+                {
+                    calls.Add(new Call(Id(id), name, root.GetRawText(), false, string.Empty, string.Empty));
+
+                    continue;
+                }
+
                 if (root.TryGetProperty(AgentTransports.Command.Parameter, out var command)
                     && command.ValueKind == JsonValueKind.String)
                 {
@@ -477,6 +518,14 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     [AgentTransports.Share.Parameter] = Property("string", AgentTransports.Share.ParameterDescription),
                     [AgentTransports.Share.Note] = Property("string", AgentTransports.Share.NoteDescription),
                 }, AgentTransports.Share.Parameter));
+
+                // The file tools ride the same permission as the command tool.
+                foreach (var spec in AgentTransports.Files.All)
+                {
+                    var props = spec.Parameters.ToDictionary(p => p.Name, p => Property(p.Type, p.Description));
+                    var required = spec.Parameters.Where(p => p.Required).Select(p => p.Name).ToArray();
+                    tools.Add(Function(spec.Name, spec.Description, props, required));
+                }
             }
 
             if (_tools is { ImagesEnabled: true })
@@ -497,6 +546,20 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 }, AgentTransports.Ask.Parameter));
             }
 
+            if (_tools is { TasksEnabled: true })
+            {
+                tools.Add(Function(AgentTransports.Tasks.Name, AgentTransports.Tasks.Description, new()
+                {
+                    [AgentTransports.Tasks.Op] = Property("string", AgentTransports.Tasks.OpDescription),
+                    [AgentTransports.Tasks.List] = Property("string", AgentTransports.Tasks.ListDescription),
+                    [AgentTransports.Tasks.Id] = Property("string", AgentTransports.Tasks.IdDescription),
+                    [AgentTransports.Tasks.TaskName] = Property("string", AgentTransports.Tasks.TaskNameDescription),
+                    [AgentTransports.Tasks.Desc] = Property("string", AgentTransports.Tasks.DescDescription),
+                    [AgentTransports.Tasks.State] = Property("string", AgentTransports.Tasks.StateDescription),
+                    [AgentTransports.Tasks.Note] = Property("string", AgentTransports.Tasks.NoteDescription),
+                }, AgentTransports.Tasks.Op));
+            }
+
             if (tools.Count == 0)
             {
                 tools = null;
@@ -514,7 +577,10 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
 
     private static object Property(string type, string description) => new { type, description };
 
-    private static object Function(string name, string description, Dictionary<string, object> properties, string required) => new
+    private static object Function(string name, string description, Dictionary<string, object> properties, string required) =>
+        Function(name, description, properties, new[] { required });
+
+    private static object Function(string name, string description, Dictionary<string, object> properties, string[] required) => new
     {
         type = "function",
         function = new
@@ -525,7 +591,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
             {
                 type = "object",
                 properties,
-                required = new[] { required },
+                required,
             },
         },
     };

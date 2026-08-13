@@ -64,7 +64,7 @@ public sealed class AnthropicTransport : IAgentTransport
     }
 
     private bool ToolsEnabled =>
-        _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled);
+        _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled || _tools.TasksEnabled);
 
     /// <summary>The key this endpoint-and-model pair is remembered under.</summary>
     private string AdvancedKey => _agent.ResolvedBaseUrl + "\n" + _agent.Model;
@@ -412,6 +412,35 @@ public sealed class AnthropicTransport : IAgentTransport
                         ToolUseID = id,
                         Content = await _tools!.GenerateImageAsync(prompt, negative, cancellationToken)
                             .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                // The file tools carry their own approval inside the host (a write or edit is put
+                // to the user, a read or listing is not), so they are dispatched straight through
+                // with the whole arguments object.
+                if (AgentTransports.Files.Names.Contains(call.Name))
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.FileToolAsync(call.Name, call.Arguments, cancellationToken).ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                // Keeping the task list changes only a list on the user's own screen, so it takes
+                // no approval either. The whole arguments object is handed over as it arrived.
+                if (call.Name == AgentTransports.Tasks.Name)
+                {
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.ManageTasksAsync(call.Arguments, cancellationToken).ConfigureAwait(false),
                     });
 
                     continue;
@@ -856,6 +885,21 @@ public sealed class AnthropicTransport : IAgentTransport
                     Required = [AgentTransports.Share.Parameter],
                 },
             });
+
+            // The file tools ride the same permission as the command tool.
+            foreach (var spec in AgentTransports.Files.All)
+            {
+                tools.Add(new Tool
+                {
+                    Name = spec.Name,
+                    Description = spec.Description,
+                    InputSchema = new()
+                    {
+                        Properties = spec.Parameters.ToDictionary(p => p.Name, p => Schema(p.Type, p.Description)),
+                        Required = [.. spec.Parameters.Where(p => p.Required).Select(p => p.Name)],
+                    },
+                });
+            }
         }
 
         if (_tools is { ImagesEnabled: true })
@@ -890,6 +934,29 @@ public sealed class AnthropicTransport : IAgentTransport
                         [AgentTransports.Ask.Request] = Schema("string", AgentTransports.Ask.RequestDescription),
                     },
                     Required = [AgentTransports.Ask.Parameter, AgentTransports.Ask.Request],
+                },
+            });
+        }
+
+        if (_tools is { TasksEnabled: true })
+        {
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Tasks.Name,
+                Description = AgentTransports.Tasks.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Tasks.Op] = Schema("string", AgentTransports.Tasks.OpDescription),
+                        [AgentTransports.Tasks.List] = Schema("string", AgentTransports.Tasks.ListDescription),
+                        [AgentTransports.Tasks.Id] = Schema("string", AgentTransports.Tasks.IdDescription),
+                        [AgentTransports.Tasks.TaskName] = Schema("string", AgentTransports.Tasks.TaskNameDescription),
+                        [AgentTransports.Tasks.Desc] = Schema("string", AgentTransports.Tasks.DescDescription),
+                        [AgentTransports.Tasks.State] = Schema("string", AgentTransports.Tasks.StateDescription),
+                        [AgentTransports.Tasks.Note] = Schema("string", AgentTransports.Tasks.NoteDescription),
+                    },
+                    Required = [AgentTransports.Tasks.Op],
                 },
             });
         }

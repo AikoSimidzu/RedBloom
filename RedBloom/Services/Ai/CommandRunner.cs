@@ -21,6 +21,64 @@ public static class CommandRunner
     /// </summary>
     private const int MaxOutput = 20000;
 
+    /// <summary>A command's output together with the directory the shell ended up in.</summary>
+    public readonly record struct RunResult(string Output, string Cwd);
+
+    // Markers a tracked run prints so the ending directory and exit code can be read back. Printed
+    // with delayed expansion on, so !CD! is the directory the command LEFT the shell in — a
+    // parse-time %CD% would give the one it started in — and !ERRORLEVEL! is the command's own
+    // code, which the appended echo would otherwise mask with its success.
+    private const string CwdMarker = "__RBCWD__";
+    private const string ExitMarker = "__RBX__";
+
+    /// <summary>
+    /// Runs a command in a chat's own working directory and reports both its output and the
+    /// directory the shell ended in — so a <c>cd</c> inside the command carries to the next call.
+    /// </summary>
+    public static async Task<RunResult> RunInAsync(string command, string workingDir, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return new RunResult("The command was empty.", workingDir);
+        }
+
+        var wrapped = $"{command} & echo {CwdMarker}!CD!{ExitMarker}!ERRORLEVEL!";
+        var (raw, _) = await ExecuteAsync(wrapped, workingDir, delayed: true, cancellationToken).ConfigureAwait(false);
+
+        var cwd = workingDir;
+        var exit = 0;
+        var at = raw.LastIndexOf(CwdMarker, StringComparison.Ordinal);
+
+        if (at >= 0)
+        {
+            var end = raw.IndexOf('\n', at);
+            var line = end < 0 ? raw[at..] : raw[at..end];
+            var body = line[CwdMarker.Length..];
+            var split = body.LastIndexOf(ExitMarker, StringComparison.Ordinal);
+
+            if (split >= 0)
+            {
+                cwd = body[..split].Trim();
+                int.TryParse(body[(split + ExitMarker.Length)..].Trim(), out exit);
+            }
+            else
+            {
+                cwd = body.Trim();
+            }
+
+            // Cut the marker line out of what the model sees, the newline before it included.
+            var before = at > 0 ? raw.LastIndexOf('\n', at - 1) : -1;
+            raw = before >= 0 ? raw[..before] : string.Empty;
+        }
+
+        if (cwd.Length == 0 || !Directory.Exists(cwd))
+        {
+            cwd = workingDir;
+        }
+
+        return new RunResult(Finish(raw.TrimEnd(), exit), cwd);
+    }
+
     public static async Task<string> RunAsync(string command, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(command))
@@ -28,10 +86,41 @@ public static class CommandRunner
             return "The command was empty.";
         }
 
+        var (raw, exit) = await ExecuteAsync(
+            command,
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            delayed: false,
+            cancellationToken).ConfigureAwait(false);
+
+        return Finish(raw, exit);
+    }
+
+    /// <summary>States the exit code and caps the length — what the model actually reads.</summary>
+    private static string Finish(string text, int exitCode)
+    {
+        // The exit code is worth stating outright: a failing command often prints nothing at all,
+        // and silence reads to the model as success.
+        var result = exitCode == 0
+            ? text.Length > 0 ? text : "(the command printed nothing; it exited normally)"
+            : $"{text}\n(exit code {exitCode})".TrimStart();
+
+        return result.Length > MaxOutput
+            ? result[..MaxOutput] + $"\n(output cut after {MaxOutput} characters)"
+            : result;
+    }
+
+    private static async Task<(string Text, int ExitCode)> ExecuteAsync(
+        string command, string workingDir, bool delayed, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(workingDir) || !Directory.Exists(workingDir))
+        {
+            workingDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
         var start = new ProcessStartInfo
         {
             FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-            Arguments = $"/c {command}",
+            Arguments = delayed ? $"/v:on /c {command}" : $"/c {command}",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
 
@@ -42,7 +131,7 @@ public static class CommandRunner
             StandardErrorEncoding = Encoding.Latin1,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            WorkingDirectory = workingDir,
         };
 
         using var process = new Process { StartInfo = start };
@@ -51,12 +140,12 @@ public static class CommandRunner
         {
             if (!process.Start())
             {
-                return "The command could not be started.";
+                return ("The command could not be started.", 0);
             }
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException)
         {
-            return $"The command could not be started: {ex.Message}";
+            return ($"The command could not be started: {ex.Message}", 0);
         }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -73,9 +162,9 @@ public static class CommandRunner
         {
             Kill(process);
 
-            return cancellationToken.IsCancellationRequested
+            return (cancellationToken.IsCancellationRequested
                 ? "The command was interrupted."
-                : $"The command was still running after {Timeout.TotalMinutes:0} minutes and was stopped.";
+                : $"The command was still running after {Timeout.TotalMinutes:0} minutes and was stopped.", 0);
         }
 
         var output = new StringBuilder();
@@ -87,16 +176,7 @@ public static class CommandRunner
             output.Append(output.Length > 0 ? "\n" : string.Empty).Append(errors);
         }
 
-        // The exit code is worth stating outright: a failing command often prints nothing at
-        // all, and silence reads to the model as success.
-        var text = output.ToString().TrimEnd();
-        var result = process.ExitCode == 0
-            ? text.Length > 0 ? text : "(the command printed nothing; it exited normally)"
-            : $"{text}\n(exit code {process.ExitCode})".TrimStart();
-
-        return result.Length > MaxOutput
-            ? result[..MaxOutput] + $"\n(output cut after {MaxOutput} characters)"
-            : result;
+        return (output.ToString().TrimEnd(), process.ExitCode);
     }
 
     /// <summary>

@@ -68,6 +68,13 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// <summary>The command now running and the diff it produced, held between its call and result.</summary>
     private string _pendingCommand = string.Empty;
     private string _pendingDiff = string.Empty;
+
+    /// <summary>
+    /// This chat's working directory — where its commands run and its files are made. Starts at the
+    /// chat's own workspace folder and follows a <c>cd</c> the agent runs, so the location persists
+    /// across the fresh shells each command gets.
+    /// </summary>
+    private string _cwd = string.Empty;
     private bool _pageReady;
     private bool _dirty;
     private bool _disposed;
@@ -89,6 +96,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         _agent = agent;
         _chat = chat;
+        _cwd = Workspace.For(chat.Id);
 
         // A chat that was switched to another model keeps it. Only the name is overridden; the
         // endpoint, key and permissions stay the agent's.
@@ -340,6 +348,15 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             case "openFile" when message.TryGetProperty("path", out var fp):
                 FileOpenRequested?.Invoke(fp.GetString() ?? string.Empty);
+                break;
+
+            case "task" when message.TryGetProperty("scope", out var scope) && scope.GetString() == "agent":
+                if (TaskPanel.Apply(_agent.Tasks, message))
+                {
+                    SaveAgentTasks(_agent);
+                    PushAgentTasks();
+                }
+
                 break;
 
             case "task":
@@ -633,6 +650,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         // The header: the agent's face, its name, and the model under it.
         Post(new { t = "head", avatar = AvatarDataUri(), title = BotName, subtitle = _agent.ShortModel });
         PushTasks();
+        PushAgentTasks();
 
         // The slash commands this chat answers to. A room reuses the same page but offers none of
         // these, so the set is declared per surface rather than baked into the page.
@@ -1277,6 +1295,24 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 pictures ? ChatContext.Images(turn.Attachments) : null));
         }
 
+        // The current task lists ride along on the last thing the user said, rebuilt fresh each
+        // send like the attachments — so the agent begins a turn already knowing the tasks and
+        // their ids, and never has to spend a "list" call to find them.
+        var seed = TaskPanel.SeedBlock(_chat.Tasks, _agent.Tasks);
+
+        if (seed.Length > 0)
+        {
+            var last = conversation.FindLastIndex(m => m.Role == AgentRole.User);
+
+            if (last >= 0)
+            {
+                conversation[last] = conversation[last] with
+                {
+                    Text = conversation[last].Text + "\n\n" + seed,
+                };
+            }
+        }
+
         return conversation;
     }
 
@@ -1365,6 +1401,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             // the request is within the window, so a small local model answers the recent part
             // rather than refusing the whole chat.
             TrimToContext();
+
+            // The environment preamble is rebuilt here so it carries the working directory as it
+            // stands now — a `cd` from the last turn is reflected before this one is sent.
+            _agent.EnvironmentPreamble = SystemInfo.Preamble(_cwd);
 
             await foreach (var item in _transport.SendAsync(Conversation(), turn.Token).ConfigureAwait(true))
             {
@@ -1612,6 +1652,122 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     public bool AgentsEnabled => _agent.AllowAgents;
 
     /// <inheritdoc />
+    /// <remarks>Always on: keeping the task list is not a privilege, it is the point of the header.</remarks>
+    public bool TasksEnabled => true;
+
+    /// <inheritdoc />
+    public Task<string> ManageTasksAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var text = TaskPanel.HandleTool(
+            argumentsJson, _chat.Tasks, _agent.Tasks,
+            out var changedShared, out var changedMine, out var report);
+
+        if (changedShared)
+        {
+            Persist();
+            PushTasks();
+        }
+
+        if (changedMine)
+        {
+            SaveAgentTasks(_agent);
+            PushAgentTasks();
+        }
+
+        if (report.Length > 0)
+        {
+            Post(new { t = "note", html = Markdown.Escape($"{BotName}: {report}") });
+        }
+
+        return Task.FromResult(text);
+    }
+
+    /// <summary>
+    /// Writes an agent's own task list through to the saved copy behind it, so a plan the model
+    /// made survives the run.
+    /// </summary>
+    private static void SaveAgentTasks(AiAgent agent)
+    {
+        var saved = ThemeService.Settings.Agents.FirstOrDefault(a => a.Id == agent.Id);
+
+        if (saved is not null && !ReferenceEquals(saved, agent))
+        {
+            saved.Tasks = [.. agent.Tasks];
+        }
+
+        ThemeService.Save();
+    }
+
+    /// <summary>Hands the page this chat's one agent and its private notebook.</summary>
+    private void PushAgentTasks() => Post(new
+    {
+        t = "agentTasks",
+        agents = new[] { new { name = BotName, list = _agent.Tasks.Select(TaskPanel.Item) } },
+        statuses = TaskPanel.Statuses(),
+        labels = TaskPanel.AgentLabels(),
+    });
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Reads and listings run straight through; a write or edit is put to the user the same way a
+    /// command is, then shown as a change card with its diff and a jump to the file.
+    /// </remarks>
+    public async Task<string> FileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken)
+    {
+        if (name == AgentTransports.Files.Read)
+        {
+            return FileTools.Read(argumentsJson, _cwd);
+        }
+
+        if (name == AgentTransports.Files.List)
+        {
+            return FileTools.List(argumentsJson, _cwd);
+        }
+
+        var path = FileTools.PathOf(argumentsJson, _cwd);
+
+        if (path is null)
+        {
+            return "No path was given.";
+        }
+
+        if (!await ApproveAsync($"{name} {path}", elevated: false, cancellationToken).ConfigureAwait(true))
+        {
+            return "The user declined this change.";
+        }
+
+        var snapshot = GitDiff.Before(path);
+
+        var result = name == AgentTransports.Files.Write
+            ? FileTools.Write(argumentsJson, _cwd)
+            : FileTools.Edit(argumentsJson, _cwd);
+
+        if (result.Ok)
+        {
+            AgentFiles.Touched(path);
+            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, GitDiff.After(snapshot));
+        }
+
+        return result.Message;
+    }
+
+    /// <summary>
+    /// Draws a file the agent wrote or edited as a change card — the path, jumpable, and the diff
+    /// when the file is under git — and keeps it in the history so it survives reopening.
+    /// </summary>
+    private void ShowFileChange(string verb, string path, string diff)
+    {
+        _activity++;
+        var pathHtml = $"<span data-file=\"{Markdown.Escape(path)}\">{Markdown.Escape(path)}</span>";
+
+        Post(new { t = "activity", id = _activity.ToString(), state = "done", label = verb, codeHtml = pathHtml });
+        Post(new { t = "activityDone", id = _activity.ToString(), diffHtml = DiffHtml(diff) });
+
+        _history.Add(new ChatTurn { Role = "command", Command = $"{verb} {path}", Output = string.Empty, Diff = diff });
+        Persist();
+    }
+
+    /// <inheritdoc />
     /// <remarks>
     /// A command asking for administrator rights is always put to the user, standing allowance or
     /// not. An allowance is granted for a pattern in the ordinary run of things; it is not consent
@@ -1673,7 +1829,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         if (!elevated)
         {
-            output = await CommandRunner.RunAsync(command, cancellationToken).ConfigureAwait(true);
+            // Runs in this chat's own working directory, and the directory the command leaves the
+            // shell in is remembered — so a `cd` carries to the next command.
+            var result = await CommandRunner.RunInAsync(command, _cwd, cancellationToken).ConfigureAwait(true);
+            _cwd = result.Cwd;
+            output = result.Output;
         }
         else if (!ElevatedHost.IsRunning
                  && await ElevatedHost.StartAsync(cancellationToken).ConfigureAwait(true) is { } refused)

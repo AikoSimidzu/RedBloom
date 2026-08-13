@@ -118,10 +118,45 @@
   .taskrow .tdesc { font-size: 11.5px; color: var(--muted); margin: 3px 0 0 17px; outline: none; white-space: pre-wrap; }
   .taskrow .tdesc:empty::before { content: attr(data-ph); color: var(--faint); }
   .taskrow .tmeta { display: flex; align-items: center; gap: 6px; margin: 6px 0 0 17px; flex-wrap: wrap; }
+  /* The status and assignee pickers, styled rather than left to the OS default — a bare native
+     select drew a white box that fought the dark panel. The closed control is themed here; its
+     chevron is a drawn background so no system arrow shows. */
   .taskrow select {
-    background: var(--surface); color: var(--text); border: 1px solid var(--divider);
-    border-radius: 6px; font-family: var(--ui-font); font-size: 11px; padding: 2px 4px; max-width: 46%;
+    appearance: none; -webkit-appearance: none;
+    background-color: var(--surface); color: var(--text); border: 1px solid var(--divider);
+    border-radius: 6px; font-family: var(--ui-font); font-size: 11px; padding: 3px 20px 3px 8px;
+    max-width: 48%; cursor: pointer; line-height: 1.3;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6' viewBox='0 0 8 6'%3E%3Cpath d='M1 1l3 3 3-3' fill='none' stroke='%23a89f9f' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 7px center;
   }
+  .taskrow select:hover { border-color: var(--accent-dim); }
+  .taskrow select:focus { outline: none; border-color: var(--accent); }
+  /* The open popup is the OS list; only its colours can be set, so at least they match. */
+  .taskrow select option { background: var(--chrome); color: var(--text); }
+
+  /* ---- staged task chips (shared with the agent on the next send) ---- */
+  #taskchips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
+  #taskchips:empty { display: none; }
+  .taskchip {
+    display: flex; align-items: center; gap: 6px; max-width: 260px;
+    padding: 3px 6px 3px 9px; border: 1px solid var(--accent-dim); border-radius: 999px;
+    background: var(--bubble-user); font-size: 11.5px; color: var(--text);
+  }
+  .taskchip .tci { font-family: "Segoe MDL2 Assets"; font-size: 12px; color: var(--accent); flex: 0 0 auto; }
+  .taskchip .tcn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .taskchip .tcst { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .taskchip button { font: inherit; font-size: 12px; line-height: 1; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0 2px; }
+  .taskchip button:hover { color: var(--accent); }
+
+  /* ---- the agent-notebook picker inside the task panel ---- */
+  .agentpick { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 2px 9px; border-bottom: 1px solid var(--divider); margin-bottom: 6px; }
+  .agentpick button {
+    border: 1px solid var(--divider); background: var(--surface); color: var(--muted);
+    border-radius: 13px; font-family: var(--ui-font); font-size: 11.5px; padding: 3px 10px; cursor: pointer;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agentpick button:hover { color: var(--text); border-color: var(--accent); }
+  .agentpick button.on { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
   .taskrow .st { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
   .st.NotStarted { background: var(--faint); }
   .st.InProgress { background: #79c0ff; }
@@ -1120,6 +1155,7 @@
       <div id="headsub"></div>
     </div>
     <button id="tasksBtn" class="headbtn iconbtn" hidden title="Tasks"></button>
+    <button id="agentTasksBtn" class="headbtn iconbtn" hidden title="Agent notebooks"></button>
   </div>
 
   <div id="taskpanel" hidden>
@@ -1164,6 +1200,7 @@
     <div id="slash" hidden></div>
     <div id="pin" hidden></div>
     <div id="editbar" hidden></div>
+    <div id="taskchips"></div>
     <div id="chips"></div>
     <div id="toprow">
       <div id="rpbar" hidden>
@@ -2033,15 +2070,25 @@
       head.hidden = false;
     },
 
-    /// The task list for this chat or room.
+    /// The shared task list for this chat or room, shown behind the notebook button.
     tasks(m) {
       taskList = Array.isArray(m.list) ? m.list : [];
       taskRoom = !!m.room;
       taskParticipants = Array.isArray(m.participants) ? m.participants : [];
       if (m.statuses) taskStatuses = m.statuses;
       if (m.labels) Object.assign(TL, m.labels);
-      document.getElementById("tasksBtn").hidden = false;
-      renderTasks();
+      renderButtons();
+      if (shellOpen() && taskMode === "shared") renderTasks();
+    },
+
+    /// Each agent's own notebook, shown behind the people button — pick an agent to see its list.
+    agentTasks(m) {
+      agentLists = Array.isArray(m.agents) ? m.agents : [];
+      if (m.statuses) taskStatuses = m.statuses;
+      if (m.labels) Object.assign(TL, m.labels);
+      if (!agentLists.some(a => a.name === agentPick)) agentPick = agentLists[0] ? agentLists[0].name : "";
+      renderButtons();
+      if (shellOpen() && taskMode === "agent") renderTasks();
     },
 
     /// A file the agent is handing over. Drawn as its own card rather than inside the reply,
@@ -2243,16 +2290,25 @@
   });
 
   function submit() {
-    const text = input.value.trim();
-    if (!text) return;
+    let text = input.value.trim();
+    const extra = stagedMarkdown();
+
+    // Nothing typed and nothing pinned is nothing to send.
+    if (!text && !extra) return;
 
     // A bare "/command" is run rather than sent as a message.
-    if (runTypedCommand()) return;
+    if (text && runTypedCommand()) return;
+
+    // Pinned tasks are folded in as they go — they were kept out of the text box, not out of
+    // the message.
+    if (extra) text = text ? text + "\n\n" + extra : extra;
 
     input.value = "";
     input.style.height = "auto";
     hideMentions();
     hideSlash();
+    stagedTasks = [];
+    renderStaged();
 
     // Sending my own message returns the view to the bottom, even if I had scrolled up into the
     // history a moment ago — the reply is what I want to watch for now.
@@ -2771,18 +2827,43 @@
   let taskRoom = false;
   let taskParticipants = [];
   let taskStatuses = {};
-  const TL = {};   // labels: tasks, add, del, shareOne, shareAll, shareHeader, none, namePh, descPh, unassigned
+  let agentLists = [];        // [{ name, list: [...] }] — each agent's own notebook
+  let agentPick = "";         // which agent's notebook the agent panel is showing
+  let taskMode = "shared";    // "shared" (the header list) or "agent" (a notebook)
+  let stagedTasks = [];       // tasks pinned to send, shown as chips by the composer
+  const TL = {};   // labels: tasks, agentTasks, add, del, shareOne, shareAll, shareHeader, none, agentNone, namePh, descPh, unassigned
+
+  // Glyphs by code point rather than typed, so an editor blind to the private-use area leaves
+  // them intact: a notebook for the shared list, people for the agents' notebooks.
+  const NOTEBOOK = "";
+  const AGENTLIST = "";
 
   const tasksBtn = document.getElementById("tasksBtn");
+  const agentTasksBtn = document.getElementById("agentTasksBtn");
   const taskPanel = document.getElementById("taskpanel");
   const taskModal = document.getElementById("taskmodal");
+  const taskChips = document.getElementById("taskchips");
 
-  function openPanel() { taskModal.hidden = true; taskPanel.hidden = false; tasksBtn.classList.add("on"); renderTasks(); }
-  function openModal() { taskPanel.hidden = true; taskModal.hidden = false; renderTasks(); }
-  function closeTasks() { taskPanel.hidden = true; taskModal.hidden = true; tasksBtn.classList.remove("on"); }
+  function shellOpen() { return !taskPanel.hidden || !taskModal.hidden; }
 
-  tasksBtn.onclick = () => { (taskPanel.hidden && taskModal.hidden) ? openPanel() : closeTasks(); };
-  document.getElementById("taskexpand").onclick = openModal;
+  /** Opens the popover (or, as a modal, the centred card) on one of the two lists. */
+  function openShell(mode, modal) {
+    taskMode = mode;
+    if (modal) { taskPanel.hidden = true; taskModal.hidden = false; }
+    else { taskModal.hidden = true; taskPanel.hidden = false; }
+    tasksBtn.classList.toggle("on", mode === "shared");
+    agentTasksBtn.classList.toggle("on", mode === "agent");
+    renderTasks();
+  }
+
+  function closeTasks() {
+    taskPanel.hidden = true; taskModal.hidden = true;
+    tasksBtn.classList.remove("on"); agentTasksBtn.classList.remove("on");
+  }
+
+  tasksBtn.onclick = () => { (shellOpen() && taskMode === "shared") ? closeTasks() : openShell("shared", false); };
+  agentTasksBtn.onclick = () => { (shellOpen() && taskMode === "agent") ? closeTasks() : openShell("agent", false); };
+  document.getElementById("taskexpand").onclick = () => openShell(taskMode, true);
   document.getElementById("taskclose").onclick = closeTasks;
   document.getElementById("taskmodalclose").onclick = closeTasks;
   taskModal.addEventListener("mousedown", (e) => { if (e.target === taskModal) closeTasks(); });
@@ -2796,16 +2877,6 @@
 
   function postTask(op, data) { post(Object.assign({ t: "task", op }, data)); }
 
-  function insertToComposer(text) {
-    const lead = input.value.length && !input.value.endsWith("\n") ? "\n\n" : "";
-    input.value += lead + text + "\n";
-    input.focus();
-    input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 180) + "px";
-    input.selectionStart = input.selectionEnd = input.value.length;
-    input.dispatchEvent(new Event("input"));
-  }
-
   function taskShareText(t) {
     let s = "**" + (t.name || "(no name)") + "** — " + (taskStatuses[t.state] || t.state);
     if (t.assignee) s += " · @" + t.assignee;
@@ -2813,97 +2884,182 @@
     return s;
   }
 
-  function shareTask(t) {
-    const prefix = (taskRoom && t.assignee) ? "@" + t.assignee + " " : "";
-    insertToComposer(prefix + taskShareText(t));
+  // Sharing no longer types into the composer: the task is pinned as a chip beside the file
+  // attachments, and folded into the message only when it is actually sent.
+  function stageTask(t, owner) {
+    stagedTasks.push({ name: t.name, state: t.state, desc: t.desc, assignee: t.assignee, owner: owner || "" });
+    renderStaged();
+    closeTasks();
   }
 
-  function shareAll() {
-    if (!taskList.length) return;
-    insertToComposer((TL.shareHeader || "Tasks:") + "\n\n" + taskList.map(taskShareText).join("\n\n"));
+  function stageAll(list) {
+    for (const t of list) stagedTasks.push({ name: t.name, state: t.state, desc: t.desc, assignee: t.assignee, owner: "" });
+    renderStaged();
+    closeTasks();
   }
 
-  function renderTasks() {
-    // The button always follows the list, even while both shells are shut.
+  function renderStaged() {
+    taskChips.innerHTML = "";
+    stagedTasks.forEach((t, i) => {
+      const chip = el("div", "taskchip");
+      const ic = el("span", "tci", ""); ic.textContent = NOTEBOOK; chip.appendChild(ic);
+      chip.appendChild(el("span", "tcst st " + t.state));
+      const nm = el("span", "tcn", ""); nm.textContent = (t.owner ? t.owner + ": " : "") + (t.name || "(task)"); chip.appendChild(nm);
+      const x = el("button", null, "×"); x.title = S.Remove || "Remove";
+      x.onclick = () => { stagedTasks.splice(i, 1); renderStaged(); };
+      chip.appendChild(x);
+      taskChips.appendChild(chip);
+    });
+  }
+
+  /** The markdown for the staged tasks, folded into the message as it is sent. */
+  function stagedMarkdown() {
+    if (!stagedTasks.length) return "";
+    const header = TL.shareHeader || "Tasks:";
+    const lines = stagedTasks.map((t) => {
+      const prefix = (taskRoom && t.assignee) ? "@" + t.assignee + " " : "";
+      return prefix + taskShareText(t);
+    });
+    return header + "\n\n" + lines.join("\n\n");
+  }
+
+  /** The two header buttons: glyph, open-count badge and title. Follows the lists even while shut. */
+  function renderButtons() {
     tasksBtn.innerHTML = "";
-    const gi = el("span", "ni", ""); gi.textContent = ""; tasksBtn.appendChild(gi);
+    const gi = el("span", "ni", ""); gi.textContent = NOTEBOOK; tasksBtn.appendChild(gi);
     const open = taskList.filter(t => t.state !== "Done").length;
     if (taskList.length) { const c = el("span", "nc", ""); c.textContent = open; tasksBtn.appendChild(c); }
     tasksBtn.title = TL.tasks || "Tasks";
+    tasksBtn.hidden = false;
 
-    // Both shells' titles.
-    for (const tt of document.querySelectorAll(".taskhead .tt")) tt.textContent = TL.tasks || "Tasks";
+    agentTasksBtn.innerHTML = "";
+    const ai = el("span", "ni", ""); ai.textContent = AGENTLIST; agentTasksBtn.appendChild(ai);
+    const agentOpen = agentLists.reduce((n, a) => n + (a.list ? a.list.filter(t => t.state !== "Done").length : 0), 0);
+    if (agentOpen) { const c = el("span", "nc", ""); c.textContent = agentOpen; agentTasksBtn.appendChild(c); }
+    agentTasksBtn.title = TL.agentTasks || "Agent notebooks";
+    agentTasksBtn.hidden = agentLists.length === 0;
 
-    const body = activeBody();
-    if (!body) return;
+    const title = taskMode === "agent" ? (TL.agentTasks || "Agent notebooks") : (TL.tasks || "Tasks");
+    for (const tt of document.querySelectorAll(".taskhead .tt")) tt.textContent = title;
+  }
 
-    body.innerHTML = "";
+  /** One task row, for either list. `opts.scope === "agent"` routes edits to a notebook. */
+  function taskRow(t, opts) {
+    const agentEdit = opts.scope === "agent";
+    const edit = (fields) => agentEdit
+      ? post(Object.assign({ t: "task", op: "update", scope: "agent", agent: opts.agent, id: t.id }, fields))
+      : postTask("update", Object.assign({ id: t.id }, fields));
 
-    if (!taskList.length) {
-      const none = el("div", "tasknone"); none.textContent = TL.none || "No tasks yet.";
-      body.appendChild(none);
+    const row = el("div", "taskrow");
+    const top = el("div", "trtop");
+    top.appendChild(el("div", "st " + t.state));
+
+    const name = el("div", "tname");
+    name.contentEditable = "true"; name.dataset.ph = TL.namePh || "Task"; name.textContent = t.name || "";
+    name.addEventListener("blur", () => { if ((t.name || "") !== name.textContent) edit({ name: name.textContent }); });
+    top.appendChild(name);
+
+    const acts = el("div", "tacts");
+    const share = el("button", null, "&#xE72D;"); share.title = TL.shareOne || "Share";
+    share.onmousedown = (e) => { e.preventDefault(); stageTask(t, agentEdit ? opts.agent : ""); };
+    const del = el("button", null, "&#xE74D;"); del.title = TL.del || "Delete";
+    del.onclick = () => agentEdit
+      ? post({ t: "task", op: "delete", scope: "agent", agent: opts.agent, id: t.id })
+      : postTask("delete", { id: t.id });
+    acts.appendChild(share); acts.appendChild(del);
+    top.appendChild(acts);
+    row.appendChild(top);
+
+    const desc = el("div", "tdesc");
+    desc.contentEditable = "true"; desc.dataset.ph = TL.descPh || "Description"; desc.textContent = t.desc || "";
+    desc.addEventListener("blur", () => { if ((t.desc || "") !== desc.textContent) edit({ desc: desc.textContent }); });
+    row.appendChild(desc);
+
+    const meta = el("div", "tmeta");
+    const stSel = document.createElement("select");
+    for (const s of STATES) {
+      const o = document.createElement("option");
+      o.value = s; o.textContent = taskStatuses[s] || s; if (s === t.state) o.selected = true;
+      stSel.appendChild(o);
     }
+    stSel.addEventListener("change", () => edit({ state: stSel.value }));
+    meta.appendChild(stSel);
 
-    for (const t of taskList) {
-      const row = el("div", "taskrow");
-
-      const top = el("div", "trtop");
-      top.appendChild(el("div", "st " + t.state));
-
-      const name = el("div", "tname");
-      name.contentEditable = "true"; name.dataset.ph = TL.namePh || "Task"; name.textContent = t.name || "";
-      name.addEventListener("blur", () => { if ((t.name || "") !== name.textContent) postTask("update", { id: t.id, name: name.textContent }); });
-      top.appendChild(name);
-
-      const acts = el("div", "tacts");
-      const share = el("button", null, "&#xE72D;"); share.title = TL.shareOne || "Share"; share.onmousedown = (e) => { e.preventDefault(); shareTask(t); closeTasks(); };
-      const del = el("button", null, "&#xE74D;"); del.title = TL.del || "Delete"; del.onclick = () => postTask("delete", { id: t.id });
-      acts.appendChild(share); acts.appendChild(del);
-      top.appendChild(acts);
-      row.appendChild(top);
-
-      const desc = el("div", "tdesc");
-      desc.contentEditable = "true"; desc.dataset.ph = TL.descPh || "Description"; desc.textContent = t.desc || "";
-      desc.addEventListener("blur", () => { if ((t.desc || "") !== desc.textContent) postTask("update", { id: t.id, desc: desc.textContent }); });
-      row.appendChild(desc);
-
-      const meta = el("div", "tmeta");
-      const st = document.createElement("select");
-      for (const s of STATES) {
-        const o = document.createElement("option");
-        o.value = s; o.textContent = taskStatuses[s] || s; if (s === t.state) o.selected = true;
-        st.appendChild(o);
+    // The assignee picker belongs to the room's shared list; a notebook is one agent's already.
+    if (opts.room && !agentEdit) {
+      const as = document.createElement("select");
+      const zero = document.createElement("option"); zero.value = ""; zero.textContent = TL.unassigned || "—"; as.appendChild(zero);
+      for (const p of taskParticipants) {
+        const o = document.createElement("option"); o.value = p; o.textContent = p; if (p === t.assignee) o.selected = true; as.appendChild(o);
       }
-      st.addEventListener("change", () => postTask("update", { id: t.id, state: st.value }));
-      meta.appendChild(st);
-
-      if (taskRoom) {
-        const as = document.createElement("select");
-        const zero = document.createElement("option"); zero.value = ""; zero.textContent = TL.unassigned || "—"; as.appendChild(zero);
-        for (const p of taskParticipants) {
-          const o = document.createElement("option"); o.value = p; o.textContent = p; if (p === t.assignee) o.selected = true; as.appendChild(o);
-        }
-        as.addEventListener("change", () => postTask("update", { id: t.id, assignee: as.value }));
-        meta.appendChild(as);
-      }
-      row.appendChild(meta);
-      body.appendChild(row);
+      as.addEventListener("change", () => postTask("update", { id: t.id, assignee: as.value }));
+      meta.appendChild(as);
     }
+    row.appendChild(meta);
+    return row;
+  }
 
+  /** The add-a-task row, wired to whichever list is on screen. */
+  function addRow(onAdd) {
     const add = el("div", "taskadd");
     const ni = document.createElement("input"); ni.placeholder = TL.namePh || "Task";
     const btn = el("button", null, ""); btn.textContent = TL.add || "Add";
-    const addFn = () => { const v = ni.value.trim(); if (v) { postTask("add", { name: v }); ni.value = ""; } };
+    const addFn = () => { const v = ni.value.trim(); if (v) { onAdd(v); ni.value = ""; } };
     btn.onclick = addFn;
     ni.addEventListener("keydown", (e) => { if (e.key === "Enter") addFn(); });
     add.appendChild(ni); add.appendChild(btn);
-    body.appendChild(add);
+    return add;
+  }
 
-    if (taskList.length) {
-      const foot = el("div", "taskfoot");
-      const sa = el("button", "taskshareall", ""); sa.textContent = TL.shareAll || "Share all"; sa.onclick = shareAll;
-      foot.appendChild(sa); body.appendChild(foot);
+  function shareAllFoot(list) {
+    const foot = el("div", "taskfoot");
+    const sa = el("button", "taskshareall", ""); sa.textContent = TL.shareAll || "Share all";
+    sa.onclick = () => { if (list.length) stageAll(list); };
+    foot.appendChild(sa);
+    return foot;
+  }
+
+  function renderTasks() {
+    renderButtons();
+    const body = activeBody();
+    if (!body) return;
+    body.innerHTML = "";
+    if (taskMode === "agent") renderAgentBody(body); else renderSharedBody(body);
+  }
+
+  function renderSharedBody(body) {
+    if (!taskList.length) {
+      const none = el("div", "tasknone"); none.textContent = TL.none || "No tasks yet."; body.appendChild(none);
     }
+    for (const t of taskList) body.appendChild(taskRow(t, { room: taskRoom }));
+    body.appendChild(addRow((v) => postTask("add", { name: v })));
+    if (taskList.length) body.appendChild(shareAllFoot(taskList));
+  }
+
+  function renderAgentBody(body) {
+    if (!agentLists.some(a => a.name === agentPick)) agentPick = agentLists[0] ? agentLists[0].name : "";
+
+    // The picker sits at the top: one chip per agent, the chosen one lit. With a single agent it
+    // is left out — there is nothing to choose between.
+    if (agentLists.length > 1) {
+      const pick = el("div", "agentpick");
+      for (const a of agentLists) {
+        const b = el("button", a.name === agentPick ? "on" : "", ""); b.textContent = a.name;
+        b.onclick = () => { agentPick = a.name; renderTasks(); };
+        pick.appendChild(b);
+      }
+      body.appendChild(pick);
+    }
+
+    const cur = agentLists.find(a => a.name === agentPick);
+    const list = cur && Array.isArray(cur.list) ? cur.list : [];
+
+    if (!list.length) {
+      const none = el("div", "tasknone"); none.textContent = TL.agentNone || "This agent has no tasks yet."; body.appendChild(none);
+    }
+    for (const t of list) body.appendChild(taskRow(t, { room: false, scope: "agent", agent: agentPick }));
+    body.appendChild(addRow((v) => post({ t: "task", op: "add", scope: "agent", agent: agentPick, name: v })));
+    if (list.length) body.appendChild(shareAllFoot(list));
   }
 
   post({ t: "ready" });

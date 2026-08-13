@@ -161,6 +161,12 @@ public interface IAgentToolHost
     /// <summary>True when this agent may call other agents, in which case the ask tool is offered.</summary>
     bool AgentsEnabled { get; }
 
+    /// <summary>
+    /// True when the task tool is offered — it always is for an ordinary chat or room, so the model
+    /// can keep the task list and its own notebook current.
+    /// </summary>
+    bool TasksEnabled { get; }
+
     /// <summary>Puts the command to the user. False means it must not run.</summary>
     Task<bool> ApproveAsync(string command, bool elevated, CancellationToken cancellationToken);
 
@@ -182,6 +188,21 @@ public interface IAgentToolHost
     /// drew in the chat.
     /// </summary>
     Task<string> AskAgentAsync(string agentName, string request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads, adds, changes or removes a task on the shared list or the agent's own notebook, and
+    /// returns both lists as they stand so the model can see the ids to act on next.
+    /// </summary>
+    /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
+    Task<string> ManageTasksAsync(string argumentsJson, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Carries out one of the file tools — read, write, edit or list — and returns the result. A
+    /// write or edit is put to the user the same way a command is; a read or a listing is not.
+    /// </summary>
+    /// <param name="name">Which file tool: <see cref="AgentTransports.Files"/> names.</param>
+    /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
+    Task<string> FileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds the transport an agent's provider calls for.</summary>
@@ -290,6 +311,128 @@ public static class AgentTransports
         public const string RequestDescription =
             "What to ask it for — a question for a language agent, or a full image description for "
             + "an image agent.";
+    }
+
+    /// <summary>
+    /// The task tool, described the same way to both APIs.
+    /// </summary>
+    /// <remarks>
+    /// One tool covers both lists: the shared one the user sees in the header, and the agent's own
+    /// notebook. It takes no approval — it changes a list on the user's own screen, the same
+    /// standing as sharing a file — and its result is always the current state of both lists, so
+    /// the model learns the ids it needs without a separate read.
+    /// </remarks>
+    public static class Tasks
+    {
+        public const string Name = "manage_tasks";
+
+        public const string Description =
+            "Read and keep task lists that the user can see in the chat header. There are two: "
+            + "\"shared\", the list you and the user share, and \"mine\", your own private notebook "
+            + "for planning your work. Every call returns both lists with their ids, so call it with "
+            + "op \"list\" first to see what is there. Use op \"add\" to create a task (give it a "
+            + "name, optionally a description and a state), \"update\" to change a task's name, "
+            + "description or state by its id, \"delete\" to remove one by id, and \"report\" to post "
+            + "a short progress note to the user (put the note in \"note\"). Keep a task's state "
+            + "current as you work: set it to InProgress when you start, Done when finished, "
+            + "NeedsRework or Tests when that is where it stands. Valid states: NotStarted, "
+            + "InProgress, Done, NeedsRework, Tests.";
+
+        public const string Op = "op";
+        public const string OpDescription = "One of: list, add, update, delete, report.";
+
+        public const string List = "list";
+        public const string ListDescription = "Which list to act on: \"shared\" or \"mine\". Defaults to shared.";
+
+        public const string Id = "id";
+        public const string IdDescription = "The task id, for update and delete. Ids are shown in the result of any call.";
+
+        public const string TaskName = "name";
+        public const string TaskNameDescription = "The task's short name, for add and update.";
+
+        public const string Desc = "desc";
+        public const string DescDescription = "The task's description, for add and update.";
+
+        public const string State = "state";
+
+        public const string StateDescription =
+            "The task's state: NotStarted, InProgress, Done, NeedsRework or Tests.";
+
+        public const string Note = "note";
+        public const string NoteDescription = "A short progress note to show the user, for op \"report\".";
+    }
+
+    /// <summary>
+    /// The file tools — read, write, edit and list — described the same way to both APIs.
+    /// </summary>
+    /// <remarks>
+    /// These are what a model edits code with, instead of hand-rolling echo/Set-Content one-liners
+    /// through the shell: exact, not subject to the quoting and encoding traps of a command line,
+    /// and not truncated the way <c>type</c> is. Offered together with <see cref="Command"/> — a
+    /// write or edit is as powerful as a command, so it rides the same permission and, when the
+    /// agent's mode asks, the same approval. Relative paths resolve against the chat's working
+    /// directory.
+    /// </remarks>
+    public static class Files
+    {
+        public const string Read = "read_file";
+        public const string Write = "write_file";
+        public const string Edit = "edit_file";
+        public const string List = "list_dir";
+
+        public const string Path = "path";
+        public const string Content = "content";
+        public const string Old = "old";
+        public const string New = "new";
+        public const string ReplaceAll = "replace_all";
+        public const string StartLine = "start_line";
+        public const string EndLine = "end_line";
+
+        public static readonly HashSet<string> Names = new(StringComparer.Ordinal) { Read, Write, Edit, List };
+
+        /// <summary>One parameter of a file tool: name, JSON type, description, and whether required.</summary>
+        public readonly record struct Param(string Name, string Type, string Description, bool Required);
+
+        /// <summary>One file tool's full description, for a transport to turn into its own schema.</summary>
+        public readonly record struct Spec(string Name, string Description, Param[] Parameters);
+
+        /// <summary>Every file tool, so each transport declares them from one source.</summary>
+        public static readonly Spec[] All =
+        [
+            new(Read,
+                "Read a file and return its contents, optionally just a range of lines. Use this "
+                + "rather than a `type` command: it is not truncated the same way and can return "
+                + "exact line numbers to edit against.",
+                [
+                    new(Path, "string", "Path of the file to read; relative paths resolve against the working directory.", true),
+                    new(StartLine, "integer", "Optional. First line to return, 1-based.", false),
+                    new(EndLine, "integer", "Optional. Last line to return, 1-based.", false),
+                ]),
+            new(Write,
+                "Create a file, or replace an existing one whole, with the given contents. Makes "
+                + "any missing parent folders. Use this to write a new file or rewrite a small one; "
+                + "for a change to part of a larger file, prefer edit_file.",
+                [
+                    new(Path, "string", "Path of the file to write; relative paths resolve against the working directory.", true),
+                    new(Content, "string", "The full contents to write.", true),
+                ]),
+            new(Edit,
+                "Replace an exact piece of text in a file with new text. The old text must appear "
+                + "in the file exactly once unless replace_all is set. This is the precise way to "
+                + "change code — no quoting or escaping problems.",
+                [
+                    new(Path, "string", "Path of the file to edit; relative paths resolve against the working directory.", true),
+                    new(Old, "string", "The exact text to replace, copied from the file including its indentation.", true),
+                    new(New, "string", "The text to put in its place.", true),
+                    new(ReplaceAll, "boolean", "Optional. Replace every occurrence instead of requiring exactly one.", false),
+                ]),
+            new(List,
+                "List the entries of a folder — files and subfolders. Defaults to the working "
+                + "directory when no path is given.",
+                [
+                    new(Path, "string", "Optional. Folder to list; relative paths resolve against the working directory.", false),
+                ]),
+        ];
     }
 
     /// <summary>The command tool, described the same way to both APIs.</summary>
