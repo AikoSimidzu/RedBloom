@@ -129,6 +129,55 @@ public partial class RoomDialog : Window
         DialogResult = true;
     }
 
+    /// <summary>Agents cloned in this dialog, dropped again if the dialog is cancelled.</summary>
+    private readonly List<AiAgent> _created = [];
+
+    /// <summary>
+    /// Adds a copy of a chosen agent to the room — same endpoint and key, a fresh identity — so a
+    /// second model of the same provider can take part. The model is set on the new row afterwards.
+    /// </summary>
+    private void AddModel_Click(object sender, RoutedEventArgs e)
+    {
+        var bases = ThemeService.Settings.Agents.Where(a => a.CanChooseModel).ToList();
+
+        if (bases.Count == 0)
+        {
+            MessageBox.Show(this, LocalizationService.T("L_RoomAddModelNone"),
+                LocalizationService.T("L_RoomTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var menu = new ContextMenu { PlacementTarget = sender as UIElement };
+
+        foreach (var agent in bases)
+        {
+            var item = new MenuItem { Header = agent.DisplayName };
+            item.Click += (_, _) => CloneIntoRoom(agent);
+            menu.Items.Add(item);
+        }
+
+        menu.IsOpen = true;
+    }
+
+    private void CloneIntoRoom(AiAgent baseAgent)
+    {
+        var copy = baseAgent.Clone();
+        copy.Id = Guid.NewGuid().ToString("n");
+
+        ThemeService.Settings.Agents.Add(copy);
+        _created.Add(copy);
+        ThemeService.Save();
+
+        var pick = new Pick(copy) { Chosen = true };
+        _picks.Add(pick);
+
+        // A List does not tell the list to redraw on its own; re-seating the source does.
+        AgentsList.ItemsSource = null;
+        AgentsList.ItemsSource = _picks;
+
+        RefreshModerators();
+    }
+
     private void BrowseAvatar_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not Pick pick)
@@ -208,7 +257,21 @@ public partial class RoomDialog : Window
         menu.IsOpen = true;
     }
 
-    private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        // Copies made in this dialog were saved as they were created; a cancel undoes them.
+        if (_created.Count > 0)
+        {
+            foreach (var agent in _created)
+            {
+                ThemeService.Settings.Agents.Remove(agent);
+            }
+
+            ThemeService.Save();
+        }
+
+        DialogResult = false;
+    }
 
     private void Root_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {

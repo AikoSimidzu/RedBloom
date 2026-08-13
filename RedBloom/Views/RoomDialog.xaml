@@ -46,11 +46,20 @@
                        Margin="0,0,0,4" />
             <TextBox x:Name="NameBox" Padding="7,5" Margin="0,0,0,12" />
 
-            <TextBlock Text="{DynamicResource L_RoomParticipants}"
-                       Foreground="{DynamicResource TextMuted}"
-                       FontFamily="{DynamicResource UiFont}"
-                       FontSize="12"
-                       Margin="0,0,0,4" />
+            <Grid Margin="0,0,0,4" ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="{DynamicResource L_RoomParticipants}"
+                           Foreground="{DynamicResource TextMuted}"
+                           FontFamily="{DynamicResource UiFont}"
+                           FontSize="12"
+                           VerticalAlignment="Center" />
+                <Button Grid.Column="1"
+                        Content="{DynamicResource L_RoomAddModel}"
+                        Style="{StaticResource GhostButton}"
+                        Padding="9,3"
+                        ToolTip="{DynamicResource L_RoomAddModelTip}"
+                        Click="AddModel_Click" />
+            </Grid>
             <Border Background="{DynamicResource Surface}"
                     BorderBrush="{DynamicResource Divider}"
                     BorderThickness="1"
@@ -182,7 +191,7 @@
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="12"
                            Margin="0,0,0,4" />
-                <ComboBox x:Name="ModeratorBox" DisplayMemberPath="Name" />
+                <ComboBox x:Name="ModeratorBox" DisplayMemberPath="DisplayName" />
             </StackPanel>
 
             <CheckBox x:Name="AllowCommandsBox"

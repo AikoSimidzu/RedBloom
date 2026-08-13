@@ -80,6 +80,33 @@ public partial class AiSettingsPage : UserControl
     }
 
     /// <summary>
+    /// Duplicates the selected agent — same endpoint, key and settings, a fresh identity — so
+    /// several models on one provider, or several parallel workers, can run side by side.
+    /// </summary>
+    /// <remarks>
+    /// The copy keeps the name on purpose: two agents sharing a name are what makes each show as
+    /// "name [model]", so the picker and the rooms tell the models apart. Only the model is meant
+    /// to change on the copy, so the model box is focused for the user to set it.
+    /// </remarks>
+    private void Multiply_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } agent || !agent.CanChooseModel)
+        {
+            return;
+        }
+
+        var copy = agent.Clone();
+        copy.Id = Guid.NewGuid().ToString("n");
+
+        _agents.Add(copy);
+        AgentList.SelectedItem = copy;
+        Persist();
+
+        ModelBox.Focus();
+        ModelBox.SelectAll();
+    }
+
+    /// <summary>
     /// Adds a model found on this machine as a saved, editable agent — the same as the ones the
     /// picker offers, but kept in the settings so its name, avatar, persona and context window can
     /// be set like any other agent's.
@@ -489,6 +516,9 @@ public partial class AiSettingsPage : UserControl
         var has = Selected is not null;
         Editor.IsEnabled = has;
         DeleteAgentButton.IsEnabled = has;
+
+        // Multiplying only makes sense for an endpoint agent with a model to vary.
+        MultiplyButton.IsEnabled = Selected?.CanChooseModel == true;
     }
 
     /// <summary>

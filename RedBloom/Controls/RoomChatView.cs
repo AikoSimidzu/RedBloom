@@ -55,6 +55,13 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     private string _suggested = string.Empty;
     private int _activity;
 
+    /// <summary>The command now running and the diff it produced, held between its call and result.</summary>
+    private string _pendingCommand = string.Empty;
+    private string _pendingDiff = string.Empty;
+
+    /// <summary>Raised when a room asks to open a file (a "go to file" on a diff), so the window can.</summary>
+    public static event Action<string>? FileOpenRequested;
+
     public RoomChatView(ChatRoom room)
     {
         _room = room;
@@ -95,10 +102,14 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     /// </remarks>
     public void RefreshParticipants()
     {
-        var names = Participants().Select(a => a.Name).ToList();
+        var names = Participants().Select(a => a.DisplayName).ToList();
 
         Post(new { t = "mentions", names });
         Post(new { t = "note", html = Markdown.Escape($"{_room.Title} · {string.Join(", ", names)}") });
+
+        // The header's models and the task assignees follow the roster too.
+        PushHead();
+        PushTasks();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -212,6 +223,24 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
             case "web" when message.TryGetProperty("query", out var query):
                 OpenWebSearch(query.GetString() ?? string.Empty);
+                break;
+
+            case "snapshot" when message.TryGetProperty("text", out var snap):
+                TextSnapshot.CopyToClipboard(snap.GetString() ?? string.Empty);
+                break;
+
+            case "openFile" when message.TryGetProperty("path", out var fp):
+                FileOpenRequested?.Invoke(fp.GetString() ?? string.Empty);
+                break;
+
+            case "task":
+                if (TaskPanel.Apply(_room.Tasks, message))
+                {
+                    _room.Touch();
+                    RoomStore.Save(_room);
+                    PushTasks();
+                }
+
                 break;
 
             case "loadEarlier":
@@ -333,12 +362,38 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         Post(new { t = "commands", names = new[] { "compact" } });
 
         // The composer offers these as an @-mention picker, the way a group chat does.
-        Post(new { t = "mentions", names = Participants().Select(a => a.Name) });
+        Post(new { t = "mentions", names = Participants().Select(a => a.DisplayName) });
+
+        PushHead();
+        PushTasks();
 
         RenderHistory();
 
         Post(new { t = "status", text = PolicyName(), busy = false });
     }
+
+    /// <summary>The header: the room's name and the models of its cast under it.</summary>
+    private void PushHead()
+    {
+        var models = Participants()
+            .Select(a => a.ShortModel.Length > 0 ? a.ShortModel : a.DisplayName)
+            .Where(m => m.Length > 0)
+            .Distinct()
+            .ToList();
+
+        Post(new { t = "head", avatar = string.Empty, title = _room.Title, subtitle = string.Join(", ", models) });
+    }
+
+    /// <summary>Hands the page this room's task list, with the cast offered as assignees.</summary>
+    private void PushTasks() => Post(new
+    {
+        t = "tasks",
+        list = _room.Tasks.Select(TaskPanel.Item),
+        room = true,
+        participants = Participants().Select(a => a.DisplayName),
+        statuses = TaskPanel.Statuses(),
+        labels = TaskPanel.Labels(),
+    });
 
     /// <summary>
     /// Draws the most recent page of the room, newest first held back for scrolling.
@@ -358,12 +413,35 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         Post(new { t = "bulk", on = true });
         Post(new { t = "earlier", count = start });
 
-        var names = string.Join(", ", Participants().Select(a => a.Name));
+        var names = string.Join(", ", Participants().Select(a => a.DisplayName));
         Post(new { t = "note", html = Markdown.Escape($"{_room.Title} · {names}") });
 
         for (var i = start; i < turns.Count; i++)
         {
             var turn = turns[i];
+
+            if (turn.Role == "command")
+            {
+                _activity++;
+                var (clabel, _) = Describe(turn.Command);
+                Post(new
+                {
+                    t = "activity",
+                    id = _activity.ToString(),
+                    state = "done",
+                    label = clabel,
+                    codeHtml = CodeHighlighter.Highlight(turn.Command),
+                });
+                Post(new
+                {
+                    t = "activityDone",
+                    id = _activity.ToString(),
+                    summary = Summarise(turn.Output),
+                    output = turn.Output,
+                    diffHtml = GitDiff.RenderHtml(turn.Diff),
+                });
+                continue;
+            }
 
             if (turn.Role == "user")
             {
@@ -665,7 +743,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         // The pinned target otherwise holds, whatever the room's turn-taking rule is, until the
         // user releases it.
         if (!string.IsNullOrWhiteSpace(to)
-            && participants.FirstOrDefault(a => string.Equals(a.Name, to.Trim(), StringComparison.OrdinalIgnoreCase)) is { } pinned)
+            && participants.FirstOrDefault(a => string.Equals(a.DisplayName, to.Trim(), StringComparison.OrdinalIgnoreCase)) is { } pinned)
         {
             return [pinned];
         }
@@ -694,7 +772,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     /// <summary>Runs one agent and shows its reply under its own name; returns what it said.</summary>
     private async Task<string> SpeakAsync(AiAgent agent, List<AiAgent> participants, CancellationToken cancellationToken)
     {
-        Post(new { t = "thinking", on = true, label = agent.Name, what = string.Empty });
+        Post(new { t = "thinking", on = true, label = agent.DisplayName, what = string.Empty });
 
         // An image participant draws from the conversation's latest request rather than chatting.
         if (agent.Provider == AiProvider.ImageGen)
@@ -720,7 +798,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                     Post(new
                     {
                         t = "assistant",
-                        label = agent.Name,
+                        label = agent.DisplayName,
                         color = NickColor(agent),
                         avatar = AvatarDataUri(agent),
                         html = Markdown.ToHtml(reply.ToString()),
@@ -728,28 +806,59 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                     break;
 
                 case AgentEventKind.ToolCall:
-                    // The reply so far is committed before the command, so the two do not interleave.
+                    // The reply so far is committed before the command — kept in the transcript too,
+                    // so reopening the room still shows the narration that led up to it.
                     if (reply.Length > 0)
                     {
+                        _room.Turns.Add(new ChatTurn { Role = "assistant", Speaker = agent.DisplayName, Text = reply.ToString().Trim() });
                         Post(new { t = "endTurn" });
                         reply.Clear();
                     }
 
                     _activity++;
-                    var (label, what) = Describe(item.Text);
-                    Post(new { t = "activity", id = _activity.ToString(), state = "running", label, what });
+                    var (label, _) = Describe(item.Text);
+                    Post(new
+                    {
+                        t = "activity",
+                        id = _activity.ToString(),
+                        state = "running",
+                        label,
+                        codeHtml = CodeHighlighter.Highlight(item.Text),
+                    });
                     break;
 
                 case AgentEventKind.ToolResult:
-                    Post(new { t = "activityDone", id = _activity.ToString(), summary = Summarise(item.Text), output = item.Text });
+                    Post(new
+                    {
+                        t = "activityDone",
+                        id = _activity.ToString(),
+                        summary = Summarise(item.Text),
+                        output = item.Text,
+                        diffHtml = GitDiff.RenderHtml(_pendingDiff),
+                    });
+
+                    _room.Turns.Add(new ChatTurn
+                    {
+                        Role = "command",
+                        Speaker = agent.DisplayName,
+                        Command = _pendingCommand,
+                        Output = item.Text,
+                        Diff = _pendingDiff,
+                    });
+
+                    _pendingCommand = string.Empty;
+                    _pendingDiff = string.Empty;
                     break;
 
                 case AgentEventKind.ToolRefused:
                     Post(new { t = "activityDone", id = _activity.ToString(), summary = "skipped", output = "" });
+                    _room.Turns.Add(new ChatTurn { Role = "command", Speaker = agent.DisplayName, Command = _pendingCommand, Output = "(declined)" });
+                    _pendingCommand = string.Empty;
+                    _pendingDiff = string.Empty;
                     break;
 
                 case AgentEventKind.Failed:
-                    Post(new { t = "note", html = Markdown.Escape($"{agent.Name}: {item.Text}") });
+                    Post(new { t = "note", html = Markdown.Escape($"{agent.DisplayName}: {item.Text}") });
                     break;
             }
         }
@@ -760,7 +869,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
         if (text.Length > 0)
         {
-            _room.Turns.Add(new ChatTurn { Role = "assistant", Speaker = agent.Name, Text = text });
+            _room.Turns.Add(new ChatTurn { Role = "assistant", Speaker = agent.DisplayName, Text = text });
         }
 
         return text;
@@ -780,13 +889,13 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
         if (!result.Ok || result.PngPath is null)
         {
-            Post(new { t = "note", html = Markdown.Escape($"{agent.Name}: {result.Message}") });
+            Post(new { t = "note", html = Markdown.Escape($"{agent.DisplayName}: {result.Message}") });
             return string.Empty;
         }
 
         AgentFiles.Touched(result.PngPath);
-        Post(new { t = "image", label = agent.Name, src = ImageDataUri(result.PngPath), path = result.PngPath });
-        _room.Turns.Add(new ChatTurn { Role = "assistant", Speaker = agent.Name, Text = $"[picture: {prompt}]", Image = result.PngPath });
+        Post(new { t = "image", label = agent.DisplayName, src = ImageDataUri(result.PngPath), path = result.PngPath });
+        _room.Turns.Add(new ChatTurn { Role = "assistant", Speaker = agent.DisplayName, Text = $"[picture: {prompt}]", Image = result.PngPath });
 
         return string.Empty;
     }
@@ -802,7 +911,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             return null;
         }
 
-        var names = string.Join(", ", others.Select(a => a.Name));
+        var names = string.Join(", ", others.Select(a => a.DisplayName));
         var ask =
             "You are directing a group chat. Read the conversation and reply with the single name of "
             + "the participant who should speak next, exactly as written here: " + names + ". Reply "
@@ -829,7 +938,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             return null;
         }
 
-        return others.FirstOrDefault(a => said.Contains(a.Name, StringComparison.OrdinalIgnoreCase));
+        return others.FirstOrDefault(a => said.Contains(a.DisplayName, StringComparison.OrdinalIgnoreCase));
     }
 
     // ---- transcript and agent shaping ----
@@ -851,9 +960,17 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         {
             var turn = _room.Turns[i];
 
+            // A command a participant ran is noted by its command line, not re-sent as a role the
+            // models do not know; the tool result was already seen within the turn it ran in.
+            if (turn.Role == "command")
+            {
+                text.Append(turn.Speaker).Append(" ran: ").AppendLine(turn.Command);
+                continue;
+            }
+
             var who = turn.Role == "user"
                 ? LocalizationService.T("L_RoomUser")
-                : turn.Speaker == self.Name ? $"{turn.Speaker} (you)" : turn.Speaker;
+                : turn.Speaker == self.DisplayName ? $"{turn.Speaker} (you)" : turn.Speaker;
 
             text.Append(who).Append(": ").AppendLine(turn.Text);
 
@@ -936,12 +1053,12 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     private AiAgent RoomAgent(AiAgent agent, List<AiAgent> participants)
     {
         var clone = agent.Clone();
-        var cast = string.Join(", ", participants.Where(a => a.Id != agent.Id).Select(a => a.Name));
+        var cast = string.Join(", ", participants.Where(a => a.Id != agent.Id).Select(a => a.DisplayName));
 
         var preamble =
-            $"You are \"{agent.Name}\" in a group chat with: {cast}. The transcript labels each "
+            $"You are \"{agent.DisplayName}\" in a group chat with: {cast}. The transcript labels each "
             + "line with who said it; lines marked \"(you)\" are your own. Reply only as "
-            + $"{agent.Name}, in the first person, with a single message. Do not write other "
+            + $"{agent.DisplayName}, in the first person, with a single message. Do not write other "
             + "participants' lines or prefix your reply with your name. To hand the floor to "
             + "another participant, mention them with an @ before their name.";
 
@@ -971,7 +1088,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         }
 
         return [.. participants.Where(a =>
-            text.Contains("@" + a.Name, StringComparison.OrdinalIgnoreCase))];
+            text.Contains("@" + a.DisplayName, StringComparison.OrdinalIgnoreCase))];
     }
 
     /// <summary>Drops only the @ marker, keeping the words, so the picture prompt reads plainly.</summary>
@@ -981,7 +1098,8 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
     private AiAgent? FindByName(string name) =>
         ThemeService.Settings.Agents.FirstOrDefault(a =>
-            string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
+            string.Equals(a.DisplayName, name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
 
     private static string NickColor(AiAgent? agent) =>
         agent is not null && !string.IsNullOrWhiteSpace(agent.NameColor)
@@ -1052,7 +1170,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatThink",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext",
-            "L_ChatCtxCopy", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
+            "L_ChatCtxCopy", "L_ChatCtxImage", "L_ChatCtxGoToFile", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
             "L_ChatQuote", "L_ChatQuoteMe",
             "L_ChatMentionAll", "L_ChatMentionAllTitle", "L_ChatEarlier",
             "L_ChatEditing", "L_ChatCancelEdit", "L_ChatCompacting",
@@ -1188,18 +1306,27 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     /// <inheritdoc />
     public async Task<string> RunAsync(string command, bool elevated, CancellationToken cancellationToken)
     {
+        var snapshot = GitDiff.Before(command);
+        _pendingCommand = command;
+
+        string output;
+
         if (!elevated)
         {
-            return await CommandRunner.RunAsync(command, cancellationToken).ConfigureAwait(true);
+            output = await CommandRunner.RunAsync(command, cancellationToken).ConfigureAwait(true);
         }
-
-        if (!ElevatedHost.IsRunning
-            && await ElevatedHost.StartAsync(cancellationToken).ConfigureAwait(true) is { } refused)
+        else if (!ElevatedHost.IsRunning
+                 && await ElevatedHost.StartAsync(cancellationToken).ConfigureAwait(true) is { } refused)
         {
-            return $"This command needed administrator rights and did not get them: {refused}";
+            output = $"This command needed administrator rights and did not get them: {refused}";
+        }
+        else
+        {
+            output = await ElevatedHost.RunAsync(command, cancellationToken).ConfigureAwait(true);
         }
 
-        return await ElevatedHost.RunAsync(command, cancellationToken).ConfigureAwait(true);
+        _pendingDiff = GitDiff.After(snapshot);
+        return output;
     }
 
     /// <inheritdoc />
@@ -1218,7 +1345,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         Post(new
         {
             t = "shared",
-            label = _speaking?.Name ?? string.Empty,
+            label = _speaking?.DisplayName ?? string.Empty,
             note,
             files = new[] { Attachments.Describe(full) },
         });

@@ -137,6 +137,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // window is what owns the tab strip.
         AiSettingsPage.LaunchRequested += OpenAgentTab;
         LocalModelsPage.LaunchRequested += OpenAgentTab;
+        void OpenIfExists(string path)
+        {
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                OpenFileTab(path);
+            }
+        }
+
+        Controls.AgentChatView.FileOpenRequested += OpenIfExists;
+        Controls.RoomChatView.FileOpenRequested += OpenIfExists;
 
         SetupTray();
 
@@ -398,6 +408,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    /// <summary>Typing a path and pressing Enter jumps there — a folder is browsed, a file opened.</summary>
+    private void FilesPath_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        var target = Environment.ExpandEnvironmentVariables(FilesPath.Text.Trim().Trim('"'));
+
+        if (target.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(target))
+            {
+                _filesDir = Path.GetFullPath(target);
+                RefreshFiles();
+            }
+            else if (File.Exists(target))
+            {
+                _filesDir = Path.GetDirectoryName(Path.GetFullPath(target)) ?? _filesDir;
+                OpenFileTab(Path.GetFullPath(target));
+                RefreshFiles();
+            }
+            else
+            {
+                // No such place; put the box back to where we actually are rather than leave a lie.
+                FilesPath.Text = _filesDir;
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            FilesPath.Text = _filesDir;
+        }
+    }
+
     private void FilesList_DoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (FilesList.SelectedItem is not FileRow row)
@@ -579,6 +630,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (SelectedAgent is { } agent)
         {
             OpenAgentTab(agent.Clone());
+        }
+    }
+
+    /// <summary>Brings past Claude Code sessions in as chats under the Claude CLI agent.</summary>
+    private void ImportChats_Click(object sender, RoutedEventArgs e)
+    {
+        if (!Services.Ai.ClaudeImport.Available)
+        {
+            MessageBox.Show(this, LocalizationService.T("L_ImportNoClaude"),
+                LocalizationService.T("L_ImportTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var imported = Views.ImportChatsDialog.Run(this);
+
+        if (imported > 0)
+        {
+            // Land on the Claude CLI agent so the freshly imported chats are in view at once.
+            RefreshAgents();
+
+            if (AgentPicker.ItemsSource is IEnumerable<AiAgent> agents
+                && agents.FirstOrDefault(a => a.Id == Services.Ai.ClaudeCli.AgentId) is { } cli)
+            {
+                AgentPicker.SelectedItem = cli;
+            }
+
+            RefreshChats();
         }
     }
 

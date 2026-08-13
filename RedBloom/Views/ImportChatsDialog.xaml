@@ -1,0 +1,111 @@
+<Window x:Class="RedBloom.Views.ImportChatsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Import"
+        Width="480"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
+
+    <Border Background="{DynamicResource Chrome}"
+            BorderBrush="{DynamicResource Divider}"
+            BorderThickness="1"
+            CornerRadius="9"
+            MouseLeftButtonDown="Root_MouseLeftButtonDown">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="26" ShadowDepth="6" Opacity="0.6" Color="Black" />
+        </Border.Effect>
+
+        <StackPanel Margin="22,20,22,18">
+            <TextBlock Text="{DynamicResource L_ImportTitle}"
+                       Foreground="{DynamicResource TextPrimary}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,4" />
+            <TextBlock Text="{DynamicResource L_ImportClaudeNote}"
+                       Foreground="{DynamicResource TextFaint}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="11.5"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,12" />
+
+            <Grid Margin="0,0,0,6" ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           x:Name="CountLabel"
+                           Foreground="{DynamicResource TextMuted}"
+                           FontFamily="{DynamicResource UiFont}"
+                           FontSize="11.5"
+                           VerticalAlignment="Center" />
+                <CheckBox Grid.Column="1"
+                          x:Name="SelectAll"
+                          Content="{DynamicResource L_ImportSelectAll}"
+                          IsChecked="True"
+                          Click="SelectAll_Click" />
+            </Grid>
+
+            <Border Background="{DynamicResource Surface}"
+                    BorderBrush="{DynamicResource Divider}"
+                    BorderThickness="1"
+                    CornerRadius="6">
+                <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="List" Margin="8,6">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding Chosen, Mode=TwoWay}"
+                                          Margin="0,4"
+                                          Foreground="{DynamicResource TextPrimary}">
+                                    <StackPanel Margin="2,0,0,0">
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontFamily="{DynamicResource UiFont}"
+                                                   FontSize="12.5"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Detail}"
+                                                   Foreground="{DynamicResource TextFaint}"
+                                                   FontFamily="{DynamicResource UiFont}"
+                                                   FontSize="10.5"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </CheckBox>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+
+            <TextBlock x:Name="Empty"
+                       Text="{DynamicResource L_ImportNone}"
+                       Foreground="{DynamicResource TextFaint}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="12"
+                       Margin="2,10,0,0"
+                       Visibility="Collapsed" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button Content="{DynamicResource L_Cancel}"
+                        Style="{StaticResource GhostButton}"
+                        Padding="14,6"
+                        Click="Cancel_Click" />
+                <Button x:Name="ImportButton"
+                        Content="{DynamicResource L_ImportAction}"
+                        Style="{StaticResource AccentButton}"
+                        Padding="14,6"
+                        Margin="8,0,0,0"
+                        Click="Import_Click" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

@@ -120,6 +120,14 @@
                                 Margin="6,0,0,0"
                                 Click="Import_Click" />
                     </StackPanel>
+                    <Button x:Name="MultiplyButton"
+                            Content="{DynamicResource L_AiMultiply}"
+                            Style="{StaticResource GhostButton}"
+                            Padding="10,6"
+                            Margin="0,6,0,0"
+                            HorizontalAlignment="Stretch"
+                            ToolTip="{DynamicResource L_AiMultiplyTip}"
+                            Click="Multiply_Click" />
                     <Button x:Name="AddLocalButton"
                             Content="{DynamicResource L_AiAddLocal}"
                             Style="{StaticResource GhostButton}"

@@ -109,9 +109,60 @@ public sealed class AiAgent : INotifyPropertyChanged
     [JsonIgnore]
     public bool IsLocal => _id.StartsWith("local:", StringComparison.Ordinal);
 
+    /// <summary>
+    /// The model's short name, with the vendor prefix and any path dropped — <c>opus-5</c> from
+    /// <c>claude-opus-5</c>, <c>gpt-5</c> from <c>openai/gpt-5</c>. Used to tell copies apart.
+    /// </summary>
+    [JsonIgnore]
+    public string ShortModel
+    {
+        get
+        {
+            var model = _model.Trim();
+
+            if (model.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var slash = model.LastIndexOf('/');
+            if (slash >= 0)
+            {
+                model = model[(slash + 1)..];
+            }
+
+            foreach (var prefix in (string[])["claude-", "gpt-", "gemini-", "models/"])
+            {
+                if (model.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    model = model[prefix.Length..];
+                    break;
+                }
+            }
+
+            return model;
+        }
+    }
+
+    /// <summary>
+    /// What to show for this agent: its plain name when it stands alone, or <c>name [model]</c> when
+    /// it is one of several copies sharing a name — so a "multiplied" agent's models are told apart.
+    /// </summary>
+    [JsonIgnore]
+    public string DisplayName
+    {
+        get
+        {
+            var shared = Services.ThemeService.Settings.Agents
+                .Any(a => a.Id != _id && string.Equals(a.Name, _name, StringComparison.Ordinal));
+
+            return shared && ShortModel.Length > 0 ? $"{_name} [{ShortModel}]" : _name;
+        }
+    }
+
     /// <summary>How the picker names it — local models are marked so the source is never a guess.</summary>
     [JsonIgnore]
-    public string PickerName => IsLocal ? $"[L]  {_name}" : _name;
+    public string PickerName => IsLocal ? $"[L]  {DisplayName}" : DisplayName;
 
     /// <summary>
     /// Whether the chat may offer a choice of model.

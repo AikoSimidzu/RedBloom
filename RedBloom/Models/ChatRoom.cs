@@ -71,6 +71,9 @@ public sealed class ChatRoom : INotifyPropertyChanged
 
     public List<ChatTurn> Turns { get; set; } = [];
 
+    /// <summary>This room's task list, shown in its header and shareable with the cast.</summary>
+    public List<TaskItem> Tasks { get; set; } = [];
+
     /// <summary>This room's own look in the tab strip.</summary>
     public TabCardStyle Card { get; set; } = new();
 

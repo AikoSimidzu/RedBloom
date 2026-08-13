@@ -64,6 +64,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     private CancellationTokenSource? _turn;
     private TaskCompletionSource<char>? _approval;
     private string _suggested = string.Empty;
+
+    /// <summary>The command now running and the diff it produced, held between its call and result.</summary>
+    private string _pendingCommand = string.Empty;
+    private string _pendingDiff = string.Empty;
     private bool _pageReady;
     private bool _dirty;
     private bool _disposed;
@@ -79,7 +83,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// falls back to the agent's name, the same way the avatar and the model do.
     /// </summary>
     private string BotName =>
-        string.IsNullOrWhiteSpace(_chat.BotName) ? _agent.Name : _chat.BotName;
+        string.IsNullOrWhiteSpace(_chat.BotName) ? _agent.DisplayName : _chat.BotName;
 
     public AgentChatView(AiAgent agent, ChatSession chat)
     {
@@ -188,6 +192,9 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
     /// <summary>Raised once the session ends, with a reason to show on the tab.</summary>
     public event EventHandler<string>? SessionEnded;
+
+    /// <summary>Raised when a chat asks to open a file (a "go to file" on a diff), so the window can.</summary>
+    public static event Action<string>? FileOpenRequested;
 
     // ---- page ----
 
@@ -325,6 +332,23 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             case "web" when message.TryGetProperty("query", out var query):
                 OpenWebSearch(query.GetString() ?? string.Empty);
+                break;
+
+            case "snapshot" when message.TryGetProperty("text", out var snap):
+                TextSnapshot.CopyToClipboard(snap.GetString() ?? string.Empty);
+                break;
+
+            case "openFile" when message.TryGetProperty("path", out var fp):
+                FileOpenRequested?.Invoke(fp.GetString() ?? string.Empty);
+                break;
+
+            case "task":
+                if (TaskPanel.Apply(_chat.Tasks, message))
+                {
+                    Persist();
+                    PushTasks();
+                }
+
                 break;
 
             case "askOther" when message.TryGetProperty("text", out var pick):
@@ -494,7 +518,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext", "L_ChatEarlier", "L_ChatEditing", "L_ChatCancelEdit", "L_ChatCompacting",
             "L_ChatCmdCompact", "L_ChatCmdCompactHint", "L_ChatCmdRetry", "L_ChatCmdRetryHint",
-            "L_ChatCtxCopy", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
+            "L_ChatCtxCopy", "L_ChatCtxImage", "L_ChatCtxGoToFile", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
             "L_ChatRpAct", "L_ChatRpState", "L_ChatRpStatus", "L_ChatRpAttempt",
             "L_ChatRpMe", "L_ChatRpAgent", "L_ChatRpActPrompt",
             "L_ChatRpStatePrompt", "L_ChatRpStatusPrompt", "L_ChatRpAttemptOk", "L_ChatRpAttemptFail",
@@ -606,6 +630,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         Post(new { t = "avatar", src = AvatarDataUri() });
 
+        // The header: the agent's face, its name, and the model under it.
+        Post(new { t = "head", avatar = AvatarDataUri(), title = BotName, subtitle = _agent.ShortModel });
+        PushTasks();
+
         // The slash commands this chat answers to. A room reuses the same page but offers none of
         // these, so the set is declared per surface rather than baked into the page.
         Post(new { t = "commands", names = new[] { "compact", "retry" } });
@@ -678,9 +706,36 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         {
             var turn = turns[i];
 
+            if (turn.Role == "command")
+            {
+                // A saved command is redrawn as the run card it was, output and diff included.
+                _activity++;
+                var (label, _) = Describe(turn.Command);
+                Post(new
+                {
+                    t = "activity",
+                    id = _activity.ToString(),
+                    state = "done",
+                    label,
+                    codeHtml = CodeHighlighter.Highlight(turn.Command),
+                });
+                Post(new
+                {
+                    t = "activityDone",
+                    id = _activity.ToString(),
+                    summary = Summarise(turn.Output),
+                    output = turn.Output,
+                    diffHtml = DiffHtml(turn.Diff),
+                });
+                continue;
+            }
+
             if (turn.Role == "assistant")
             {
-                Post(new { t = "assistant", label = BotName, html = Markdown.ToHtml(turn.Text) });
+                if (turn.Text.Length > 0)
+                {
+                    Post(new { t = "assistant", label = BotName, html = Markdown.ToHtml(turn.Text) });
+                }
 
                 // Files the agent handed over are part of what it said, so they come back with it.
                 if (turn.Attachments.Count > 0)
@@ -723,6 +778,17 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         _shown = Math.Min(_history.Count, _shown + PageSize);
         RenderHistory(loadingMore: true);
     }
+
+    /// <summary>Hands the page this chat's task list and the words its panel is drawn with.</summary>
+    private void PushTasks() => Post(new
+    {
+        t = "tasks",
+        list = _chat.Tasks.Select(TaskPanel.Item),
+        room = false,
+        participants = Array.Empty<string>(),
+        statuses = TaskPanel.Statuses(),
+        labels = TaskPanel.Labels(),
+    });
 
     /// <summary>Tells the page how full the context is, and lists the attachments.</summary>
     private void PushContext()
@@ -859,6 +925,13 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         for (var i = 0; i < start; i++)
         {
+            if (_history[i].Role == "command")
+            {
+                var ran = _history[i];
+                transcript.Append("Assistant ran: ").AppendLine(ran.Command);
+                continue;
+            }
+
             transcript.Append(_history[i].Role == "user" ? "User: " : "Assistant: ")
                 .AppendLine(_history[i].Text);
         }
@@ -1167,11 +1240,31 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         foreach (var turn in _history)
         {
+            // Command turns are kept in the history for the transcript, but the model already saw
+            // the tool result within the turn it ran in; re-sending them would be a role the APIs
+            // do not know, so they are left out of what goes back up.
+            if (turn.Role == "command")
+            {
+                continue;
+            }
+
             if (turn.Role == "assistant")
             {
-                // An assistant turn's attachments are files it handed over, not material to
-                // read back: re-reading them into every later request would fill the window
-                // with what the agent itself produced.
+                // Both APIs want the roles to alternate; a turn's narration split across several
+                // assistant segments by the commands between them is rejoined into one so two
+                // assistant messages never sit side by side.
+                if (turn.Text.Length == 0)
+                {
+                    continue;
+                }
+
+                if (conversation.Count > 0 && conversation[^1].Role == AgentRole.Assistant)
+                {
+                    var merged = conversation[^1];
+                    conversation[^1] = merged with { Text = merged.Text + "\n\n" + turn.Text };
+                    continue;
+                }
+
                 conversation.Add(new AgentMessage(AgentRole.Assistant, turn.Text));
                 continue;
             }
@@ -1225,6 +1318,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         _turn = turn;
 
         _reply.Clear();
+
+        // The history's length before the turn adds anything, so a turn that produced nothing can
+        // be told from one that only ran commands — the user message is dropped only in the former.
+        var startCount = _history.Count;
+
         Post(new { t = "status", text = "working…", busy = true });
         // The prompt side is known before the request goes out — it is the conversation being
         // sent — so the counter starts with that estimate instead of at zero, and is corrected
@@ -1297,11 +1395,16 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 Attachments = [.. _shared],
             });
         }
-        else
+        else if (_shared.Count > 0)
         {
-            // Nothing came back, so the question is dropped too rather than being re-sent as
-            // unanswered history on the next turn.
-            _history.RemoveAt(_history.Count - 1);
+            // No closing words, but files or pictures were produced — keep them on a turn of their own.
+            _history.Add(new ChatTurn { Role = "assistant", Text = string.Empty, Attachments = [.. _shared] });
+        }
+        else if (_history.Count == startCount)
+        {
+            // The turn produced nothing at all — no text, no commands — so the question is dropped
+            // rather than re-sent as unanswered history. Commands alone are enough to keep it.
+            _history.RemoveAt(startCount - 1);
         }
 
         Persist();
@@ -1350,15 +1453,33 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 break;
 
             case AgentEventKind.ToolCall:
-                // The reply so far is committed before the command, so the two do not interleave.
+                // The reply so far is committed before the command, so the two do not interleave —
+                // and the text segment is kept in the history so reopening the chat still shows the
+                // narration that led up to the command.
                 _paint.Stop();
                 PaintReply();
-                _reply.Clear();
+
+                if (_reply.Length > 0)
+                {
+                    _history.Add(new ChatTurn { Role = "assistant", Text = _reply.ToString() });
+                    _reply.Clear();
+                }
+
                 Post(new { t = "endTurn" });
 
                 _activity++;
-                var (label, what) = Describe(item.Text);
-                Post(new { t = "activity", id = _activity.ToString(), state = "running", label, what });
+                var (label, _) = Describe(item.Text);
+
+                // The command itself rides on its own plate, syntax-coloured, rather than trailing
+                // the label inline — a multiline script there overran the "running" word.
+                Post(new
+                {
+                    t = "activity",
+                    id = _activity.ToString(),
+                    state = "running",
+                    label,
+                    codeHtml = CodeHighlighter.Highlight(item.Text),
+                });
                 break;
 
             case AgentEventKind.ToolResult:
@@ -1368,11 +1489,28 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                     id = _activity.ToString(),
                     summary = Summarise(item.Text),
                     output = item.Text,
+                    diffHtml = DiffHtml(_pendingDiff),
                 });
+
+                // The command, its output and what it changed are kept as a turn of their own so
+                // they survive reopening the chat.
+                _history.Add(new ChatTurn
+                {
+                    Role = "command",
+                    Command = _pendingCommand,
+                    Output = item.Text,
+                    Diff = _pendingDiff,
+                });
+
+                _pendingCommand = string.Empty;
+                _pendingDiff = string.Empty;
                 break;
 
             case AgentEventKind.ToolRefused:
                 Post(new { t = "activityDone", id = _activity.ToString(), summary = "skipped", output = "" });
+                _history.Add(new ChatTurn { Role = "command", Command = _pendingCommand, Output = "(declined)" });
+                _pendingCommand = string.Empty;
+                _pendingDiff = string.Empty;
                 break;
 
             case AgentEventKind.Image:
@@ -1438,6 +1576,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             AgentPhase.Drawing => "L_PhaseDrawing",
             AgentPhase.Asking => "L_PhaseAsking",
             AgentPhase.WrappingUp => "L_PhaseWrappingUp",
+            AgentPhase.Reconnecting => "L_PhaseReconnecting",
             _ => "L_PhaseThinking",
         });
 
@@ -1524,18 +1663,30 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// </remarks>
     public async Task<string> RunAsync(string command, bool elevated, CancellationToken cancellationToken)
     {
+        // The repository state before the command, so its edits can be told apart from what was
+        // already uncommitted. Cheap when there is no repo — git simply reports nothing.
+        var snapshot = GitDiff.Before(command);
+
+        _pendingCommand = command;
+
+        string output;
+
         if (!elevated)
         {
-            return await CommandRunner.RunAsync(command, cancellationToken).ConfigureAwait(true);
+            output = await CommandRunner.RunAsync(command, cancellationToken).ConfigureAwait(true);
         }
-
-        if (!ElevatedHost.IsRunning
-            && await ElevatedHost.StartAsync(cancellationToken).ConfigureAwait(true) is { } refused)
+        else if (!ElevatedHost.IsRunning
+                 && await ElevatedHost.StartAsync(cancellationToken).ConfigureAwait(true) is { } refused)
         {
-            return $"This command needed administrator rights and did not get them: {refused}";
+            output = $"This command needed administrator rights and did not get them: {refused}";
+        }
+        else
+        {
+            output = await ElevatedHost.RunAsync(command, cancellationToken).ConfigureAwait(true);
         }
 
-        return await ElevatedHost.RunAsync(command, cancellationToken).ConfigureAwait(true);
+        _pendingDiff = GitDiff.After(snapshot);
+        return output;
     }
 
     /// <inheritdoc />
@@ -1894,6 +2045,12 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         var lines = output.Split('\n').Length;
         return lines == 1 ? "output (1 line)" : $"output ({lines} lines)";
     }
+
+    /// <summary>
+    /// Renders a unified diff as page-safe HTML: each file a block carrying its full path for the
+    /// "go to file" action, each line coloured by its + / - / context. Empty when nothing changed.
+    /// </summary>
+    private static string DiffHtml(string diff) => GitDiff.RenderHtml(diff);
 
     private static void OpenExternally(string uri)
     {

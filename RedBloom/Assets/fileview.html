@@ -1,0 +1,405 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="/vendor/codemirror/codemirror.min.css" />
+<link rel="stylesheet" href="/vendor/codemirror/theme/material-darker.min.css" />
+<style>
+  :root {
+    --surface: #171616; --raised: #1e1c1c; --chrome: #221f1f; --divider: #2d2d2d;
+    --text: #e6e0e0; --muted: #a89f9f; --faint: #6b6363; --accent: #ff4d5a; --accent-dim: #8c2b33;
+    --ui-font: "Segoe UI", sans-serif; --code-font: "Cascadia Mono", Consolas, monospace; --code-size: 13px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--surface); color: var(--text);
+               font-family: var(--ui-font); font-size: 14px; }
+  #root { display: flex; flex-direction: column; height: 100%; }
+
+  /* ---- code / markdown editor ---- */
+  .CodeMirror {
+    height: 100%; font-family: var(--code-font); font-size: var(--code-size);
+    background: var(--surface); line-height: 1.5;
+  }
+  .CodeMirror-gutters { background: var(--surface); border-right: 1px solid var(--divider); }
+  #editorWrap { flex: 1; min-height: 0; position: relative; }
+  #editorWrap.hidden { display: none; }
+
+  /* ---- markdown preview ---- */
+  #preview {
+    flex: 1; min-height: 0; overflow: auto; padding: 20px 26px;
+    line-height: 1.6;
+  }
+  #preview.hidden { display: none; }
+  #preview h1, #preview h2, #preview h3, #preview h4 { line-height: 1.25; margin: 1.2em 0 .5em; }
+  #preview h1 { font-size: 1.7em; border-bottom: 1px solid var(--divider); padding-bottom: .3em; }
+  #preview h2 { font-size: 1.4em; border-bottom: 1px solid var(--divider); padding-bottom: .25em; }
+  #preview h3 { font-size: 1.18em; }
+  #preview a { color: var(--accent); }
+  #preview p, #preview li { margin: .45em 0; }
+  #preview ul, #preview ol { padding-left: 1.5em; }
+  #preview hr { border: none; border-top: 1px solid var(--divider); margin: 1.4em 0; }
+  #preview code { font-family: var(--code-font); font-size: .9em; background: var(--raised);
+                  padding: .15em .35em; border-radius: 4px; }
+  #preview code.mention { color: var(--accent); background: none; font-weight: 600; }
+  #preview figure.code, #preview pre.code { background: var(--raised); border: 1px solid var(--divider);
+                  border-radius: 8px; overflow: hidden; margin: 1em 0; }
+  #preview figure.code code, #preview pre.code code { background: none; padding: 0; }
+  #preview figure.code figcaption { display: flex; justify-content: space-between; padding: 6px 12px;
+                  border-bottom: 1px solid var(--divider); font-size: 11px; color: var(--muted); }
+  #preview figure.code .tools button { display: none; }
+  #preview figure.code pre, #preview pre.code { margin: 0; padding: 12px 14px; overflow: auto; }
+  #preview blockquote { border-left: 3px solid var(--accent-dim); margin: 1em 0; padding: .2em 1em; color: var(--muted); }
+  #preview .tablebox { overflow-x: auto; }
+  #preview table { border-collapse: collapse; margin: 1em 0; }
+  #preview th, #preview td { border: 1px solid var(--divider); padding: 6px 10px; text-align: left; }
+  #preview th { background: var(--chrome); }
+  #preview img { max-width: 100%; }
+  .tok-com { color: var(--faint); font-style: italic; }
+  .tok-kw { color: #d2a8ff; } .tok-str { color: #8ddb8c; } .tok-num { color: #79c0ff; }
+  .tok-fn { color: #ffa657; } .tok-lit { color: #79c0ff; }
+
+  /* ---- floating markdown toolbar (edit mode) ---- */
+  #toolbar {
+    position: absolute; top: 10px; right: 16px; z-index: 20;
+    display: flex; gap: 3px; padding: 4px;
+    background: var(--chrome); border: 1px solid var(--divider); border-radius: 9px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.45);
+  }
+  #toolbar.hidden { display: none; }
+  #toolbar button {
+    min-width: 30px; height: 28px; padding: 0 7px;
+    border: none; border-radius: 6px; background: transparent; color: var(--muted);
+    font-family: var(--ui-font); font-size: 13px; cursor: pointer;
+  }
+  #toolbar button:hover { background: var(--chrome); color: var(--text); background: #332e2e; }
+  #toolbar .sep { width: 1px; margin: 3px 3px; background: var(--divider); }
+
+  /* the preview/edit switch for markdown */
+  #mdbar {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid var(--divider); background: var(--chrome);
+  }
+  #mdbar.hidden { display: none; }
+  #mdbar button {
+    border: 1px solid var(--divider); border-radius: 6px; background: transparent; color: var(--text);
+    font-family: var(--ui-font); font-size: 12px; padding: 4px 12px; cursor: pointer;
+  }
+  #mdbar button.on { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+
+  /* ---- image viewer ---- */
+  #imgview { flex: 1; min-height: 0; position: relative; display: none; background: #0d0c0c; }
+  #imgview.show { display: block; }
+  #imgview img { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(var(--z,1));
+                 max-width: 96%; max-height: 92%; object-fit: contain; transition: transform .08s; user-select: none; }
+  #imgbar { position: absolute; top: 14px; right: 16px; display: flex; gap: 6px; z-index: 10; }
+  #imgcount { position: absolute; top: 16px; left: 18px; color: rgba(230,224,224,.8); font-size: 12px; z-index: 10; }
+  #imgview .nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 42px; height: 64px; border: none; border-radius: 8px;
+    background: rgba(30,28,28,.6); color: #fff; font-size: 20px; cursor: pointer; z-index: 10;
+  }
+  #imgview .nav.prev { left: 14px; } #imgview .nav.next { right: 14px; }
+  #imgview .nav[hidden] { display: none; }
+  #imgbar button {
+    width: 34px; height: 34px; border: none; border-radius: 8px;
+    background: rgba(30,28,28,.72); color: #fff; font-size: 15px;
+    font-family: "Segoe MDL2 Assets"; cursor: pointer;
+  }
+  #imgbar button:hover { background: var(--accent); }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="mdbar" class="hidden">
+    <button id="mdPreview" class="on">Просмотр</button>
+    <button id="mdEdit">Правка</button>
+  </div>
+  <div id="editorWrap" class="hidden">
+    <div id="toolbar" class="hidden"></div>
+    <textarea id="editor"></textarea>
+  </div>
+  <div id="preview" class="hidden"></div>
+  <div id="imgview">
+    <div id="imgcount"></div>
+    <div id="imgbar">
+      <button data-act="copy">&#xE8C8;</button>
+      <button data-act="download">&#xE896;</button>
+      <button data-act="zoomout">&#xE71F;</button>
+      <button data-act="zoomin">&#xE8A3;</button>
+    </div>
+    <button class="nav prev" data-nav="-1">&#x2039;</button>
+    <button class="nav next" data-nav="1">&#x203A;</button>
+    <img id="img" alt="" />
+  </div>
+</div>
+
+<script src="/vendor/codemirror/codemirror.min.js"></script>
+<script src="/vendor/codemirror/mode/meta.min.js"></script>
+<script src="/vendor/codemirror/mode/xml.min.js"></script>
+<script src="/vendor/codemirror/mode/javascript.min.js"></script>
+<script src="/vendor/codemirror/mode/css.min.js"></script>
+<script src="/vendor/codemirror/mode/htmlmixed.min.js"></script>
+<script src="/vendor/codemirror/mode/markdown.min.js"></script>
+<script src="/vendor/codemirror/mode/clike.min.js"></script>
+<script src="/vendor/codemirror/mode/python.min.js"></script>
+<script src="/vendor/codemirror/mode/yaml.min.js"></script>
+<script src="/vendor/codemirror/mode/shell.min.js"></script>
+<script src="/vendor/codemirror/mode/sql.min.js"></script>
+<script src="/vendor/codemirror/mode/rust.min.js"></script>
+<script src="/vendor/codemirror/mode/go.min.js"></script>
+<script src="/vendor/codemirror/mode/php.min.js"></script>
+<script src="/vendor/codemirror/mode/ruby.min.js"></script>
+<script src="/vendor/codemirror/mode/lua.min.js"></script>
+<script src="/vendor/codemirror/mode/powershell.min.js"></script>
+<script src="/vendor/codemirror/mode/dockerfile.min.js"></script>
+<script src="/vendor/codemirror/mode/toml.min.js"></script>
+<script src="/vendor/codemirror/mode/closebrackets.min.js"></script>
+<script src="/vendor/codemirror/mode/active-line.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  const post = (m) => window.chrome.webview.postMessage(JSON.stringify(m));
+
+  const mdbar = document.getElementById("mdbar");
+  const editorWrap = document.getElementById("editorWrap");
+  const preview = document.getElementById("preview");
+  const imgview = document.getElementById("imgview");
+  const toolbar = document.getElementById("toolbar");
+
+  let cm = null;
+  let kind = "code";        // "code" | "markdown" | "image"
+  let readOnly = false;
+  let dirty = false;
+
+  const cmOpts = {
+    lineNumbers: true,
+    theme: "material-darker",
+    autoCloseBrackets: true,
+    styleActiveLine: true,
+    indentUnit: 4,
+    lineWrapping: false,
+  };
+
+  function ensureCm() {
+    if (cm) return cm;
+    cm = CodeMirror.fromTextArea(document.getElementById("editor"), cmOpts);
+    cm.on("change", () => {
+      if (!readOnly) { dirty = true; }
+    });
+    cm.setOption("extraKeys", {
+      "Ctrl-S": () => save(),
+      "Cmd-S": () => save(),
+    });
+    return cm;
+  }
+
+  function modeFor(name) {
+    if (!CodeMirror.findModeByFileName) return null;
+    const info = CodeMirror.findModeByFileName(name);
+    return info ? (info.mime || info.mode) : null;
+  }
+
+  function save() {
+    if (readOnly || !cm) return;
+    post({ t: "save", text: cm.getValue() });
+    dirty = false;
+  }
+
+  // ---- markdown preview / edit switch ----
+  const mdPreviewBtn = document.getElementById("mdPreview");
+  const mdEditBtn = document.getElementById("mdEdit");
+
+  function showMdPreview() {
+    // Ask the host to render the current text, so what shows matches what is in the editor.
+    if (cm) post({ t: "renderMarkdown", text: cm.getValue() });
+    mdPreviewBtn.classList.add("on"); mdEditBtn.classList.remove("on");
+    editorWrap.classList.add("hidden");
+    toolbar.classList.add("hidden");
+    preview.classList.remove("hidden");
+  }
+
+  function showMdEdit() {
+    mdEditBtn.classList.add("on"); mdPreviewBtn.classList.remove("on");
+    preview.classList.add("hidden");
+    editorWrap.classList.remove("hidden");
+    toolbar.classList.remove("hidden");
+    ensureCm().refresh();
+    ensureCm().focus();
+  }
+
+  mdPreviewBtn.onclick = showMdPreview;
+  mdEditBtn.onclick = showMdEdit;
+
+  // ---- markdown toolbar ----
+  function wrapSel(before, after) {
+    const c = ensureCm();
+    const sel = c.getSelection();
+    c.replaceSelection(before + sel + (after ?? before));
+    if (!sel) {
+      const p = c.getCursor();
+      c.setCursor({ line: p.line, ch: p.ch - (after ?? before).length });
+    }
+    c.focus();
+    dirty = true;
+  }
+  function prefixLine(prefix) {
+    const c = ensureCm();
+    const p = c.getCursor();
+    c.replaceRange(prefix, { line: p.line, ch: 0 });
+    c.focus();
+    dirty = true;
+  }
+  function insertBlock(text) {
+    const c = ensureCm();
+    c.replaceSelection(text);
+    c.focus();
+    dirty = true;
+  }
+
+  function buildToolbar(labels) {
+    toolbar.innerHTML = "";
+    const add = (html, title, fn) => {
+      const b = document.createElement("button");
+      b.innerHTML = html; b.title = title;
+      b.onmousedown = (e) => { e.preventDefault(); fn(); };
+      toolbar.appendChild(b);
+    };
+    const sep = () => { const s = document.createElement("div"); s.className = "sep"; toolbar.appendChild(s); };
+    add("<b>B</b>", labels.bold, () => wrapSel("**"));
+    add("<i>I</i>", labels.italic, () => wrapSel("*"));
+    add("&#8213;", labels.strike, () => wrapSel("~~"));
+    sep();
+    add("H", labels.heading, () => prefixLine("## "));
+    add("&#8220;", labels.quote, () => prefixLine("> "));
+    add("&#8226;", labels.list, () => prefixLine("- "));
+    sep();
+    add("&lt;/&gt;", labels.code, () => wrapSel("`"));
+    add("{ }", labels.codeblock, () => insertBlock("\n```\n\n```\n"));
+    add("&#128279;", labels.link, () => wrapSel("[", "](url)"));
+    add("&#128247;", labels.image, () => post({ t: "pickImage" }));
+    toolbar.dataset.built = "1";
+  }
+
+  // ---- image viewer ----
+  const img = document.getElementById("img");
+  const imgcount = document.getElementById("imgcount");
+  let images = [];
+  let imgIndex = 0;
+  let zoom = 1;
+
+  function showImage(i) {
+    if (!images.length) return;
+    imgIndex = (i + images.length) % images.length;
+    zoom = 1; img.style.setProperty("--z", 1);
+    img.src = images[imgIndex].src;
+    imgcount.textContent = (imgIndex + 1) + " / " + images.length;
+    const many = images.length > 1;
+    document.querySelector(".nav.prev").hidden = !many;
+    document.querySelector(".nav.next").hidden = !many;
+  }
+
+  document.querySelectorAll("#imgview .nav").forEach((b) =>
+    b.onclick = () => showImage(imgIndex + parseInt(b.dataset.nav, 10)));
+
+  document.querySelectorAll("#imgbar button").forEach((b) =>
+    b.onclick = () => {
+      const act = b.dataset.act;
+      if (act === "zoomin") { zoom = Math.min(zoom * 1.25, 8); img.style.setProperty("--z", zoom); }
+      else if (act === "zoomout") { zoom = Math.max(zoom / 1.25, 0.2); img.style.setProperty("--z", zoom); }
+      else if (act === "download") post({ t: "download", path: images[imgIndex].path });
+      else if (act === "copy") post({ t: "copyImage", path: images[imgIndex].path });
+    });
+
+  imgview.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    zoom = Math.min(8, Math.max(0.2, zoom * (e.deltaY < 0 ? 1.12 : 0.89)));
+    img.style.setProperty("--z", zoom);
+  }, { passive: false });
+
+  document.addEventListener("keydown", (e) => {
+    if (kind !== "image") return;
+    if (e.key === "ArrowLeft") showImage(imgIndex - 1);
+    else if (e.key === "ArrowRight") showImage(imgIndex + 1);
+  });
+
+  // ---- host messages ----
+  window.chrome.webview.addEventListener("message", (e) => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+
+    if (m.t === "theme") {
+      for (const [k, v] of Object.entries(m.vars || {}))
+        document.documentElement.style.setProperty("--" + k, v);
+      return;
+    }
+
+    if (m.t === "labels") {
+      const L = m.labels || {};
+      buildToolbar(L);
+      if (L.preview) mdPreviewBtn.textContent = L.preview;
+      if (L.edit) mdEditBtn.textContent = L.edit;
+      return;
+    }
+
+    if (m.t === "code") {
+      kind = "code"; readOnly = !!m.readOnly;
+      mdbar.classList.add("hidden");
+      imgview.classList.remove("show");
+      preview.classList.add("hidden");
+      editorWrap.classList.remove("hidden");
+      toolbar.classList.add("hidden");
+      const c = ensureCm();
+      c.setOption("mode", modeFor(m.name || "") || null);
+      c.setOption("readOnly", readOnly ? "nocursor" : false);
+      c.setValue(m.text || "");
+      c.clearHistory();
+      dirty = false;
+      setTimeout(() => { c.refresh(); if (!readOnly) c.focus(); }, 0);
+      return;
+    }
+
+    if (m.t === "markdown") {
+      kind = "markdown"; readOnly = !!m.readOnly;
+      imgview.classList.remove("show");
+      mdbar.classList.remove("hidden");
+      mdEditBtn.style.display = readOnly ? "none" : "";
+      const c = ensureCm();
+      c.setOption("mode", "markdown");
+      c.setOption("readOnly", readOnly ? "nocursor" : false);
+      c.setValue(m.text || "");
+      c.clearHistory();
+      dirty = false;
+      preview.innerHTML = m.html || "";
+      showMdPreview();     // markdown opens in preview by default
+      return;
+    }
+
+    if (m.t === "renderedMarkdown") {   // reply to renderMarkdown
+      preview.innerHTML = m.html || "";
+      return;
+    }
+
+    if (m.t === "insertImage") {        // reply to pickImage
+      if (cm) { insertBlock("![](" + (m.path || "") + ")"); showMdEdit(); }
+      return;
+    }
+
+    if (m.t === "image") {
+      kind = "image"; readOnly = true;
+      mdbar.classList.add("hidden");
+      editorWrap.classList.add("hidden");
+      preview.classList.add("hidden");
+      toolbar.classList.add("hidden");
+      imgview.classList.add("show");
+      images = m.list || [];
+      showImage(m.index || 0);
+      return;
+    }
+
+    if (m.t === "saved") { dirty = false; return; }
+  });
+
+  post({ t: "ready" });
+})();
+</script>
+</body>
+</html>

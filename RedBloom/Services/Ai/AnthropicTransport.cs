@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -36,6 +37,17 @@ public sealed class AnthropicTransport : IAgentTransport
         + "to run anything else. Tell the user what you found, what you changed, and what is "
         + "left to do, so they can decide whether to have you carry on.";
 
+    /// <summary>
+    /// Endpoint-and-model pairs that have rejected the advanced fields, so later requests skip them.
+    /// </summary>
+    /// <remarks>
+    /// Remembered app-wide, not per transport: a room builds a fresh transport every turn, and
+    /// learning the endpoint's limit once should hold for all of them rather than costing a failed
+    /// request each time. Keyed by endpoint and model together, because the same relay may accept
+    /// the fields for one backing model and reject them for another.
+    /// </remarks>
+    private static readonly ConcurrentDictionary<string, byte> DroppedAdvanced = new();
+
     private readonly AiAgent _agent;
     private readonly IAgentToolHost? _tools;
     private readonly AnthropicClient _client;
@@ -54,12 +66,137 @@ public sealed class AnthropicTransport : IAgentTransport
     private bool ToolsEnabled =>
         _tools is not null && (_tools.Enabled || _tools.ImagesEnabled || _tools.AgentsEnabled);
 
+    /// <summary>The key this endpoint-and-model pair is remembered under.</summary>
+    private string AdvancedKey => _agent.ResolvedBaseUrl + "\n" + _agent.Model;
+
+    /// <summary>Whether the proprietary thinking/effort fields go on this request.</summary>
+    private bool IncludeAdvanced => !DroppedAdvanced.ContainsKey(AdvancedKey);
+
     public IAsyncEnumerable<AgentEvent> SendAsync(
         IReadOnlyList<AgentMessage> conversation,
         CancellationToken cancellationToken = default) =>
-        ToolsEnabled
-            ? SendWithToolsAsync(conversation, cancellationToken)
-            : StreamAsync(conversation, cancellationToken);
+        WithRetries(
+            () => ToolsEnabled
+                ? SendWithToolsAsync(conversation, cancellationToken)
+                : StreamAsync(conversation, cancellationToken),
+            cancellationToken);
+
+    /// <summary>How long to wait before each reconnect after a transient upstream error.</summary>
+    private static readonly TimeSpan[] Backoff =
+    [
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(3),
+        TimeSpan.FromSeconds(6),
+        TimeSpan.FromSeconds(10),
+    ];
+
+    /// <summary>
+    /// Runs a turn and recovers from the two failures worth recovering from: an endpoint that
+    /// rejects the proprietary fields, and a passing upstream fault.
+    /// </summary>
+    /// <remarks>
+    /// A retry is only taken when nothing was produced first — both faults land before any text, so
+    /// a turn that had begun answering when it failed is a real failure and is passed through. A
+    /// field rejection drops the fields for this endpoint and retries at once; a transient upstream
+    /// error (a 502/503, an overload, a timeout) reconnects after 1, 3, 6 and 10 seconds before
+    /// giving up. Cancellation is never retried.
+    /// </remarks>
+    private async IAsyncEnumerable<AgentEvent> WithRetries(
+        Func<IAsyncEnumerable<AgentEvent>> attempt,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var reconnects = 0;
+
+        while (true)
+        {
+            var sentAdvanced = IncludeAdvanced;
+            var progressed = false;
+            string? failure = null;
+
+            await foreach (var item in attempt().WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                if (item.Kind == AgentEventKind.Failed)
+                {
+                    failure = item.Text;
+                    break;
+                }
+
+                if (item.Kind is AgentEventKind.Text or AgentEventKind.ToolCall or AgentEventKind.Image
+                    || (item.Kind == AgentEventKind.Thinking && item.Text.Length > 0))
+                {
+                    progressed = true;
+                }
+
+                yield return item;
+            }
+
+            // Clean end, or a fault mid-answer that is not ours to retry.
+            if (failure is null)
+            {
+                yield break;
+            }
+
+            if (cancellationToken.IsCancellationRequested || progressed)
+            {
+                yield return AgentEvent.Failure(failure);
+                yield break;
+            }
+
+            // The endpoint would not take the advanced fields: drop them here and retry at once.
+            if (sentAdvanced && LooksLikeFieldRejection(failure))
+            {
+                DroppedAdvanced[AdvancedKey] = 1;
+                continue;
+            }
+
+            // A passing upstream error: wait out the backoff and reconnect, up to the last delay.
+            if (reconnects < Backoff.Length && LooksTransient(failure))
+            {
+                yield return AgentEvent.Doing(AgentPhase.Reconnecting);
+
+                try
+                {
+                    await Task.Delay(Backoff[reconnects], cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    yield break;
+                }
+
+                reconnects++;
+                continue;
+            }
+
+            yield return AgentEvent.Failure(failure);
+            yield break;
+        }
+    }
+
+    /// <summary>Whether a failure reads like the endpoint refusing the request over its fields.</summary>
+    private static bool LooksLikeFieldRejection(string message) => Mentions(message,
+        "output_config", "effort", "thinking", "invalid_request", "unsupported",
+        "not support", "unexpected", "unknown field", "unrecognized", "reject", "400");
+
+    /// <summary>
+    /// Whether a failure is a passing upstream fault worth reconnecting over rather than a settled
+    /// refusal. Auth and bad-request faults are left out: retrying those only wastes the wait.
+    /// </summary>
+    private static bool LooksTransient(string message) => Mentions(message,
+        "502", "503", "500", "504", "429", "overloaded", "rate limit", "timeout", "timed out",
+        "temporarily", "unavailable", "returned an error", "try again", "gateway", "connection reset");
+
+    private static bool Mentions(string message, params string[] marks)
+    {
+        foreach (var mark in marks)
+        {
+            if (message.Contains(mark, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private async IAsyncEnumerable<AgentEvent> StreamAsync(
         IReadOnlyList<AgentMessage> conversation,
@@ -642,17 +779,28 @@ public sealed class AnthropicTransport : IAgentTransport
         var offerTools = ToolsEnabled && withTools;
         var thinking = _agent.Thinking && !offerTools;
 
+        // Extended thinking and output_config/effort are Anthropic's newest, proprietary fields. The
+        // official API takes them; a relay or router in front of another provider often forwards
+        // them to a backend that does not understand them and answers "upstream 400: the model
+        // provider rejected the request". So they are sent, and dropped only once an endpoint has
+        // actually rejected them — see WithFieldFallback — which keeps them for gateways that do
+        // support them rather than guessing from the URL.
+        var advanced = IncludeAdvanced;
+
         return new MessageCreateParams
         {
             Tools = BuildTools(offerTools),
             Model = _agent.Model,
             MaxTokens = _agent.MaxTokens,
             // Adaptive, never a fixed budget — the budget form is rejected by current models.
-            // Disabled has to be sent explicitly: omitting the field leaves thinking on.
-            Thinking = thinking
-                ? new ThinkingConfigAdaptive()
-                : (ThinkingConfigParam)new ThinkingConfigDisabled(),
-            OutputConfig = new OutputConfig { Effort = EffortFor(_agent.Effort, thinking) },
+            // Disabled has to be sent explicitly: omitting the field leaves thinking on. Left unset
+            // entirely once the endpoint has rejected the advanced fields, so the retry is clean.
+            Thinking = !advanced
+                ? null
+                : thinking
+                    ? new ThinkingConfigAdaptive()
+                    : (ThinkingConfigParam)new ThinkingConfigDisabled(),
+            OutputConfig = advanced ? new OutputConfig { Effort = EffortFor(_agent.Effort, thinking) } : null,
             // Cast so the empty branch is a genuine null of the union type. Without it both
             // branches type as the list, and converting a null list into the union throws
             // before the request is ever sent.

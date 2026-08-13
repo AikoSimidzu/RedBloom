@@ -97,6 +97,7 @@ public static class AgentPhase
     public const string Writing = "writing";
     public const string Sharing = "sharing";
     public const string WrappingUp = "wrapping-up";
+    public const string Reconnecting = "reconnecting";
 }
 
 /// <param name="Input">Prompt tokens counted by the endpoint, on a <see cref="AgentEventKind.Usage"/>.</param>

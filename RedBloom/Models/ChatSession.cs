@@ -21,6 +21,21 @@ public sealed class ChatTurn
     public string Image { get; set; } = string.Empty;
 
     /// <summary>
+    /// A command the agent ran, when <see cref="Role"/> is <c>command</c>. Kept in the transcript so
+    /// the commands do not vanish when the chat is reopened.
+    /// </summary>
+    public string Command { get; set; } = string.Empty;
+
+    /// <summary>What the command printed.</summary>
+    public string Output { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The git diff the command produced, as unified diff text, or empty when it changed nothing —
+    /// or when it did not run inside a git repository. Shown with per-line +/- and a jump to the file.
+    /// </summary>
+    public string Diff { get; set; } = string.Empty;
+
+    /// <summary>
     /// What was attached to this message, by path.
     /// </summary>
     /// <remarks>
@@ -72,6 +87,9 @@ public sealed class ChatSession : INotifyPropertyChanged
 
     public List<ChatTurn> Turns { get; set; } = [];
 
+    /// <summary>This chat's task list, shown in its header and shareable with the agent.</summary>
+    public List<TaskItem> Tasks { get; set; } = [];
+
     /// <summary>This chat's own look in the tab strip, edited the same way a session's is.</summary>
     public TabCardStyle Card { get; set; } = new();
 
@@ -105,7 +123,7 @@ public sealed class ChatSession : INotifyPropertyChanged
 
     /// <summary>Nothing has been said yet, so the chat is not worth listing or saving.</summary>
     [JsonIgnore]
-    public bool IsEmpty => Turns.Count == 0;
+    public bool IsEmpty => Turns.Count == 0 && Tasks.Count == 0;
 
     /// <summary>What the list shows under the title.</summary>
     [JsonIgnore]
