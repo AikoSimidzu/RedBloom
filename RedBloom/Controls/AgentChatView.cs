@@ -1798,8 +1798,6 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             return "The user declined this change.";
         }
 
-        var snapshot = GitDiff.Before(path);
-
         var result = name == AgentTransports.Files.Write
             ? FileTools.Write(argumentsJson, _cwd)
             : FileTools.Edit(argumentsJson, _cwd);
@@ -1807,7 +1805,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         if (result.Ok)
         {
             AgentFiles.Touched(path);
-            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, GitDiff.After(snapshot));
+            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, result.Diff);
         }
 
         return result.Message;
@@ -1833,11 +1831,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             return "The user declined this change.";
         }
 
-        var message = name == AgentTransports.Files.Write
+        var (message, diff) = name == AgentTransports.Files.Write
             ? await _remote.WriteFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true)
             : await _remote.EditFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true);
 
-        ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", $"{path} (on {_remote.Host})", string.Empty);
+        ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", $"{path} (on {_remote.Host})", diff);
         return message;
     }
 

@@ -17,8 +17,11 @@ public static class FileTools
     /// <summary>How many entries a listing shows before it stops.</summary>
     private const int MaxEntries = 400;
 
-    /// <summary>The outcome of a change, with the message that goes back to the model.</summary>
-    public readonly record struct Result(bool Ok, string Message);
+    /// <summary>
+    /// The outcome of a change: the message the model reads, and the unified diff of what changed,
+    /// so the chat can show the added and removed lines even outside a git repository.
+    /// </summary>
+    public readonly record struct Result(bool Ok, string Message, string Diff = "");
 
     /// <summary>The absolute path a tool call names, resolved against the chat's working directory.</summary>
     public static string? PathOf(string argumentsJson, string cwd)
@@ -120,10 +123,16 @@ public static class FileTools
             }
 
             var existed = File.Exists(path);
-            File.WriteAllText(path, content.Replace("\r\n", "\n"), new UTF8Encoding(false));
 
-            var lines = content.Length == 0 ? 0 : content.Replace("\r\n", "\n").Split('\n').Length;
-            return new Result(true, $"{(existed ? "Replaced" : "Wrote")} {path} ({lines} lines).");
+            // Read the old text first so the change can be shown as a diff — skipped for a binary
+            // file, whose bytes are not lines to compare.
+            var old = existed && !LooksBinary(path) ? File.ReadAllText(path) : string.Empty;
+            var next = content.Replace("\r\n", "\n");
+
+            File.WriteAllText(path, next, new UTF8Encoding(false));
+
+            var lines = content.Length == 0 ? 0 : next.Split('\n').Length;
+            return new Result(true, $"{(existed ? "Replaced" : "Wrote")} {path} ({lines} lines).", TextDiff.Unified(path, old, next));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -173,7 +182,10 @@ public static class FileTools
             var updated = all ? text.Replace(oldText, newText) : ReplaceFirst(text, oldText, newText);
             File.WriteAllText(path, updated, new UTF8Encoding(false));
 
-            return new Result(true, $"Edited {path} ({count} {(count == 1 ? "replacement" : "replacements")}).");
+            return new Result(
+                true,
+                $"Edited {path} ({count} {(count == 1 ? "replacement" : "replacements")}).",
+                TextDiff.Unified(path, text, updated));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

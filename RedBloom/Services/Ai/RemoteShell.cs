@@ -141,18 +141,27 @@ public sealed class RemoteShell : IDisposable
         return sb.Length == 0 ? "(the file is empty)" : sb.ToString().TrimEnd('\n');
     }
 
-    public async Task<string> WriteFileAsync(string argumentsJson, CancellationToken cancellationToken)
+    public async Task<(string Message, string Diff)> WriteFileAsync(string argumentsJson, CancellationToken cancellationToken)
     {
         var root = System.Text.Json.JsonDocument.Parse(Args(argumentsJson)).RootElement;
         var path = Resolve(Str(root, AgentTransports.Files.Path));
         var content = Str(root, AgentTransports.Files.Content).Replace("\r\n", "\n");
 
-        return await PutAsync(path, content, cancellationToken).ConfigureAwait(false)
-            ? $"Wrote {path} ({(content.Length == 0 ? 0 : content.Split('\n').Length)} lines)."
-            : $"Could not write {path} (see the connection).";
+        // The old contents, read first so the change can be shown as a diff. Missing or binary
+        // reads back as nothing, which makes the diff show the whole file as added.
+        var (readOk, oldText, _) = await ReadRawAsync(Str(root, AgentTransports.Files.Path), cancellationToken).ConfigureAwait(false);
+        var old = readOk && oldText.IndexOf('\0') < 0 ? oldText.Replace("\r\n", "\n") : string.Empty;
+
+        if (!await PutAsync(path, content, cancellationToken).ConfigureAwait(false))
+        {
+            return ($"Could not write {path} (see the connection).", string.Empty);
+        }
+
+        var lines = content.Length == 0 ? 0 : content.Split('\n').Length;
+        return ($"Wrote {path} ({lines} lines).", TextDiff.Unified(path, old, content));
     }
 
-    public async Task<string> EditFileAsync(string argumentsJson, CancellationToken cancellationToken)
+    public async Task<(string Message, string Diff)> EditFileAsync(string argumentsJson, CancellationToken cancellationToken)
     {
         var root = System.Text.Json.JsonDocument.Parse(Args(argumentsJson)).RootElement;
         var raw = Str(root, AgentTransports.Files.Path);
@@ -162,14 +171,14 @@ public sealed class RemoteShell : IDisposable
 
         if (oldText.Length == 0)
         {
-            return "The old text to replace was empty.";
+            return ("The old text to replace was empty.", string.Empty);
         }
 
         var (ok, text, path) = await ReadRawAsync(raw, cancellationToken).ConfigureAwait(false);
 
         if (!ok)
         {
-            return text;
+            return (text, string.Empty);
         }
 
         text = text.Replace("\r\n", "\n");
@@ -177,19 +186,19 @@ public sealed class RemoteShell : IDisposable
 
         if (count == 0)
         {
-            return "The old text was not found in the file. Copy it exactly, including indentation.";
+            return ("The old text was not found in the file. Copy it exactly, including indentation.", string.Empty);
         }
 
         if (count > 1 && !all)
         {
-            return $"The old text appears {count} times. Add surrounding lines to make it unique, or set replace_all.";
+            return ($"The old text appears {count} times. Add surrounding lines to make it unique, or set replace_all.", string.Empty);
         }
 
         var updated = all ? text.Replace(oldText, newText) : ReplaceFirst(text, oldText, newText);
 
         return await PutAsync(path, updated, cancellationToken).ConfigureAwait(false)
-            ? $"Edited {path} ({count} {(count == 1 ? "replacement" : "replacements")})."
-            : $"Could not write {path} (see the connection).";
+            ? ($"Edited {path} ({count} {(count == 1 ? "replacement" : "replacements")}).", TextDiff.Unified(path, text, updated))
+            : ($"Could not write {path} (see the connection).", string.Empty);
     }
 
     public async Task<string> ListAsync(string argumentsJson, CancellationToken cancellationToken)
