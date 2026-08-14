@@ -223,27 +223,110 @@ public static class ClaudeImport
     /// Turns a session into a saved chat under the Claude CLI agent. Returns false when a chat with
     /// this source id already exists, so importing the same session twice is a no-op.
     /// </summary>
-    public static bool Import(ImportedChat chat)
+    public static bool Import(ImportedChat chat, string agentId)
     {
-        var id = IdPrefix + chat.SourceId;
-
-        if (ChatStore.Chats.Any(c => c.Id == id))
+        if (Build(chat, agentId) is not { } session)
         {
             return false;
         }
 
-        var session = new ChatSession
+        ChatStore.Save(session);
+        return true;
+    }
+
+    /// <summary>
+    /// Imports a session under the chosen agent, writing its file off the UI thread. Returns false
+    /// when this session has already been imported under that agent.
+    /// </summary>
+    public static async Task<bool> ImportAsync(ImportedChat chat, string agentId)
+    {
+        if (Build(chat, agentId) is not { } session)
+        {
+            return false;
+        }
+
+        await ChatStore.SaveAsync(session).ConfigureAwait(true);
+        return true;
+    }
+
+    /// <summary>
+    /// The name imported assistant lines are attributed to in a room — one voice, no longer a
+    /// participant, just a label so the transcript still reads as a back-and-forth.
+    /// </summary>
+    public static string AssistantName => LocalizationService.T("L_ImportAssistant");
+
+    /// <summary>Appends a session to an existing room, its assistant lines under the imported name.</summary>
+    public static async Task ImportToRoomAsync(ImportedChat chat, ChatRoom room)
+    {
+        AppendTo(room, chat);
+        room.Touch();
+        await RoomStore.SaveAsync(room).ConfigureAwait(true);
+    }
+
+    /// <summary>Makes a new room out of a session and returns its id, so the caller can land on it.</summary>
+    public static async Task<string> ImportToNewRoomAsync(ImportedChat chat)
+    {
+        var room = new ChatRoom
+        {
+            Title = chat.Title,
+            CreatedAt = chat.Updated,
+            UpdatedAt = chat.Updated,
+        };
+
+        AppendTo(room, chat);
+        await RoomStore.SaveAsync(room).ConfigureAwait(true);
+        return room.Id;
+    }
+
+    private static void AppendTo(ChatRoom room, ImportedChat chat)
+    {
+        var assistant = AssistantName;
+
+        foreach (var turn in chat.Turns)
+        {
+            room.Turns.Add(new ChatTurn
+            {
+                Role = turn.Role,
+                Text = turn.Text,
+                Speaker = turn.Role == "assistant" ? assistant : string.Empty,
+            });
+        }
+    }
+
+    private static ChatSession? Build(ImportedChat chat, string agentId)
+    {
+        if (string.IsNullOrWhiteSpace(agentId))
+        {
+            agentId = ClaudeCli.AgentId;
+        }
+
+        // Keyed by agent as well as source, so the same session can be brought in under more than
+        // one agent, while importing it twice under the same one is still a no-op. The Claude CLI
+        // agent keeps the old plain key, so chats imported before this stay recognised.
+        var id = agentId == ClaudeCli.AgentId
+            ? IdPrefix + chat.SourceId
+            : IdPrefix + Sanitize(agentId) + "_" + chat.SourceId;
+
+        if (ChatStore.Chats.Any(c => c.Id == id))
+        {
+            return null;
+        }
+
+        return new ChatSession
         {
             Id = id,
-            AgentId = ClaudeCli.AgentId,
+            AgentId = agentId,
             Title = chat.Title,
             CreatedAt = chat.Updated,
             UpdatedAt = chat.Updated,
             Turns = [.. chat.Turns],
         };
+    }
 
-        ChatStore.Save(session);
-        return true;
+    private static string Sanitize(string value)
+    {
+        var chars = value.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_').ToArray();
+        return chars.Length > 0 ? new string(chars) : "agent";
     }
 
     // ---- json helpers ----

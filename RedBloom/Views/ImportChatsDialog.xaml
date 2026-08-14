@@ -65,6 +65,19 @@
                        TextWrapping="Wrap"
                        Margin="0,0,0,12" />
 
+            <Grid Margin="0,0,0,12" ColumnDefinitions="Auto,*" VerticalAlignment="Center">
+                <TextBlock Grid.Column="0"
+                           Text="{DynamicResource L_ImportInto}"
+                           Foreground="{DynamicResource TextMuted}"
+                           FontFamily="{DynamicResource UiFont}"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           Margin="0,0,10,0" />
+                <ComboBox Grid.Column="1"
+                          x:Name="TargetCombo"
+                          DisplayMemberPath="Display" />
+            </Grid>
+
             <!-- Shown while sessions are being scanned or imported, in place of the list. -->
             <StackPanel x:Name="BusyPanel" Margin="0,4,0,10" Visibility="Collapsed">
                 <TextBlock x:Name="BusyLabel"

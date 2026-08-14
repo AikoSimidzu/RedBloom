@@ -176,6 +176,35 @@ public static class ChatStore
             Chats.Insert(0, chat);
         }
 
+        WriteFile(chat);
+    }
+
+    /// <summary>
+    /// Registers a chat and writes it to disk off the UI thread, for importing where the file may
+    /// be large — so a big chat does not freeze the window while it is serialised and written.
+    /// </summary>
+    /// <remarks>
+    /// The list is an <see cref="ObservableCollection{T}"/> bound to the UI, so it is added to on the
+    /// calling (UI) thread; only the serialising and writing, which is the slow part, goes to the
+    /// background.
+    /// </remarks>
+    public static Task SaveAsync(ChatSession chat)
+    {
+        if (chat.IsEmpty)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (!Chats.Contains(chat))
+        {
+            Chats.Insert(0, chat);
+        }
+
+        return Task.Run(() => WriteFile(chat));
+    }
+
+    private static void WriteFile(ChatSession chat)
+    {
         try
         {
             Directory.CreateDirectory(Folder);

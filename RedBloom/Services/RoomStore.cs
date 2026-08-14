@@ -85,6 +85,22 @@ public static class RoomStore
             Rooms.Insert(0, room);
         }
 
+        WriteFile(room);
+    }
+
+    /// <summary>Registers a room and writes it off the UI thread, for importing a large transcript.</summary>
+    public static Task SaveAsync(ChatRoom room)
+    {
+        if (!Rooms.Contains(room))
+        {
+            Rooms.Insert(0, room);
+        }
+
+        return Task.Run(() => WriteFile(room));
+    }
+
+    private static void WriteFile(ChatRoom room)
+    {
         try
         {
             Directory.CreateDirectory(Folder);

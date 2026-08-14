@@ -2013,7 +2013,7 @@
       if (!node) {
         node = el("div", "turn agent");
         node.dataset.thinking = "1";
-        const face = avatarFor("agent");
+        const face = avatarFor("agent", m.avatar);
         if (face) node.appendChild(face);
 
         // Built as a turn with a plate of its own, so waiting looks like the message that is
@@ -2035,6 +2035,15 @@
         side.appendChild(body);
         node.appendChild(side);
         log.appendChild(node);
+      } else if (m.avatar !== undefined) {
+        // A room hands the same waiting card from one speaker to the next; refresh its face so the
+        // avatar matches whoever is thinking now.
+        const newFace = avatarFor("agent", m.avatar);
+        const oldFace = node.querySelector(".avatar");
+        if (newFace) {
+          if (oldFace) node.replaceChild(newFace, oldFace);
+          else node.insertBefore(newFace, node.firstChild);
+        }
       }
 
       node.querySelector(".who").textContent = m.label || "";

@@ -3,12 +3,13 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
+using RedBloom.Models;
 using RedBloom.Services;
 using RedBloom.Services.Ai;
 
 namespace RedBloom.Views;
 
-/// <summary>Picks which Claude Code sessions to bring into RedBloom.</summary>
+/// <summary>Picks which Claude Code sessions to bring into RedBloom, and which agent to file them under.</summary>
 public partial class ImportChatsDialog : Window
 {
     private readonly ObservableCollection<Row> _rows = [];
@@ -18,8 +19,43 @@ public partial class ImportChatsDialog : Window
     {
         InitializeComponent();
         List.ItemsSource = _rows;
+
+        var targets = BuildTargets();
+        TargetCombo.ItemsSource = targets;
+        TargetCombo.SelectedItem = targets.FirstOrDefault();
+
         Loaded += async (_, _) => await ScanAsync();
     }
+
+    /// <summary>The agent the chats were filed under (empty for a room import), so the caller can land on it.</summary>
+    public string ImportedAgentId { get; private set; } = string.Empty;
+
+    /// <summary>The room the chats were imported into, or null for an agent import.</summary>
+    public ChatRoom? ImportedRoom { get; private set; }
+
+    /// <summary>Where a chat can be imported: any agent, an existing room, or a new room.</summary>
+    private static List<Target> BuildTargets()
+    {
+        var list = new List<Target> { new(ClaudeCli.Agent.Name, ClaudeCli.Agent, null, false) };
+
+        foreach (var agent in ThemeService.Settings.Agents.Where(a => a.Id != ClaudeCli.AgentId))
+        {
+            list.Add(new Target(agent.DisplayName, agent, null, false));
+        }
+
+        list.Add(new Target(LocalizationService.T("L_ImportNewRoom"), null, null, true));
+
+        foreach (var room in RoomStore.Rooms)
+        {
+            var name = string.Format(CultureInfo.CurrentCulture, LocalizationService.T("L_ImportRoomPrefix"), room.Title);
+            list.Add(new Target(name, null, room, false));
+        }
+
+        return list;
+    }
+
+    /// <summary>One choice in the "import into" list.</summary>
+    private sealed record Target(string Display, AiAgent? Agent, ChatRoom? Room, bool NewRoom);
 
     /// <summary>Scans the sessions off the UI thread, driving the progress bar, then fills the list.</summary>
     private async Task ScanAsync()
@@ -75,11 +111,16 @@ public partial class ImportChatsDialog : Window
     private static string Fmt(string key, int done, int total) =>
         string.Format(CultureInfo.CurrentCulture, LocalizationService.T(key), done, total);
 
-    /// <summary>Shows the dialog and imports the chosen chats; returns how many were newly imported.</summary>
-    public static int Run(Window owner)
+    /// <summary>
+    /// Shows the dialog and imports the chosen chats; returns how many were newly imported and the
+    /// agent they were filed under, so the caller can land on it.
+    /// </summary>
+    public static (int Imported, string AgentId, ChatRoom? Room) Run(Window owner)
     {
         var dialog = new ImportChatsDialog { Owner = owner };
-        return dialog.ShowDialog() == true ? dialog.Imported : 0;
+        return dialog.ShowDialog() == true
+            ? (dialog.Imported, dialog.ImportedAgentId, dialog.ImportedRoom)
+            : (0, string.Empty, null);
     }
 
     private int Imported { get; set; }
@@ -104,25 +145,48 @@ public partial class ImportChatsDialog : Window
             return;
         }
 
+        var target = TargetCombo.SelectedItem as Target ?? new Target(string.Empty, ClaudeCli.Agent, null, false);
+        ImportedAgentId = target.Agent?.Id ?? string.Empty;
+
         SetBusy(true);
         Bar.Maximum = chosen.Count;
         Bar.Value = 0;
         BusyLabel.Text = Fmt("L_ImportImporting", 0, chosen.Count);
 
+        // Let the progress panel paint and be seen before any writing starts, so a quick import
+        // still shows its status rather than the dialog appearing to do nothing and then closing.
+        await Task.Delay(150);
+
         var done = 0;
         foreach (var chat in chosen)
         {
-            // The save touches the shared chat list, so it stays on the UI thread; yielding between
-            // chats lets the bar repaint rather than jumping straight to full.
-            if (ClaudeImport.Import(chat))
+            // The list is added to on the UI thread; the serialise-and-write, which is the slow part
+            // for a big chat, runs in the background, so the window stays responsive and the bar
+            // moves rather than freezing.
+            if (target.Agent is { } agent)
             {
+                if (await ClaudeImport.ImportAsync(chat, agent.Id))
+                {
+                    Imported++;
+                }
+            }
+            else if (target.Room is { } room)
+            {
+                await ClaudeImport.ImportToRoomAsync(chat, room);
+                ImportedRoom = room;
+                Imported++;
+            }
+            else
+            {
+                // A new room per session, like a session becomes one chat; the caller lands on the first.
+                var id = await ClaudeImport.ImportToNewRoomAsync(chat);
+                ImportedRoom ??= RoomStore.Rooms.FirstOrDefault(r => r.Id == id);
                 Imported++;
             }
 
             done++;
             Bar.Value = done;
             BusyLabel.Text = Fmt("L_ImportImporting", done, chosen.Count);
-            await Task.Yield();
         }
 
         DialogResult = true;

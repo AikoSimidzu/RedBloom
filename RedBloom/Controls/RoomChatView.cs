@@ -53,8 +53,12 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
     private CancellationTokenSource? _turn;
 
-    /// <summary>Messages the user sent while a round was running, to send when it finishes.</summary>
-    private readonly Queue<(string Text, string To, List<TaskItem> Tasks)> _queued = new();
+    /// <summary>
+    /// Messages the user sent while a round was running, to send when it finishes — the edit index
+    /// travels with each, so an edit made mid-round still replaces its message rather than adding a
+    /// duplicate when it finally goes out.
+    /// </summary>
+    private readonly Queue<(string Text, string To, List<TaskItem> Tasks, int EditIndex)> _queued = new();
 
     private bool _pageReady;
     private bool _disposed;
@@ -230,11 +234,11 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                 break;
 
             case "send" when message.TryGetProperty("text", out var text):
-                EditTruncate(message);
                 Submit(
                     text.GetString() ?? string.Empty,
                     message.TryGetProperty("to", out var to) ? to.GetString() ?? string.Empty : string.Empty,
-                    TaskPanel.ParseShared(message));
+                    TaskPanel.ParseShared(message),
+                    message.TryGetProperty("editIndex", out var ei) && ei.TryGetInt32(out var eiv) ? eiv : -1);
                 break;
 
             case "stop":
@@ -663,13 +667,9 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     /// When a message carries an edit position, drops that turn and everything after it before the
     /// edited text is sent, so an edit replaces the message rather than adding a duplicate.
     /// </summary>
-    private void EditTruncate(JsonElement message)
+    private void TruncateTo(int at)
     {
-        if (_turn is not null
-            || !message.TryGetProperty("editIndex", out var slot)
-            || !slot.TryGetInt32(out var at)
-            || at < 0
-            || at >= _room.Turns.Count)
+        if (_turn is not null || at < 0 || at >= _room.Turns.Count)
         {
             return;
         }
@@ -681,7 +681,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         RenderHistory();
     }
 
-    private void Submit(string text, string to, List<TaskItem>? sharedTasks = null)
+    private void Submit(string text, string to, List<TaskItem>? sharedTasks = null, int editIndex = -1)
     {
         var question = text.Trim();
         var shared = sharedTasks ?? [];
@@ -692,13 +692,18 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         }
 
         // A round is already running — the agents are talking among themselves — so the message is
-        // held and sent when the round ends, rather than dropped.
+        // held and sent when the round ends, rather than dropped. Its edit index rides along, so an
+        // edit made now still replaces the message it points at instead of piling on a copy.
         if (_turn is not null)
         {
-            _queued.Enqueue((question, to, shared));
+            _queued.Enqueue((question, to, shared, editIndex));
             Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_RoomQueued")) });
             return;
         }
+
+        // An edit drops the message it points at and everything after it, so the amended text
+        // replaces the original rather than being appended as a near-duplicate.
+        TruncateTo(editIndex);
 
         // The attachments travel with the message they were pinned for, then the composer clears —
         // a pin left in place would silently re-send the file on every later message.
@@ -796,7 +801,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             if (_queued.Count > 0)
             {
                 var next = _queued.Dequeue();
-                Submit(next.Text, next.To, next.Tasks);
+                Submit(next.Text, next.To, next.Tasks, next.EditIndex);
             }
         }
     }
@@ -845,7 +850,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     /// <summary>Runs one agent and shows its reply under its own name; returns what it said.</summary>
     private async Task<string> SpeakAsync(AiAgent agent, List<AiAgent> participants, CancellationToken cancellationToken)
     {
-        Post(new { t = "thinking", on = true, label = agent.DisplayName, what = string.Empty });
+        Post(new { t = "thinking", on = true, label = agent.DisplayName, what = string.Empty, avatar = AvatarDataUri(agent) });
 
         // An image participant draws from the conversation's latest request rather than chatting.
         if (agent.Provider == AiProvider.ImageGen)
@@ -982,7 +987,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         var what = phase == AgentPhase.Thinking ? string.Empty : LocalizationService.T(AgentPhase.Key(phase));
 
         Post(new { t = "status", text = (what.Length > 0 ? what : PolicyName()) + "…", busy = true });
-        Post(new { t = "thinking", on = true, label = agent.DisplayName, what });
+        Post(new { t = "thinking", on = true, label = agent.DisplayName, what, avatar = AvatarDataUri(agent) });
     }
 
     private async Task<string> DrawAsync(AiAgent agent, CancellationToken cancellationToken)

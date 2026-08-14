@@ -590,9 +590,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         // Agents that are simply there when the thing behind them is installed, with nothing to
-        // configure: no key, no endpoint, and credentials the tool keeps itself.
+        // configure: no key, no endpoint, and credentials the tool keeps itself. The Claude CLI
+        // agent also appears when there are imported Claude Code chats to view under it, even if the
+        // command-line tool itself is not on this machine — otherwise those chats have no home to
+        // show in and stay invisible.
         static IEnumerable<AiAgent> Stock() =>
-            Services.Ai.ClaudeCli.IsInstalled ? [Services.Ai.ClaudeCli.Agent] : [];
+            Services.Ai.ClaudeCli.IsInstalled
+            || ChatStore.Chats.Any(c => c.AgentId == Services.Ai.ClaudeCli.AgentId)
+                ? [Services.Ai.ClaudeCli.Agent]
+                : [];
 
         async Task AddLocalAgentsAsync()
         {
@@ -643,21 +649,32 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var imported = Views.ImportChatsDialog.Run(this);
+        var (imported, agentId, room) = Views.ImportChatsDialog.Run(this);
 
-        if (imported > 0)
+        if (imported <= 0)
         {
-            // Land on the Claude CLI agent so the freshly imported chats are in view at once.
-            RefreshAgents();
-
-            if (AgentPicker.ItemsSource is IEnumerable<AiAgent> agents
-                && agents.FirstOrDefault(a => a.Id == Services.Ai.ClaudeCli.AgentId) is { } cli)
-            {
-                AgentPicker.SelectedItem = cli;
-            }
-
-            RefreshChats();
+            return;
         }
+
+        if (room is not null)
+        {
+            // Land in the room the chats went into: switch to the rooms view, refresh, and open it.
+            RoomsModeButton.IsChecked = true;
+            RefreshRooms();
+            OpenRoomTab(room);
+            return;
+        }
+
+        // Otherwise land on the agent the chats were filed under so they are in view at once.
+        RefreshAgents();
+
+        if (AgentPicker.ItemsSource is IEnumerable<AiAgent> agents
+            && agents.FirstOrDefault(a => a.Id == agentId) is { } target)
+        {
+            AgentPicker.SelectedItem = target;
+        }
+
+        RefreshChats();
     }
 
     // ---- rooms ----
@@ -695,11 +712,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void DeleteRoom_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: ChatRoom room })
+        if (sender is FrameworkElement { Tag: ChatRoom room } && ConfirmDelete(room.Title))
         {
             RoomStore.Delete(room);
             RefreshRooms();
         }
+    }
+
+    /// <summary>Asks before an irreversible delete of a chat or room; true when the user confirms.</summary>
+    private bool ConfirmDelete(string title)
+    {
+        var subject = string.IsNullOrWhiteSpace(title)
+            ? LocalizationService.T("L_DeleteThis")
+            : $"“{title.Trim()}”";
+
+        return MessageBox.Show(
+            this,
+            string.Format(LocalizationService.T("L_DeleteConfirm"), subject),
+            LocalizationService.T("L_Delete"),
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No) == MessageBoxResult.Yes;
     }
 
     private void NewRoom_Click(object sender, RoutedEventArgs e)
@@ -752,8 +785,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var delete = new MenuItem { Header = LocalizationService.T("L_Delete") };
         delete.Click += (_, _) =>
         {
-            RoomStore.Delete(room);
-            RefreshRooms();
+            if (ConfirmDelete(room.Title))
+            {
+                RoomStore.Delete(room);
+                RefreshRooms();
+            }
         };
 
         menu.Items.Add(edit);
@@ -868,6 +904,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     /// <summary>Deletes a chat, closing its tab first so nothing writes it back afterwards.</summary>
     private void RemoveChat(ChatSession chat)
     {
+        if (!ConfirmDelete(chat.Title))
+        {
+            return;
+        }
+
         if (Tabs.FirstOrDefault(t => t.Chat?.Id == chat.Id) is { } open)
         {
             CloseTab(open);
