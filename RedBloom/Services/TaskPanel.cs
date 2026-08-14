@@ -38,6 +38,71 @@ public static class TaskPanel
     public static object Item(TaskItem t) =>
         new { id = t.Id, name = t.Name, desc = t.Description, state = t.State.ToString(), assignee = t.Assignee };
 
+    /// <summary>Reads the tasks a message shared into the chat, as the page sent them.</summary>
+    public static List<TaskItem> ParseShared(JsonElement message)
+    {
+        var list = new List<TaskItem>();
+
+        if (!message.TryGetProperty("tasks", out var tasks) || tasks.ValueKind != JsonValueKind.Array)
+        {
+            return list;
+        }
+
+        foreach (var t in tasks.EnumerateArray())
+        {
+            if (t.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var item = new TaskItem
+            {
+                Name = Str(t, "name"),
+                Description = Str(t, "desc"),
+                Assignee = Str(t, "assignee"),
+            };
+
+            if (t.TryGetProperty("state", out var state) && Enum.TryParse<TaskState>(state.GetString(), true, out var parsed))
+            {
+                item.State = parsed;
+            }
+
+            list.Add(item);
+        }
+
+        return list;
+    }
+
+    /// <summary>The shared tasks as text, for the message that goes to the model.</summary>
+    public static string SharedText(IReadOnlyList<TaskItem> tasks)
+    {
+        if (tasks.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var statuses = Statuses();
+        var sb = new System.Text.StringBuilder(LocalizationService.T("L_TaskShareHeader"));
+
+        foreach (var t in tasks)
+        {
+            sb.Append("\n- ").Append(t.Name.Length > 0 ? t.Name : "(no name)");
+            sb.Append(" — ").Append(statuses.TryGetValue(t.State.ToString(), out var s) ? s : t.State.ToString());
+
+            if (t.Assignee.Length > 0)
+            {
+                sb.Append(" · @").Append(t.Assignee);
+            }
+
+            if (t.Description.Length > 0)
+            {
+                sb.Append(": ").Append(t.Description);
+            }
+        }
+
+        return sb.ToString();
+    }
+
     /// <summary>Applies an edit the page sent to a task list; true when something changed.</summary>
     public static bool Apply(List<TaskItem> tasks, JsonElement message)
     {
@@ -95,6 +160,7 @@ public static class TaskPanel
     {
         ["agentTasks"] = LocalizationService.T("L_TaskAgentButton"),
         ["agentNone"] = LocalizationService.T("L_TaskAgentNone"),
+        ["filterOpen"] = LocalizationService.T("L_TaskFilterOpen"),
     };
 
     /// <summary>
@@ -130,7 +196,7 @@ public static class TaskPanel
 
         var op = Str(root, "op").Trim().ToLowerInvariant();
         var which = Str(root, "list").Trim().ToLowerInvariant();
-        var toMine = which is "mine" or "self" or "own" or "notebook";
+        var toMine = which is "mine" or "self" or "own" or "notebook" or "private" or "my" or "me" or "personal";
         var target = toMine ? mine : shared;
 
         if (op == "report")

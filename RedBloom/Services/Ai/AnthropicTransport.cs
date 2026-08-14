@@ -422,7 +422,10 @@ public sealed class AnthropicTransport : IAgentTransport
                 // with the whole arguments object.
                 if (AgentTransports.Files.Names.Contains(call.Name))
                 {
-                    yield return AgentEvent.Doing(AgentPhase.Running);
+                    yield return AgentEvent.Doing(
+                        call.Name is AgentTransports.Files.Write or AgentTransports.Files.Edit
+                            ? AgentPhase.WritingFile
+                            : AgentPhase.ReadingFile);
 
                     results.Add(new ToolResultBlockParam
                     {
@@ -437,6 +440,8 @@ public sealed class AnthropicTransport : IAgentTransport
                 // no approval either. The whole arguments object is handed over as it arrived.
                 if (call.Name == AgentTransports.Tasks.Name)
                 {
+                    yield return AgentEvent.Doing(AgentPhase.Tasks);
+
                     results.Add(new ToolResultBlockParam
                     {
                         ToolUseID = id,

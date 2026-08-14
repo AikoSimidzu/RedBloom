@@ -152,4 +152,41 @@ public static class SystemInfo
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// The preamble when the chat is working over SSH: the same tools, but every one of them acts
+    /// on the remote machine across a single live connection, not on this computer.
+    /// </summary>
+    public static string RemotePreamble(string host, string user, string cwd)
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine(
+            $"You are acting as an autonomous agent on a REMOTE machine over SSH — {user}@{host} — "
+            + "through RedBloom. run_command and the file tools all operate on that remote machine, "
+            + "not on the local computer, across one connection that stays open between calls. Be "
+            + "direct: do the work and report it.");
+        sb.AppendLine();
+        sb.AppendLine("Environment:");
+        sb.AppendLine($"- Remote host: {host} (user {user})");
+        sb.AppendLine("- Shell for run_command: the remote's POSIX shell (sh/bash). Commands run there.");
+        sb.AppendLine($"- Working directory (on the remote): {cwd}");
+        sb.AppendLine();
+        sb.AppendLine(
+            "run_command runs one command on the remote and returns its output. The working "
+            + "directory persists between your calls, so a `cd` carries onward; environment "
+            + "variables set in one call do not. Output is cut if very long, so filter with grep "
+            + "rather than printing whole files.");
+        sb.AppendLine();
+        sb.AppendLine(
+            "The file tools act on the remote machine over the same connection — use them instead of "
+            + "cat/heredoc tricks:");
+        sb.AppendLine("- read_file: read a remote file, optionally a line range.");
+        sb.AppendLine("- write_file: create or replace a remote file.");
+        sb.AppendLine("- edit_file: replace an exact piece of a remote file.");
+        sb.AppendLine("- list_dir: list a remote folder.");
+        sb.Append("Relative paths resolve against the remote working directory above.");
+
+        return sb.ToString();
+    }
 }

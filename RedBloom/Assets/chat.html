@@ -157,6 +157,53 @@
   }
   .agentpick button:hover { color: var(--text); border-color: var(--accent); }
   .agentpick button.on { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+
+  /* The "unfinished only" filter in an agent notebook — a personal view toggle, remembered locally. */
+  .taskfilter { display: flex; align-items: center; gap: 7px; padding: 1px 2px 8px; font-size: 11.5px; color: var(--muted); cursor: pointer; user-select: none; }
+  .taskfilter:hover { color: var(--text); }
+
+  /* A checkbox drawn to the theme rather than the browser's white default: a dark box that fills
+     with the accent when ticked, with a white check on top. */
+  .taskfilter input {
+    appearance: none; -webkit-appearance: none;
+    width: 15px; height: 15px; margin: 0; flex: 0 0 auto; cursor: pointer; position: relative;
+    background: var(--surface); border: 1px solid var(--divider); border-radius: 4px;
+  }
+  .taskfilter input:hover { border-color: var(--accent-dim); }
+  .taskfilter input:checked { background: var(--accent-dim); border-color: var(--accent); }
+  .taskfilter input:checked::after {
+    content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
+    border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+
+  /* ---- a task list shared into a message: a neat card, not raw markdown ---- */
+  .sharedtasks {
+    margin: 8px 0 2px;
+    border: 1px solid var(--divider);
+    border-radius: 9px;
+    background: var(--raised);
+    overflow: hidden;
+  }
+  .sharedtasks .stask {
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 8px 11px;
+    border-top: 1px solid var(--divider);
+  }
+  .sharedtasks .stask:first-child { border-top: none; }
+  .sharedtasks .st { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; flex: 0 0 auto; }
+  .sharedtasks .stbody { min-width: 0; flex: 1; }
+  .sharedtasks .sthead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sharedtasks .stname { font-size: 12.5px; font-weight: 600; color: var(--text); }
+  .sharedtasks .stbadge {
+    font-size: 10.5px; line-height: 1.5; padding: 0 7px; border-radius: 9px;
+    background: var(--chrome); color: var(--muted); white-space: nowrap;
+  }
+  .sharedtasks .stbadge.InProgress { background: rgba(121, 192, 255, .16); color: #9ecbff; }
+  .sharedtasks .stbadge.Done { background: rgba(111, 194, 118, .16); color: #8fd396; }
+  .sharedtasks .stbadge.NeedsRework { background: rgba(224, 164, 74, .16); color: #e6b569; }
+  .sharedtasks .stbadge.Tests { background: rgba(210, 168, 255, .16); color: #d2a8ff; }
+  .sharedtasks .stwho { font-size: 11px; color: var(--accent); }
+  .sharedtasks .stdesc { font-size: 11.5px; color: var(--muted); margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
   .taskrow .st { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
   .st.NotStarted { background: var(--faint); }
   .st.InProgress { background: #79c0ff; }
@@ -1322,6 +1369,7 @@
     CtxAsk: "Ask the agent about this",
     CtxAskOther: "Ask another agent…",
     Quote: "Quote",
+    Reply: "Reply to this one",
     QuoteMe: "You",
     MentionAll: "Everyone",
     MentionAllTitle: "Address everyone again",
@@ -1549,6 +1597,9 @@
   // The quote glyph, set here so the private-use icon chars above stay untouched.
   GLYPH.quote = "";
 
+  // The reply glyph — an "@", since replying to a room message is addressing that speaker.
+  GLYPH.reply = "@";
+
   // Whether this surface offers quoting: on in a room, off in a one-to-one chat.
   let quoteOn = false;
 
@@ -1577,6 +1628,15 @@
   /** A quote button for a message's action row: quotes the whole message, attributed. */
   function quoteButton(body, text) {
     return actionButton(GLYPH.quote, S.Quote, () => quoteMessage(speakerOf(body), text));
+  }
+
+  /** A reply button for a room message: pins the composer to that speaker, so the next message
+   *  is addressed to them — the easy way to answer a particular agent. */
+  function replyButton(body) {
+    return actionButton(GLYPH.reply, S.Reply, () => {
+      const who = speakerOf(body);
+      if (who && who !== S.QuoteMe) { setPin(who); input.focus(); }
+    });
   }
 
   function actionButton(glyph, title, onClick) {
@@ -1648,6 +1708,7 @@
     bar.appendChild(like);
     bar.appendChild(dislike);
     bar.appendChild(actionButton(GLYPH.regen, S.Regenerate, () => post({ t: "regenerate" })));
+    if (quoteOn) bar.appendChild(replyButton(body));
     if (quoteOn) bar.appendChild(quoteButton(body, replyText));
     body.appendChild(bar);
   }
@@ -1913,7 +1974,8 @@
         body.appendChild(strip);
       }
 
-      body.appendChild(el("div", null, m.html));
+      if (m.html) body.appendChild(el("div", null, m.html));
+      if (m.tasks && m.tasks.length) body.appendChild(sharedTasksCard(m.tasks));
       userActions(body, m.text || body.innerText.trim());
       follow();
     },
@@ -2290,18 +2352,17 @@
   });
 
   function submit() {
-    let text = input.value.trim();
-    const extra = stagedMarkdown();
+    const text = input.value.trim();
+
+    // Pinned tasks travel as structured data, not folded into the text, so the chat can draw them
+    // as a card while the host still passes their text to the model.
+    const tasks = stagedTasks.map(t => ({ name: t.name, desc: t.desc, state: t.state, assignee: t.assignee }));
 
     // Nothing typed and nothing pinned is nothing to send.
-    if (!text && !extra) return;
+    if (!text && tasks.length === 0) return;
 
     // A bare "/command" is run rather than sent as a message.
     if (text && runTypedCommand()) return;
-
-    // Pinned tasks are folded in as they go — they were kept out of the text box, not out of
-    // the message.
-    if (extra) text = text ? text + "\n\n" + extra : extra;
 
     input.value = "";
     input.style.height = "auto";
@@ -2314,7 +2375,7 @@
     // history a moment ago — the reply is what I want to watch for now.
     stuckToBottom = true;
 
-    post({ t: "send", text, to: pinnedAgent || "", editIndex });
+    post({ t: "send", text, tasks, to: pinnedAgent || "", editIndex });
     clearEdit();
   }
 
@@ -2831,6 +2892,11 @@
   let agentPick = "";         // which agent's notebook the agent panel is showing
   let taskMode = "shared";    // "shared" (the header list) or "agent" (a notebook)
   let stagedTasks = [];       // tasks pinned to send, shown as chips by the composer
+
+  // A personal, purely-visual filter for the agent notebooks — hide done tasks. Remembered on this
+  // machine only, so it survives reopening without touching anything the agents or the room see.
+  let agentFilterOpen = false;
+  try { agentFilterOpen = localStorage.getItem("rbAgentFilterOpen") === "1"; } catch (e) { /* storage off */ }
   const TL = {};   // labels: tasks, agentTasks, add, del, shareOne, shareAll, shareHeader, none, agentNone, namePh, descPh, unassigned
 
   // Glyphs by code point rather than typed, so an editor blind to the private-use area leaves
@@ -2877,13 +2943,6 @@
 
   function postTask(op, data) { post(Object.assign({ t: "task", op }, data)); }
 
-  function taskShareText(t) {
-    let s = "**" + (t.name || "(no name)") + "** — " + (taskStatuses[t.state] || t.state);
-    if (t.assignee) s += " · @" + t.assignee;
-    if (t.desc) s += "\n" + t.desc;
-    return s;
-  }
-
   // Sharing no longer types into the composer: the task is pinned as a chip beside the file
   // attachments, and folded into the message only when it is actually sent.
   function stageTask(t, owner) {
@@ -2912,15 +2971,33 @@
     });
   }
 
-  /** The markdown for the staged tasks, folded into the message as it is sent. */
-  function stagedMarkdown() {
-    if (!stagedTasks.length) return "";
-    const header = TL.shareHeader || "Tasks:";
-    const lines = stagedTasks.map((t) => {
-      const prefix = (taskRoom && t.assignee) ? "@" + t.assignee + " " : "";
-      return prefix + taskShareText(t);
-    });
-    return header + "\n\n" + lines.join("\n\n");
+  /** A shared task list drawn inside a message as a card, from the structured tasks the host sent. */
+  function sharedTasksCard(list) {
+    const card = el("div", "sharedtasks");
+
+    for (const t of list) {
+      const row = el("div", "stask");
+      row.appendChild(el("span", "st " + t.state));
+
+      const body = el("div", "stbody");
+      const head = el("div", "sthead");
+
+      const name = el("span", "stname", ""); name.textContent = t.name || "(task)";
+      head.appendChild(name);
+
+      const badge = el("span", "stbadge " + t.state, ""); badge.textContent = taskStatuses[t.state] || t.state;
+      head.appendChild(badge);
+
+      if (t.assignee) { const who = el("span", "stwho", ""); who.textContent = "@" + t.assignee; head.appendChild(who); }
+      body.appendChild(head);
+
+      if (t.desc) { const desc = el("div", "stdesc", ""); desc.textContent = t.desc; body.appendChild(desc); }
+
+      row.appendChild(body);
+      card.appendChild(row);
+    }
+
+    return card;
   }
 
   /** The two header buttons: glyph, open-count badge and title. Follows the lists even while shut. */
@@ -3054,12 +3131,29 @@
     const cur = agentLists.find(a => a.name === agentPick);
     const list = cur && Array.isArray(cur.list) ? cur.list : [];
 
-    if (!list.length) {
+    // A personal "unfinished only" toggle — hides done tasks in this view, nothing more. Shown
+    // whenever there are tasks, so it can be turned on before a list fills with finished ones.
+    if (list.length) {
+      const filter = el("label", "taskfilter");
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = agentFilterOpen;
+      cb.addEventListener("change", () => {
+        agentFilterOpen = cb.checked;
+        try { localStorage.setItem("rbAgentFilterOpen", cb.checked ? "1" : "0"); } catch (e) { /* storage off */ }
+        renderTasks();
+      });
+      filter.appendChild(cb);
+      const lbl = el("span", null, ""); lbl.textContent = TL.filterOpen || "Unfinished only"; filter.appendChild(lbl);
+      body.appendChild(filter);
+    }
+
+    const shown = agentFilterOpen ? list.filter(t => t.state !== "Done") : list;
+
+    if (!shown.length) {
       const none = el("div", "tasknone"); none.textContent = TL.agentNone || "This agent has no tasks yet."; body.appendChild(none);
     }
-    for (const t of list) body.appendChild(taskRow(t, { room: false, scope: "agent", agent: agentPick }));
+    for (const t of shown) body.appendChild(taskRow(t, { room: false, scope: "agent", agent: agentPick }));
     body.appendChild(addRow((v) => post({ t: "task", op: "add", scope: "agent", agent: agentPick, name: v })));
-    if (list.length) body.appendChild(shareAllFoot(list));
+    if (shown.length) body.appendChild(shareAllFoot(shown));
   }
 
   post({ t: "ready" });

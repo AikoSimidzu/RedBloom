@@ -44,6 +44,12 @@ public sealed class ChatTurn
     /// and shown at the time.
     /// </remarks>
     public List<string> Attachments { get; set; } = [];
+
+    /// <summary>
+    /// Tasks shared into this message from a task list — drawn as a card in the chat, and sent to
+    /// the model as text so it reads them too. Kept with the message so the card comes back on reopen.
+    /// </summary>
+    public List<TaskItem> SharedTasks { get; set; } = [];
 }
 
 /// <summary>

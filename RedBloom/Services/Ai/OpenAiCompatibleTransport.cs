@@ -223,6 +223,8 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 // object rides in Command, so the host can parse it the same way both transports do.
                 if (call.Name == AgentTransports.Tasks.Name)
                 {
+                    yield return AgentEvent.Doing(AgentPhase.Tasks);
+
                     messages.Add(new
                     {
                         role = "tool",
@@ -238,7 +240,10 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 // Command as they arrived.
                 if (AgentTransports.Files.Names.Contains(call.Name))
                 {
-                    yield return AgentEvent.Doing(AgentPhase.Running);
+                    yield return AgentEvent.Doing(
+                        call.Name is AgentTransports.Files.Write or AgentTransports.Files.Edit
+                            ? AgentPhase.WritingFile
+                            : AgentPhase.ReadingFile);
 
                     messages.Add(new
                     {

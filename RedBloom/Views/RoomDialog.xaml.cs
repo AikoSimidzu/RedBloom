@@ -32,6 +32,14 @@ public partial class RoomDialog : Window
             }),
         ];
 
+        // Checking a participant on or off has to refresh the moderator list — that list is only
+        // the chosen agents, and without this it stayed frozen at whatever was chosen when the
+        // dialog opened, so a new room offered nothing to pick as moderator.
+        foreach (var pick in _picks)
+        {
+            Track(pick);
+        }
+
         AgentsList.ItemsSource = _picks;
         PolicyBox.SelectedIndex = IndexOf(room.Policy);
 
@@ -95,6 +103,23 @@ public partial class RoomDialog : Window
 
     private void RefreshModerators() =>
         ModeratorBox.ItemsSource = _picks.Where(p => p.Chosen).Select(p => p.Agent).ToList();
+
+    /// <summary>Watches a pick so the moderator list follows it being chosen or dropped.</summary>
+    private void Track(Pick pick) => pick.PropertyChanged += OnPickChanged;
+
+    private void OnPickChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(Pick.Chosen))
+        {
+            return;
+        }
+
+        // Keep the current moderator selected if it is still in the room; otherwise the field
+        // clears rather than pointing at an agent that is no longer a participant.
+        var kept = ModeratorBox.SelectedItem as AiAgent;
+        RefreshModerators();
+        ModeratorBox.SelectedItem = (ModeratorBox.ItemsSource as IEnumerable<AiAgent>)?.FirstOrDefault(a => a == kept);
+    }
 
     private void Ok_Click(object sender, RoutedEventArgs e)
     {
@@ -169,6 +194,7 @@ public partial class RoomDialog : Window
         ThemeService.Save();
 
         var pick = new Pick(copy) { Chosen = true };
+        Track(pick);
         _picks.Add(pick);
 
         // A List does not tell the list to redraw on its own; re-seating the source does.

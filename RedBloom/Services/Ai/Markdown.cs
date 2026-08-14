@@ -24,6 +24,36 @@ public static partial class Markdown
     /// <summary>Code longer than this is collapsed, with the rest behind a toggle.</summary>
     private const int CollapseAfterLines = 18;
 
+    /// <summary>
+    /// The agent names to highlight as @-mentions for the duration of one render, longest first so
+    /// a name that is a prefix of another does not steal the match. Thread-static because rendering
+    /// is synchronous per view; null falls back to the plain single-word mention rule.
+    /// </summary>
+    [ThreadStatic]
+    private static string[]? _mentionNames;
+
+    /// <summary>
+    /// Renders markdown, highlighting @-mentions of the given agent names exactly — so a nick with
+    /// a space in it (or a "name [model]" tag) is lit whole rather than only up to the first space.
+    /// </summary>
+    public static string ToHtml(string markdown, IEnumerable<string>? mentionNames)
+    {
+        _mentionNames = mentionNames?
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct()
+            .OrderByDescending(n => n.Length)
+            .ToArray();
+
+        try
+        {
+            return ToHtml(markdown);
+        }
+        finally
+        {
+            _mentionNames = null;
+        }
+    }
+
     public static string ToHtml(string markdown)
     {
         if (string.IsNullOrEmpty(markdown))
@@ -335,9 +365,31 @@ public static partial class Markdown
         // An @-mention of an agent is drawn like inline code. Only one that opens a token — at the
         // start or after whitespace — so an address like "a@b" is left alone, and one already
         // inside a code span or a link is preceded by ">" and so is not matched a second time.
-        html = MentionText().Replace(html, m => $"<code class=\"mention\">@{m.Groups[1].Value}</code>");
+        html = HighlightMentions(html);
 
         return html.Replace("\n", "<br>", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Wraps @-mentions. When the participants' names are known, each is matched whole — including
+    /// any spaces or brackets — longest first so a shorter name that is a prefix cannot cut a longer
+    /// one short. Otherwise a single word after the @ is highlighted, as before.
+    /// </summary>
+    private static string HighlightMentions(string html)
+    {
+        if (_mentionNames is not { Length: > 0 } names)
+        {
+            return MentionText().Replace(html, m => $"<code class=\"mention\">@{m.Groups[1].Value}</code>");
+        }
+
+        foreach (var name in names)
+        {
+            var escaped = Escape(name);
+            var pattern = @"(?<=^|\s)@" + Regex.Escape(escaped);
+            html = Regex.Replace(html, pattern, _ => $"<code class=\"mention\">@{escaped}</code>");
+        }
+
+        return html;
     }
 
     public static string Escape(string text) => text

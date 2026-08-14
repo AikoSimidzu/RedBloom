@@ -283,11 +283,12 @@ public static class ChatContext
         // Why it was attached at all. Without this a model treats it as background detail and
         // answers about the local machine, or asks which host was meant when it has been told.
         text.AppendLine()
-            .AppendLine("The user attached this because the task concerns this machine. Unless "
-                + "they say otherwise, assume that is where things are to be inspected, "
-                + "installed, changed or run, and write your commands to reach it over ssh "
-                + "rather than for the computer this chat is running on. When you have a tool "
-                + "for running commands, use it with the ssh line above.");
+            .AppendLine("The user attached this because the task concerns this machine, so your "
+                + "tools now act on it directly: run_command runs on this remote over a live "
+                + "connection, and the file tools read and write its files. Do NOT wrap your "
+                + "commands in ssh yourself and do not use the ssh line above as a command — just "
+                + "write the commands as if you were already on the machine. Unless the user says "
+                + "otherwise, assume this is where things are to be inspected, changed or run.");
 
         AppendSecret(text, path, session);
     }

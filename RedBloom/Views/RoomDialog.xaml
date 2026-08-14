@@ -191,7 +191,23 @@
                            FontFamily="{DynamicResource UiFont}"
                            FontSize="12"
                            Margin="0,0,0,4" />
-                <ComboBox x:Name="ModeratorBox" DisplayMemberPath="DisplayName" />
+                <ComboBox x:Name="ModeratorBox">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Name}"
+                                           FontFamily="{DynamicResource UiFont}"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding ShortModel}"
+                                           Foreground="{DynamicResource TextFaint}"
+                                           FontFamily="{DynamicResource UiFont}"
+                                           FontSize="11"
+                                           Margin="8,1,0,0"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
             </StackPanel>
 
             <CheckBox x:Name="AllowCommandsBox"

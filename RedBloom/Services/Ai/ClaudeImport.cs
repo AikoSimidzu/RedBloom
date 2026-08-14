@@ -44,13 +44,62 @@ public static class ClaudeImport
 
         foreach (var file in EnumerateSessions())
         {
-            if (ReadSession(file) is { Turns.Count: > 0 } chat)
+            try
             {
-                chats.Add(chat);
+                if (ReadSession(file) is { Turns.Count: > 0 } chat)
+                {
+                    chats.Add(chat);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OutOfMemoryException)
+            {
+                // One unreadable or enormous session must not sink the whole list — skip it and
+                // keep the rest importable.
             }
         }
 
         return [.. chats.OrderByDescending(c => c.Updated)];
+    }
+
+    /// <summary>
+    /// Discovers sessions off the UI thread, reporting how many of the total have been read so a
+    /// dialog can show a progress bar rather than freeze while a big history is scanned.
+    /// </summary>
+    public static Task<IReadOnlyList<ImportedChat>> DiscoverAsync(
+        IProgress<(int Done, int Total)>? progress = null, CancellationToken cancellationToken = default)
+    {
+        return Task.Run<IReadOnlyList<ImportedChat>>(() =>
+        {
+            if (!Directory.Exists(ProjectsRoot))
+            {
+                return [];
+            }
+
+            var files = EnumerateSessions().ToList();
+            var chats = new List<ImportedChat>();
+            progress?.Report((0, files.Count));
+
+            for (var i = 0; i < files.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    if (ReadSession(files[i]) is { Turns.Count: > 0 } chat)
+                    {
+                        chats.Add(chat);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OutOfMemoryException)
+                {
+                    // Skip the unreadable or enormous one; keep scanning the rest.
+                }
+
+                progress?.Report((i + 1, files.Count));
+            }
+
+            return [.. chats.OrderByDescending(c => c.Updated)];
+        }, cancellationToken);
     }
 
     private static IEnumerable<string> EnumerateSessions()
@@ -71,6 +120,13 @@ public static class ClaudeImport
         }
     }
 
+    /// <summary>
+    /// A line longer than this is a tool dump — a whole file read back, a huge command output — not
+    /// a spoken message, so it is skipped without parsing. This is what keeps a large session, whose
+    /// weight is all in those lines, from exhausting memory the moment it is read.
+    /// </summary>
+    private const int MaxLineChars = 1_500_000;
+
     private static ImportedChat? ReadSession(string file)
     {
         var turns = new List<ChatTurn>();
@@ -78,80 +134,74 @@ public static class ClaudeImport
         var cwd = string.Empty;
         var updated = DateTime.MinValue;
 
-        string[] lines;
-        try
+        // Streamed line by line rather than read whole: a Claude Code session can be hundreds of
+        // megabytes of embedded tool output, and loading it all at once — as ReadAllLines did — is
+        // what made a big chat impossible to import.
+        foreach (var line in File.ReadLines(file))
         {
-            lines = File.ReadAllLines(file);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-
-        foreach (var line in lines)
-        {
-            if (line.Length == 0 || line[0] != '{')
+            if (line.Length == 0 || line[0] != '{' || line.Length > MaxLineChars)
             {
                 continue;
             }
 
-            JsonElement o;
             try
             {
+                // Parsed and read inside the using — nothing is cloned out, so a huge line's memory
+                // is freed as soon as the little text we want has been copied into a string.
                 using var doc = JsonDocument.Parse(line);
-                o = doc.RootElement.Clone();
+                var o = doc.RootElement;
+
+                if (Str(o, "cwd") is { Length: > 0 } c)
+                {
+                    cwd = c;
+                }
+
+                if (Str(o, "aiTitle") is { Length: > 0 } t)
+                {
+                    title = t;
+                }
+
+                if (When(o) is { } when && when > updated)
+                {
+                    updated = when;
+                }
+
+                var kind = Str(o, "type");
+
+                if (kind is not ("user" or "assistant"))
+                {
+                    continue;
+                }
+
+                // Meta rows, side chains and transcript-only lines are bookkeeping, not conversation.
+                if (Flag(o, "isMeta") || Flag(o, "isSidechain") || Flag(o, "isVisibleInTranscriptOnly"))
+                {
+                    continue;
+                }
+
+                if (!o.TryGetProperty("message", out var message)
+                    || !message.TryGetProperty("content", out var content))
+                {
+                    continue;
+                }
+
+                var text = TextOf(content).Trim();
+
+                if (text.Length == 0)
+                {
+                    continue;
+                }
+
+                turns.Add(new ChatTurn
+                {
+                    Role = kind == "assistant" ? "assistant" : "user",
+                    Text = text,
+                });
             }
             catch (JsonException)
             {
-                continue;
+                // A malformed line is skipped, the rest of the session still read.
             }
-
-            if (Str(o, "cwd") is { Length: > 0 } c)
-            {
-                cwd = c;
-            }
-
-            if (Str(o, "aiTitle") is { Length: > 0 } t)
-            {
-                title = t;
-            }
-
-            if (When(o) is { } when && when > updated)
-            {
-                updated = when;
-            }
-
-            var kind = Str(o, "type");
-
-            if (kind is not ("user" or "assistant"))
-            {
-                continue;
-            }
-
-            // Meta rows, side chains and transcript-only lines are bookkeeping, not conversation.
-            if (Flag(o, "isMeta") || Flag(o, "isSidechain") || Flag(o, "isVisibleInTranscriptOnly"))
-            {
-                continue;
-            }
-
-            if (!o.TryGetProperty("message", out var message)
-                || !message.TryGetProperty("content", out var content))
-            {
-                continue;
-            }
-
-            var text = TextOf(content).Trim();
-
-            if (text.Length == 0)
-            {
-                continue;
-            }
-
-            turns.Add(new ChatTurn
-            {
-                Role = kind == "assistant" ? "assistant" : "user",
-                Text = text,
-            });
         }
 
         if (turns.Count == 0)

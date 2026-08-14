@@ -75,6 +75,14 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// across the fresh shells each command gets.
     /// </summary>
     private string _cwd = string.Empty;
+
+    /// <summary>
+    /// The remote machine this chat is working on, when an SSH connection has been attached — then
+    /// commands and the file tools run there instead of locally. Null means the local machine.
+    /// </summary>
+    private RemoteShell? _remote;
+    private Guid _remoteSession;
+
     private bool _pageReady;
     private bool _dirty;
     private bool _disposed;
@@ -323,7 +331,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             case "send" when message.TryGetProperty("text", out var text):
                 EditTruncate(message);
-                Submit(text.GetString() ?? string.Empty);
+                Submit(text.GetString() ?? string.Empty, TaskPanel.ParseShared(message));
                 break;
 
             case "regenerate":
@@ -427,10 +435,21 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
     private void Post(object message)
     {
-        if (_pageReady || message is not null)
+        if (!_pageReady && message is null)
         {
-            _webView.CoreWebView2?.PostWebMessageAsString(JsonSerializer.Serialize(message));
+            return;
         }
+
+        // A tool the model calls (manage_tasks, the file tools) runs on a background thread inside
+        // the transport, and the WebView may only be posted to from the UI thread — so a post from
+        // off-thread is marshalled rather than throwing.
+        if (!_webView.Dispatcher.CheckAccess())
+        {
+            _webView.Dispatcher.BeginInvoke(() => Post(message));
+            return;
+        }
+
+        _webView.CoreWebView2?.PostWebMessageAsString(JsonSerializer.Serialize(message));
     }
 
     /// <summary>
@@ -776,6 +795,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                     html = Markdown.ToHtml(turn.Text),
                     text = turn.Text,
                     files = turn.Attachments.Select(Attachments.Describe),
+                    tasks = turn.SharedTasks.Select(TaskPanel.Item),
                 });
             }
 
@@ -1021,6 +1041,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         _history.Add(new ChatTurn { Role = "assistant", Text = "Understood — carrying on from there." });
         _history.AddRange(tail);
 
+        // Redraw so the collapse is seen: the wall of old turns becomes the one summary line.
+        // Without this the history shrank underneath but the screen kept the old messages.
+        _shown = PageSize;
+        RenderHistory();
+
         Post(new
         {
             t = "note",
@@ -1112,18 +1137,21 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         Persist();
     }
 
-    private void Submit(string text)
+    private void Submit(string text, List<TaskItem>? sharedTasks = null)
     {
         var question = text.Trim();
+        var shared = sharedTasks ?? [];
 
-        if (question.Length == 0 || _turn is not null)
+        // A message may carry only shared tasks and no words of its own, so an empty question is
+        // still sent when there are tasks pinned to it.
+        if (_turn is not null || (question.Length == 0 && shared.Count == 0))
         {
             return;
         }
 
         // The attachments travel with the message they were pinned for, and the composer is
         // cleared: a pin that stayed put would silently re-send the file on every later turn.
-        var turn = new ChatTurn { Role = "user", Text = question, Attachments = [.. _pending] };
+        var turn = new ChatTurn { Role = "user", Text = question, Attachments = [.. _pending], SharedTasks = shared };
         _pending.Clear();
 
         Post(new
@@ -1133,11 +1161,41 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             html = Markdown.ToHtml(question),
             text = question,
             files = turn.Attachments.Select(Attachments.Describe),
+            tasks = shared.Select(TaskPanel.Item),
         });
 
         _history.Add(turn);
+        UpdateRemote(turn.Attachments);
         PushPending();
         _ = RunTurnAsync();
+    }
+
+    /// <summary>
+    /// Points this chat's tools at a remote machine when an SSH connection is attached, so commands
+    /// and file edits land there. Sticky: it holds until a different connection is attached.
+    /// </summary>
+    private void UpdateRemote(IEnumerable<string> attachments)
+    {
+        var session = attachments
+            .Where(Attachments.IsSshSession)
+            .Select(SessionCatalog.Find)
+            .LastOrDefault(s => s is not null);
+
+        if (session is null || session.Id == _remoteSession)
+        {
+            return;
+        }
+
+        _remote?.Dispose();
+        _remote = new RemoteShell(session);
+        _remoteSession = session.Id;
+
+        Post(new
+        {
+            t = "note",
+            html = Markdown.Escape(
+                $"Commands and file tools now run on {session.Name} ({session.Username}@{session.Host})."),
+        });
     }
 
     /// <summary>Throws away the last reply and asks for another to the same question.</summary>
@@ -1289,9 +1347,19 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             var context = ChatContext.Build(turn.Attachments);
 
+            // The shared-task card is drawn from structured data in the chat, but the model reads
+            // it as text folded into the message it was sent with.
+            var body = turn.Text;
+            var shared = TaskPanel.SharedText(turn.SharedTasks);
+
+            if (shared.Length > 0)
+            {
+                body = body.Length > 0 ? body + "\n\n" + shared : shared;
+            }
+
             conversation.Add(new AgentMessage(
                 AgentRole.User,
-                context is null ? turn.Text : turn.Text + "\n\n" + context,
+                context is null ? body : body + "\n\n" + context,
                 pictures ? ChatContext.Images(turn.Attachments) : null));
         }
 
@@ -1403,8 +1471,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             TrimToContext();
 
             // The environment preamble is rebuilt here so it carries the working directory as it
-            // stands now — a `cd` from the last turn is reflected before this one is sent.
-            _agent.EnvironmentPreamble = SystemInfo.Preamble(_cwd);
+            // stands now — a `cd` from the last turn is reflected before this one is sent. Over an
+            // attached connection it describes the remote machine the tools now act on.
+            _agent.EnvironmentPreamble = _remote is not null
+                ? SystemInfo.RemotePreamble(_remote.Host, _remote.User, _remote.Cwd)
+                : SystemInfo.Preamble(_cwd);
 
             await foreach (var item in _transport.SendAsync(Conversation(), turn.Token).ConfigureAwait(true))
             {
@@ -1603,22 +1674,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// </remarks>
     private void Phase(string phase)
     {
-        var what = LocalizationService.T(phase switch
-        {
-            AgentPhase.Loading => "L_PhaseLoading",
-            AgentPhase.Tunnelling => "L_PhaseTunnelling",
-            AgentPhase.Deciding => "L_PhaseDeciding",
-            AgentPhase.Running => "L_PhaseRunning",
-            AgentPhase.RunningElevated => "L_PhaseRunningAdmin",
-            AgentPhase.ReadingOutput => "L_PhaseReading",
-            AgentPhase.Writing => "L_PhaseWriting",
-            AgentPhase.Sharing => "L_PhaseSharing",
-            AgentPhase.Drawing => "L_PhaseDrawing",
-            AgentPhase.Asking => "L_PhaseAsking",
-            AgentPhase.WrappingUp => "L_PhaseWrappingUp",
-            AgentPhase.Reconnecting => "L_PhaseReconnecting",
-            _ => "L_PhaseThinking",
-        });
+        var what = LocalizationService.T(AgentPhase.Key(phase));
 
         Post(new { t = "status", text = what + "…", busy = true });
 
@@ -1714,6 +1770,12 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// </remarks>
     public async Task<string> FileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken)
     {
+        // Over an attached connection, every file tool acts on the remote machine.
+        if (_remote is not null)
+        {
+            return await RemoteFileToolAsync(name, argumentsJson, cancellationToken).ConfigureAwait(true);
+        }
+
         if (name == AgentTransports.Files.Read)
         {
             return FileTools.Read(argumentsJson, _cwd);
@@ -1749,6 +1811,34 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         }
 
         return result.Message;
+    }
+
+    /// <summary>The file tools when the chat is working over SSH: read and list run through, a write or edit is approved and shown.</summary>
+    private async Task<string> RemoteFileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken)
+    {
+        if (name == AgentTransports.Files.Read)
+        {
+            return await _remote!.ReadFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true);
+        }
+
+        if (name == AgentTransports.Files.List)
+        {
+            return await _remote!.ListAsync(argumentsJson, cancellationToken).ConfigureAwait(true);
+        }
+
+        var path = _remote!.PathOf(argumentsJson);
+
+        if (!await ApproveAsync($"{name} {path} (on {_remote.Host})", elevated: false, cancellationToken).ConfigureAwait(true))
+        {
+            return "The user declined this change.";
+        }
+
+        var message = name == AgentTransports.Files.Write
+            ? await _remote.WriteFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true)
+            : await _remote.EditFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true);
+
+        ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", $"{path} (on {_remote.Host})", string.Empty);
+        return message;
     }
 
     /// <summary>
@@ -1819,11 +1909,19 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// </remarks>
     public async Task<string> RunAsync(string command, bool elevated, CancellationToken cancellationToken)
     {
+        _pendingCommand = command;
+        _pendingDiff = string.Empty;
+
+        // With a connection attached, the command runs on the remote over the live session rather
+        // than locally. Elevation is a local notion, so an elevated command stays on this machine.
+        if (_remote is not null && !elevated)
+        {
+            return await _remote.RunAsync(command, cancellationToken).ConfigureAwait(true);
+        }
+
         // The repository state before the command, so its edits can be told apart from what was
         // already uncommitted. Cheap when there is no repo — git simply reports nothing.
         var snapshot = GitDiff.Before(command);
-
-        _pendingCommand = command;
 
         string output;
 
@@ -2244,6 +2342,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         _paint.Stop();
         _turn?.Cancel();
         _approval?.TrySetResult('n');
+        _remote?.Dispose();
         _transport.Dispose();
         SessionEnded?.Invoke(this, "The agent session was closed.");
         _webView.Dispose();

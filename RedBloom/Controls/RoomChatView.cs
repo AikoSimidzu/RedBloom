@@ -28,7 +28,14 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     private const string PageUrl = $"https://{VirtualHost}/chat.html";
 
     /// <summary>An upper bound on agent replies per user message, so a mention loop cannot run away.</summary>
-    private const int MaxAgentTurnsPerMessage = 12;
+    private const int MaxAgentTurnsPerMessage = 10;
+
+    /// <summary>
+    /// How many times one agent may speak in answer to a single user message. Two agents that keep
+    /// @-mentioning each other would otherwise ping-pong until the round cap; this stops each one
+    /// after a couple of turns, which breaks the loop long before that.
+    /// </summary>
+    private const int MaxSpeaksPerAgent = 2;
 
     private static readonly Lazy<Task<CoreWebView2Environment>> SharedEnvironment = new(() =>
     {
@@ -45,6 +52,10 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     private readonly List<string> _pending = [];
 
     private CancellationTokenSource? _turn;
+
+    /// <summary>Messages the user sent while a round was running, to send when it finishes.</summary>
+    private readonly Queue<(string Text, string To, List<TaskItem> Tasks)> _queued = new();
+
     private bool _pageReady;
     private bool _disposed;
 
@@ -61,6 +72,10 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
     /// <summary>The room's working directory, where its commands run and its files are made.</summary>
     private string _cwd = string.Empty;
+
+    /// <summary>The remote machine the room is working on, when an SSH connection is attached.</summary>
+    private RemoteShell? _remote;
+    private Guid _remoteSession;
 
     /// <summary>Raised when a room asks to open a file (a "go to file" on a diff), so the window can.</summary>
     public static event Action<string>? FileOpenRequested;
@@ -87,6 +102,12 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             ? System.Drawing.Color.FromArgb(255, background.R, background.G, background.B)
             : System.Drawing.Color.FromArgb(0, background.R, background.G, background.B);
     }
+
+    /// <summary>
+    /// Renders a message, lighting @-mentions of the room's participants whole — a nick with a
+    /// space or a "[model]" tag included, which the default single-word rule cut short.
+    /// </summary>
+    private string ConvHtml(string text) => Markdown.ToHtml(text, Participants().Select(a => a.DisplayName));
 
     /// <summary>The agents currently in the room, resolved from the saved ids, in listed order.</summary>
     private List<AiAgent> Participants() =>
@@ -212,7 +233,8 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                 EditTruncate(message);
                 Submit(
                     text.GetString() ?? string.Empty,
-                    message.TryGetProperty("to", out var to) ? to.GetString() ?? string.Empty : string.Empty);
+                    message.TryGetProperty("to", out var to) ? to.GetString() ?? string.Empty : string.Empty,
+                    TaskPanel.ParseShared(message));
                 break;
 
             case "stop":
@@ -466,9 +488,10 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                 {
                     t = "user",
                     idx = i,
-                    html = Markdown.ToHtml(turn.Text),
+                    html = ConvHtml(turn.Text),
                     text = turn.Text,
                     files = turn.Attachments.Select(Attachments.Describe),
+                    tasks = turn.SharedTasks.Select(TaskPanel.Item),
                 });
             }
             else if (turn.Image.Length > 0)
@@ -484,7 +507,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                     label = turn.Speaker,
                     color = NickColor(agent),
                     avatar = AvatarDataUri(agent),
-                    html = Markdown.ToHtml(turn.Text),
+                    html = ConvHtml(turn.Text),
                 });
                 Post(new { t = "endTurn" });
             }
@@ -603,6 +626,11 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                         Text = LocalizationService.T("L_RoomEarlierSummary") + "\n\n" + summary,
                     });
                     _room.Turns.AddRange(tail);
+
+                    // Redraw so the collapse is actually seen: the wall of old turns is replaced by
+                    // the one summary line. Without this the data shrank but the screen did not.
+                    _shown = PageSize;
+                    RenderHistory();
                 }
             }
 
@@ -653,28 +681,40 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         RenderHistory();
     }
 
-    private void Submit(string text, string to)
+    private void Submit(string text, string to, List<TaskItem>? sharedTasks = null)
     {
         var question = text.Trim();
+        var shared = sharedTasks ?? [];
 
-        if (question.Length == 0 || _turn is not null)
+        if (question.Length == 0 && shared.Count == 0)
         {
+            return;
+        }
+
+        // A round is already running — the agents are talking among themselves — so the message is
+        // held and sent when the round ends, rather than dropped.
+        if (_turn is not null)
+        {
+            _queued.Enqueue((question, to, shared));
+            Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_RoomQueued")) });
             return;
         }
 
         // The attachments travel with the message they were pinned for, then the composer clears —
         // a pin left in place would silently re-send the file on every later message.
-        var turn = new ChatTurn { Role = "user", Text = question, Attachments = [.. _pending] };
+        var turn = new ChatTurn { Role = "user", Text = question, Attachments = [.. _pending], SharedTasks = shared };
         _pending.Clear();
 
         _room.Turns.Add(turn);
+        UpdateRemote(turn.Attachments);
         Post(new
         {
             t = "user",
             idx = _room.Turns.Count - 1,
-            html = Markdown.ToHtml(question),
+            html = ConvHtml(question),
             text = question,
             files = turn.Attachments.Select(Attachments.Describe),
+            tasks = shared.Select(TaskPanel.Item),
         });
         PushPending();
 
@@ -684,6 +724,10 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
     private async Task RunRoundAsync(string trigger, string to, CancellationToken cancellationToken)
     {
+        // While the round runs the composer shows Stop in place of Send, so the exchange can be
+        // halted — without this a room offered no way to stop the agents at all.
+        Post(new { t = "status", text = PolicyName(), busy = true });
+
         try
         {
             var participants = Participants();
@@ -698,6 +742,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             // user @-mention, force a speaker in every policy; otherwise the room's rule decides.
             var queue = new Queue<AiAgent>(OpeningSpeakers(participants, trigger, to));
             var spoken = 0;
+            var speaks = new Dictionary<string, int>();
 
             while (queue.Count > 0 && spoken < MaxAgentTurnsPerMessage)
             {
@@ -706,12 +751,16 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                 var agent = queue.Dequeue();
                 var reply = await SpeakAsync(agent, participants, cancellationToken).ConfigureAwait(true);
                 spoken++;
+                speaks[agent.Id] = speaks.GetValueOrDefault(agent.Id) + 1;
 
                 // An agent that names another with an @ hands it the floor next — this is how one
-                // agent reaches another, the image agent included.
+                // agent reaches another, the image agent included. An agent that has already had its
+                // couple of turns this round is not re-added, so a mutual @-mention cannot ping-pong.
                 foreach (var mentioned in MentionedIn(reply, participants))
                 {
-                    if (mentioned.Id != agent.Id && !queue.Contains(mentioned))
+                    if (mentioned.Id != agent.Id
+                        && !queue.Contains(mentioned)
+                        && speaks.GetValueOrDefault(mentioned.Id) < MaxSpeaksPerAgent)
                     {
                         queue.Enqueue(mentioned);
                     }
@@ -742,6 +791,13 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             RoomStore.Save(_room);
             Post(new { t = "status", text = PolicyName(), busy = false });
             _turn = null;
+
+            // A message the user queued while the round ran is sent now, as its own round.
+            if (_queued.Count > 0)
+            {
+                var next = _queued.Dequeue();
+                Submit(next.Text, next.To, next.Tasks);
+            }
         }
     }
 
@@ -805,7 +861,9 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         // task tool, so the cast can keep the shared list and their notebooks. The command tool
         // itself stays gated behind the room's permission through Enabled.
         var roomAgent = RoomAgent(agent, participants);
-        roomAgent.EnvironmentPreamble = SystemInfo.Preamble(_cwd);
+        roomAgent.EnvironmentPreamble = _remote is not null
+            ? SystemInfo.RemotePreamble(_remote.Host, _remote.User, _remote.Cwd)
+            : SystemInfo.Preamble(_cwd);
 
         using var transport = AgentTransports.For(roomAgent, this);
         var from = FittingStart(agent);
@@ -836,7 +894,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                         label = agent.DisplayName,
                         color = NickColor(agent),
                         avatar = AvatarDataUri(agent),
-                        html = Markdown.ToHtml(reply.ToString()),
+                        html = ConvHtml(reply.ToString()),
                     });
                     break;
 
@@ -892,6 +950,13 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                     _pendingDiff = string.Empty;
                     break;
 
+                case AgentEventKind.Phase:
+                    // Says what the agent is doing right now — "reading a file", "running", "updating
+                    // the task list" — so a turn that goes straight to a silent tool is visibly work
+                    // in progress rather than a stall.
+                    RoomPhase(agent, item.Text);
+                    break;
+
                 case AgentEventKind.Failed:
                     Post(new { t = "note", html = Markdown.Escape($"{agent.DisplayName}: {item.Text}") });
                     break;
@@ -908,6 +973,16 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         }
 
         return text;
+    }
+
+    /// <summary>Shows what the speaking agent is doing at this moment on its waiting card.</summary>
+    private void RoomPhase(AiAgent agent, string phase)
+    {
+        // The three dots already say "thinking"; the other phases name something the animation cannot.
+        var what = phase == AgentPhase.Thinking ? string.Empty : LocalizationService.T(AgentPhase.Key(phase));
+
+        Post(new { t = "status", text = (what.Length > 0 ? what : PolicyName()) + "…", busy = true });
+        Post(new { t = "thinking", on = true, label = agent.DisplayName, what });
     }
 
     private async Task<string> DrawAsync(AiAgent agent, CancellationToken cancellationToken)
@@ -1009,6 +1084,13 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
             text.Append(who).Append(": ").AppendLine(turn.Text);
 
+            // Tasks shared into a user turn are drawn as a card in the chat, but the models read
+            // them as text folded in under the line they came with.
+            if (turn.Role == "user" && turn.SharedTasks.Count > 0)
+            {
+                text.AppendLine(TaskPanel.SharedText(turn.SharedTasks));
+            }
+
             // A user turn's attachments — file contents, folder listings, an SSH connection's
             // details — are folded in under the line they were sent with, so the models actually
             // read what was attached rather than only being told a file exists.
@@ -1095,7 +1177,17 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             + "line with who said it; lines marked \"(you)\" are your own. Reply only as "
             + $"{agent.DisplayName}, in the first person, with a single message. Do not write other "
             + "participants' lines or prefix your reply with your name. To hand the floor to "
-            + "another participant, mention them with an @ before their name.";
+            + "another participant, mention them with an @ before their name — but only when you "
+            + "genuinely need their input; do not @-mention someone just to keep the conversation "
+            + "going. Do not repeat what has already been said: if you have nothing to add, say so "
+            + "briefly or simply do not hand the floor on, and let the exchange end.\n\n"
+            + "You keep your own task notebook here, separate from the group's shared list. Use the "
+            + "manage_tasks tool as you work: call it with list \"mine\" to add the tasks you take "
+            + "on to your notebook and to update each one's status (NotStarted, InProgress, Done, "
+            + "NeedsRework, Tests) as it changes — do this yourself as you go, not only when asked, "
+            + "so the others can see what you are doing. Put items the whole group is tracking on "
+            + "the shared list (list \"shared\") instead. Call manage_tasks with op \"list\" first to "
+            + "see the current tasks and their ids.";
 
         clone.SystemPrompt = string.IsNullOrWhiteSpace(clone.SystemPrompt)
             ? preamble
@@ -1255,6 +1347,16 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             return;
         }
 
+        // A tool the model calls (manage_tasks, the file tools) runs on a background thread inside
+        // the transport, and the WebView may only be posted to from the UI thread — so a post from
+        // off-thread is marshalled rather than throwing, which would otherwise kill the round
+        // silently and leave the rest of the cast never answering.
+        if (!_webView.Dispatcher.CheckAccess())
+        {
+            _webView.Dispatcher.BeginInvoke(() => Post(message));
+            return;
+        }
+
         _webView.CoreWebView2?.PostWebMessageAsString(JsonSerializer.Serialize(message));
     }
 
@@ -1359,6 +1461,31 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     private AiAgent? AgentByDisplayName(string name) =>
         Participants().FirstOrDefault(a => string.Equals(a.DisplayName, name, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Points the room's tools at a remote machine when an SSH connection is attached. Sticky.</summary>
+    private void UpdateRemote(IEnumerable<string> attachments)
+    {
+        var session = attachments
+            .Where(Attachments.IsSshSession)
+            .Select(SessionCatalog.Find)
+            .LastOrDefault(s => s is not null);
+
+        if (session is null || session.Id == _remoteSession)
+        {
+            return;
+        }
+
+        _remote?.Dispose();
+        _remote = new RemoteShell(session);
+        _remoteSession = session.Id;
+
+        Post(new
+        {
+            t = "note",
+            html = Markdown.Escape(
+                $"Commands and file tools now run on {session.Name} ({session.Username}@{session.Host})."),
+        });
+    }
+
     /// <inheritdoc />
     /// <remarks>
     /// Reads and listings run straight through; a write or edit is put to the user like a command,
@@ -1366,6 +1493,11 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     /// </remarks>
     public async Task<string> FileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken)
     {
+        if (_remote is not null)
+        {
+            return await RemoteFileToolAsync(name, argumentsJson, cancellationToken).ConfigureAwait(true);
+        }
+
         if (name == AgentTransports.Files.Read)
         {
             return FileTools.Read(argumentsJson, _cwd);
@@ -1401,6 +1533,34 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         }
 
         return result.Message;
+    }
+
+    /// <summary>The file tools when the room is working over SSH: they act on the remote machine.</summary>
+    private async Task<string> RemoteFileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken)
+    {
+        if (name == AgentTransports.Files.Read)
+        {
+            return await _remote!.ReadFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true);
+        }
+
+        if (name == AgentTransports.Files.List)
+        {
+            return await _remote!.ListAsync(argumentsJson, cancellationToken).ConfigureAwait(true);
+        }
+
+        var path = _remote!.PathOf(argumentsJson);
+
+        if (!await ApproveAsync($"{name} {path} (on {_remote.Host})", elevated: false, cancellationToken).ConfigureAwait(true))
+        {
+            return "The user declined this change.";
+        }
+
+        var message = name == AgentTransports.Files.Write
+            ? await _remote.WriteFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true)
+            : await _remote.EditFileAsync(argumentsJson, cancellationToken).ConfigureAwait(true);
+
+        ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", $"{path} (on {_remote.Host})", string.Empty);
+        return message;
     }
 
     /// <summary>Draws a file the speaking agent wrote or edited as a change card, kept in the room's history.</summary>
@@ -1466,8 +1626,16 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     /// <inheritdoc />
     public async Task<string> RunAsync(string command, bool elevated, CancellationToken cancellationToken)
     {
-        var snapshot = GitDiff.Before(command);
         _pendingCommand = command;
+        _pendingDiff = string.Empty;
+
+        // With a connection attached, the command runs on the remote over the live session.
+        if (_remote is not null && !elevated)
+        {
+            return await _remote.RunAsync(command, cancellationToken).ConfigureAwait(true);
+        }
+
+        var snapshot = GitDiff.Before(command);
 
         string output;
 
@@ -1583,6 +1751,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         _turn?.Cancel();
         _turn?.Dispose();
         _approval?.TrySetResult('n');
+        _remote?.Dispose();
         _webView.Dispose();
     }
 }

@@ -98,6 +98,36 @@ public static class AgentPhase
     public const string Sharing = "sharing";
     public const string WrappingUp = "wrapping-up";
     public const string Reconnecting = "reconnecting";
+
+    /// <summary>Reading a file with the file tool.</summary>
+    public const string ReadingFile = "reading-file";
+
+    /// <summary>Writing or editing a file with the file tools.</summary>
+    public const string WritingFile = "writing-file";
+
+    /// <summary>Keeping the task lists with the task tool.</summary>
+    public const string Tasks = "tasks";
+
+    /// <summary>The localisation key naming a phase, shared by the one-to-one chat and the room.</summary>
+    public static string Key(string phase) => phase switch
+    {
+        Loading => "L_PhaseLoading",
+        Tunnelling => "L_PhaseTunnelling",
+        Deciding => "L_PhaseDeciding",
+        Running => "L_PhaseRunning",
+        RunningElevated => "L_PhaseRunningAdmin",
+        ReadingOutput => "L_PhaseReading",
+        Writing => "L_PhaseWriting",
+        Sharing => "L_PhaseSharing",
+        Drawing => "L_PhaseDrawing",
+        Asking => "L_PhaseAsking",
+        WrappingUp => "L_PhaseWrappingUp",
+        Reconnecting => "L_PhaseReconnecting",
+        ReadingFile => "L_PhaseReadingFile",
+        WritingFile => "L_PhaseWritingFile",
+        Tasks => "L_PhaseTasks",
+        _ => "L_PhaseThinking",
+    };
 }
 
 /// <param name="Input">Prompt tokens counted by the endpoint, on a <see cref="AgentEventKind.Usage"/>.</param>

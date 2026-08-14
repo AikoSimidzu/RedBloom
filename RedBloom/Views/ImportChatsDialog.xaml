@@ -18,6 +18,28 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <!-- A thin, rounded progress bar in the theme's colours rather than the OS default. -->
+        <Style x:Key="ThinBar" TargetType="ProgressBar">
+            <Setter Property="Height" Value="6" />
+            <Setter Property="Foreground" Value="{DynamicResource AccentDim}" />
+            <Setter Property="Background" Value="{DynamicResource Chrome}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="3" ClipToBounds="True">
+                            <Grid>
+                                <Border x:Name="PART_Track" />
+                                <Border x:Name="PART_Indicator"
+                                        HorizontalAlignment="Left"
+                                        Background="{TemplateBinding Foreground}"
+                                        CornerRadius="3" />
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Border Background="{DynamicResource Chrome}"
@@ -43,7 +65,21 @@
                        TextWrapping="Wrap"
                        Margin="0,0,0,12" />
 
-            <Grid Margin="0,0,0,6" ColumnDefinitions="*,Auto">
+            <!-- Shown while sessions are being scanned or imported, in place of the list. -->
+            <StackPanel x:Name="BusyPanel" Margin="0,4,0,10" Visibility="Collapsed">
+                <TextBlock x:Name="BusyLabel"
+                           Foreground="{DynamicResource TextMuted}"
+                           FontFamily="{DynamicResource UiFont}"
+                           FontSize="12"
+                           Margin="0,0,0,7" />
+                <ProgressBar x:Name="Bar"
+                             Style="{StaticResource ThinBar}"
+                             Minimum="0"
+                             Maximum="1"
+                             Value="0" />
+            </StackPanel>
+
+            <Grid x:Name="HeaderRow" Margin="0,0,0,6" ColumnDefinitions="*,Auto">
                 <TextBlock Grid.Column="0"
                            x:Name="CountLabel"
                            Foreground="{DynamicResource TextMuted}"
@@ -57,7 +93,8 @@
                           Click="SelectAll_Click" />
             </Grid>
 
-            <Border Background="{DynamicResource Surface}"
+            <Border x:Name="ListBorder"
+                    Background="{DynamicResource Surface}"
                     BorderBrush="{DynamicResource Divider}"
                     BorderThickness="1"
                     CornerRadius="6">
