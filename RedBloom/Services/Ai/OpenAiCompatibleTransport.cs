@@ -236,6 +236,23 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     continue;
                 }
 
+                // Seeing, focusing or closing a window needs no separate approval; the arguments
+                // ride in Command as they arrived.
+                if (call.Name == AgentTransports.Window.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.ManageWindowAsync(call.Command, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
                 // The file tools carry their own approval inside the host; the arguments ride in
                 // Command as they arrived.
                 if (AgentTransports.Files.Names.Contains(call.Name))
@@ -409,7 +426,9 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
 
                 // The whole arguments object is carried in Command untouched, so the host parses the
                 // task fields itself and nothing here needs to know their shape.
-                if (name == AgentTransports.Tasks.Name || AgentTransports.Files.Names.Contains(name))
+                if (name == AgentTransports.Tasks.Name
+                    || name == AgentTransports.Window.Name
+                    || AgentTransports.Files.Names.Contains(name))
                 {
                     calls.Add(new Call(Id(id), name, root.GetRawText(), false, string.Empty, string.Empty));
 
@@ -531,6 +550,12 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     var required = spec.Parameters.Where(p => p.Required).Select(p => p.Name).ToArray();
                     tools.Add(Function(spec.Name, spec.Description, props, required));
                 }
+
+                tools.Add(Function(AgentTransports.Window.Name, AgentTransports.Window.Description, new()
+                {
+                    [AgentTransports.Window.Action] = Property("string", AgentTransports.Window.ActionDescription),
+                    [AgentTransports.Window.Match] = Property("string", AgentTransports.Window.MatchDescription),
+                }, AgentTransports.Window.Action));
             }
 
             if (_tools is { ImagesEnabled: true })

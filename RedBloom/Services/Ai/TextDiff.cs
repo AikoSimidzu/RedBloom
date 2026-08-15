@@ -141,24 +141,59 @@ public static class TextDiff
             }
         }
 
-        var sb = new StringBuilder();
-        var inHunk = false;
+        // The line each op sits at in the old and new file, so a hunk header can carry real
+        // numbers and the card can show a line-number gutter.
+        var oldNo = new int[n];
+        var newNo = new int[n];
+        int ol = 1, nl = 1;
 
         for (var i = 0; i < n; i++)
         {
-            if (!keep[i])
+            oldNo[i] = ol;
+            newNo[i] = nl;
+
+            if (ops[i].Op != '+')
             {
-                inHunk = false;
+                ol++;
+            }
+
+            if (ops[i].Op != '-')
+            {
+                nl++;
+            }
+        }
+
+        var sb = new StringBuilder();
+        var at = 0;
+
+        while (at < n)
+        {
+            if (!keep[at])
+            {
+                at++;
                 continue;
             }
 
-            if (!inHunk)
+            var start = at;
+            while (at < n && keep[at])
             {
-                sb.Append("@@ @@\n");
-                inHunk = true;
+                at++;
             }
 
-            sb.Append(ops[i].Op).Append(ops[i].Line).Append('\n');
+            int oldCount = 0, newCount = 0;
+            for (var k = start; k < at; k++)
+            {
+                if (ops[k].Op != '+') oldCount++;
+                if (ops[k].Op != '-') newCount++;
+            }
+
+            sb.Append("@@ -").Append(oldNo[start]).Append(',').Append(oldCount)
+              .Append(" +").Append(newNo[start]).Append(',').Append(newCount).Append(" @@\n");
+
+            for (var k = start; k < at; k++)
+            {
+                sb.Append(ops[k].Op).Append(ops[k].Line).Append('\n');
+            }
         }
 
         return sb.ToString();

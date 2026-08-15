@@ -1538,6 +1538,15 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         return result.Message;
     }
 
+    /// <inheritdoc />
+    /// <remarks>Windows are the local machine's; run on the UI thread and show the user what the agent did.</remarks>
+    public Task<string> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var result = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
+        Post(new { t = "note", html = Markdown.Escape($"{_speaking?.DisplayName}: {result}") });
+        return Task.FromResult(result);
+    }
+
     /// <summary>The file tools when the room is working over SSH: they act on the remote machine.</summary>
     private async Task<string> RemoteFileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken)
     {

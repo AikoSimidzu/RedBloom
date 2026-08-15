@@ -233,6 +233,13 @@ public interface IAgentToolHost
     /// <param name="name">Which file tool: <see cref="AgentTransports.Files"/> names.</param>
     /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
     Task<string> FileToolAsync(string name, string argumentsJson, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lists, focuses or closes a window on the user's machine — the apps that have been launched —
+    /// and reports what happened.
+    /// </summary>
+    /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
+    Task<string> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds the transport an agent's provider calls for.</summary>
@@ -463,6 +470,37 @@ public static class AgentTransports
                     new(Path, "string", "Optional. Folder to list; relative paths resolve against the working directory.", false),
                 ]),
         ];
+    }
+
+    /// <summary>
+    /// The window tool, described the same way to both APIs — see, focus and close running apps.
+    /// </summary>
+    /// <remarks>
+    /// The shell can start and kill processes, but it cannot bring a window to the front or close
+    /// one gracefully, and it has no tidy way to see what windows are open — which is what this is
+    /// for. Offered alongside the command tool, since managing the user's running apps is the same
+    /// standing as running a command.
+    /// </remarks>
+    public static class Window
+    {
+        public const string Name = "manage_window";
+
+        public const string Description =
+            "See, focus or close the application windows open on the user's computer — the apps you "
+            + "or they have launched. Use action \"list\" to see the open windows (each with its "
+            + "process name and pid), \"focus\" to bring one to the front, and \"close\" to ask one "
+            + "to close (it may prompt to save). For focus and close, give \"match\" as a word from "
+            + "the window's title, its process name, or its pid. Note: to launch a GUI app from "
+            + "run_command without the command blocking until it exits, start it detached, e.g. "
+            + "`start \"\" notepad`.";
+
+        public const string Action = "action";
+        public const string ActionDescription = "One of: list, focus, close.";
+
+        public const string Match = "match";
+
+        public const string MatchDescription =
+            "For focus and close: a word from the window title, the process name, or the pid.";
     }
 
     /// <summary>The command tool, described the same way to both APIs.</summary>

@@ -137,7 +137,10 @@ public static class SystemInfo
             + "remembered between your calls in this chat, so a `cd` you run persists to the next "
             + "command — but environment variables set in one call do not, and each call is still a "
             + "fresh shell, so chain dependent steps in one command with `&&`. Output over about "
-            + "20000 characters is cut, so filter with findstr rather than dumping whole files.");
+            + "20000 characters is cut, so filter with findstr rather than dumping whole files. To "
+            + "launch a GUI app so it keeps running (rather than blocking the command until it "
+            + "exits), start it detached, e.g. `start \"\" notepad`; then use manage_window to see, "
+            + "focus or close the open windows.");
         sb.AppendLine();
         sb.AppendLine(
             "For files, use the file tools rather than the shell — they are exact and avoid the "

@@ -436,6 +436,21 @@ public sealed class AnthropicTransport : IAgentTransport
                     continue;
                 }
 
+                // Seeing, focusing or closing a window is the same standing as a command; it is
+                // dispatched straight through with the arguments as they arrived.
+                if (call.Name == AgentTransports.Window.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.ManageWindowAsync(call.Arguments, cancellationToken).ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
                 // Keeping the task list changes only a list on the user's own screen, so it takes
                 // no approval either. The whole arguments object is handed over as it arrived.
                 if (call.Name == AgentTransports.Tasks.Name)
@@ -905,6 +920,21 @@ public sealed class AnthropicTransport : IAgentTransport
                     },
                 });
             }
+
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Window.Name,
+                Description = AgentTransports.Window.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Window.Action] = Schema("string", AgentTransports.Window.ActionDescription),
+                        [AgentTransports.Window.Match] = Schema("string", AgentTransports.Window.MatchDescription),
+                    },
+                    Required = [AgentTransports.Window.Action],
+                },
+            });
         }
 
         if (_tools is { ImagesEnabled: true })

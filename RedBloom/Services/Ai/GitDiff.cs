@@ -105,6 +105,10 @@ public static partial class GitDiff
         var html = new StringBuilder();
         var open = false;
 
+        // The running line numbers, read from each "@@" header, so every line can show the number
+        // it sits at — the new-file line for added and context lines, the old-file line for removed.
+        int oldLine = 0, newLine = 0;
+
         foreach (var raw in diff.Replace("\r\n", "\n").Split('\n'))
         {
             if (raw.StartsWith("# repo: ", StringComparison.Ordinal) || raw.StartsWith("--- ", StringComparison.Ordinal))
@@ -144,14 +148,23 @@ public static partial class GitDiff
                 continue;
             }
 
-            var cls = raw.StartsWith('+') ? "dadd"
-                : raw.StartsWith('-') ? "ddel"
-                : raw.StartsWith("@@", StringComparison.Ordinal) ? "dhunk"
-                : "dctx";
+            if (raw.StartsWith("@@", StringComparison.Ordinal))
+            {
+                (oldLine, newLine) = HunkStart(raw);
+                html.Append("<div class=\"dl dhunk\"><span class=\"dnum\"></span><span class=\"dtext\">")
+                    .Append(Markdown.Escape(raw)).Append("</span></div>");
+                continue;
+            }
 
-            html.Append("<div class=\"dl ").Append(cls).Append("\">")
+            var (cls, number) = raw.StartsWith('+') ? ("dadd", newLine++)
+                : raw.StartsWith('-') ? ("ddel", oldLine++)
+                : Both(ref oldLine, ref newLine);
+
+            html.Append("<div class=\"dl ").Append(cls).Append("\"><span class=\"dnum\">")
+                .Append(number > 0 ? number.ToString() : string.Empty)
+                .Append("</span><span class=\"dtext\">")
                 .Append(Markdown.Escape(raw.Length == 0 ? " " : raw))
-                .Append("</div>");
+                .Append("</span></div>");
         }
 
         if (open)
@@ -161,6 +174,33 @@ public static partial class GitDiff
 
         return html.ToString();
     }
+
+    /// <summary>A context line advances both files; it is numbered by the new file, like the additions.</summary>
+    private static (string Class, int Number) Both(ref int oldLine, ref int newLine)
+    {
+        var number = newLine;
+        oldLine++;
+        newLine++;
+        return ("dctx", number);
+    }
+
+    /// <summary>The old and new starting line a hunk header names, or zeros when it cannot be read.</summary>
+    private static (int Old, int New) HunkStart(string header)
+    {
+        var match = HunkHeader().Match(header);
+
+        if (!match.Success)
+        {
+            return (0, 0);
+        }
+
+        int.TryParse(match.Groups[1].Value, out var old);
+        int.TryParse(match.Groups[2].Value, out var fresh);
+        return (old, fresh);
+    }
+
+    [GeneratedRegex(@"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")]
+    private static partial Regex HunkHeader();
 
     // ---- repository ----
 

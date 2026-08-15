@@ -1764,6 +1764,15 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     });
 
     /// <inheritdoc />
+    /// <remarks>Runs the window call on the UI thread — focus is reliable from there — and shows the user what it did.</remarks>
+    public Task<string> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var result = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
+        Post(new { t = "note", html = Markdown.Escape($"{BotName}: {result}") });
+        return Task.FromResult(result);
+    }
+
+    /// <inheritdoc />
     /// <remarks>
     /// Reads and listings run straight through; a write or edit is put to the user the same way a
     /// command is, then shown as a change card with its diff and a jump to the file.
