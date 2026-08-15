@@ -14,6 +14,8 @@ public static class WindowTools
 {
     private const int SwRestore = 9;
     private const uint WmClose = 0x0010;
+    private const byte VkMenu = 0x12;
+    private const uint KeyEventKeyUp = 0x0002;
 
     /// <summary>Carries out one <c>manage_window</c> call from its raw arguments and reports back.</summary>
     public static string Handle(string argumentsJson)
@@ -35,9 +37,10 @@ public static class WindowTools
         return action switch
         {
             "" or "list" => ListText(),
+            "launch" or "open" or "start" or "run" => Launch(match),
             "focus" or "show" or "front" => Focus(match),
             "close" or "quit" => Close(match),
-            _ => $"Unknown action \"{action}\". Use list, focus or close.",
+            _ => $"Unknown action \"{action}\". Use launch, list, focus or close.",
         };
     }
 
@@ -62,6 +65,30 @@ public static class WindowTools
         return sb.ToString();
     }
 
+    private static string Launch(string what)
+    {
+        what = what.Trim().Trim('"');
+
+        if (what.Length == 0)
+        {
+            return "Say what to launch — an app name, an executable path, or a document.";
+        }
+
+        try
+        {
+            // UseShellExecute starts it detached and through the shell, so it keeps running and the
+            // call returns at once — unlike run_command, which would wait until the app is closed.
+            var process = Process.Start(new ProcessStartInfo(what) { UseShellExecute = true });
+            return process is not null
+                ? $"Launched \"{what}\" (pid {process.Id}). It is running; use list/focus/close to manage it."
+                : $"Could not launch \"{what}\".";
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or System.IO.FileNotFoundException)
+        {
+            return $"Could not launch \"{what}\": {ex.Message}";
+        }
+    }
+
     private static string Focus(string match)
     {
         if (Find(match) is not { } window)
@@ -75,6 +102,11 @@ public static class WindowTools
         {
             ShowWindow(window.Hwnd, SwRestore);
         }
+
+        // Windows only lets the foreground process change the foreground window; a synthetic Alt
+        // tap satisfies that rule so focus works even when RedBloom is not the active window.
+        KeybdEvent(VkMenu, 0, 0, IntPtr.Zero);
+        KeybdEvent(VkMenu, 0, KeyEventKeyUp, IntPtr.Zero);
 
         BringWindowToTop(window.Hwnd);
         var ok = SetForegroundWindow(window.Hwnd);
@@ -226,4 +258,7 @@ public static class WindowTools
 
     [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", EntryPoint = "keybd_event")]
+    private static extern void KeybdEvent(byte key, byte scan, uint flags, IntPtr extra);
 }

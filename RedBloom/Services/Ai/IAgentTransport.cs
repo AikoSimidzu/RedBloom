@@ -486,21 +486,23 @@ public static class AgentTransports
         public const string Name = "manage_window";
 
         public const string Description =
-            "See, focus or close the application windows open on the user's computer — the apps you "
-            + "or they have launched. Use action \"list\" to see the open windows (each with its "
-            + "process name and pid), \"focus\" to bring one to the front, and \"close\" to ask one "
-            + "to close (it may prompt to save). For focus and close, give \"match\" as a word from "
-            + "the window's title, its process name, or its pid. Note: to launch a GUI app from "
-            + "run_command without the command blocking until it exits, start it detached, e.g. "
-            + "`start \"\" notepad`.";
+            "Launch, see, focus and close application windows on the user's computer. Actions: "
+            + "\"launch\" starts an app and returns at once with it still running (put the app name, "
+            + "path or a document in \"match\"); \"list\" shows the open windows, each with its "
+            + "process name and pid; \"focus\" brings one to the front; \"close\" asks one to close "
+            + "(it may prompt to save). IMPORTANT: to start a GUI app, use launch here — do NOT run "
+            + "it through run_command, which blocks until the app is closed, so you would sit "
+            + "waiting instead of being able to focus or close it. For focus and close, give "
+            + "\"match\" as a word from the window title, the process name, or the pid.";
 
         public const string Action = "action";
-        public const string ActionDescription = "One of: list, focus, close.";
+        public const string ActionDescription = "One of: launch, list, focus, close.";
 
         public const string Match = "match";
 
         public const string MatchDescription =
-            "For focus and close: a word from the window title, the process name, or the pid.";
+            "For launch: the app name, path, or document to open. For focus and close: a word from "
+            + "the window title, the process name, or the pid.";
     }
 
     /// <summary>The command tool, described the same way to both APIs.</summary>
