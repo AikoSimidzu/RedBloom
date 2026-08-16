@@ -178,27 +178,11 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     }
 
     /// <summary>Lets files dropped onto the room be attached, the same as the paperclip.</summary>
-    private void EnableFileDrop()
-    {
-        _webView.AllowExternalDrop = false;
-        _webView.AllowDrop = true;
-
-        _webView.DragOver += (_, e) =>
-        {
-            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
-            e.Handled = true;
-        };
-
-        _webView.Drop += (_, e) =>
-        {
-            if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] paths)
-            {
-                Attach(paths);
-            }
-
-            e.Handled = true;
-        };
-    }
+    /// <remarks>
+    /// Handled inside the page, not by WPF: a windowed WebView2 swallows the native drop before
+    /// WPF's events fire. The page reads the files and sends them here as a "drop" message.
+    /// </remarks>
+    private void EnableFileDrop() => _webView.AllowExternalDrop = true;
 
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -296,6 +280,10 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
             case "attach":
                 AttachFiles();
+                break;
+
+            case "drop":
+                Attach(DroppedFiles.Save(message, "room-" + _room.Id));
                 break;
 
             case "attachFolder":
@@ -1298,7 +1286,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     {
         string[] keys =
         [
-            "L_ChatAsk", "L_ChatSend", "L_ChatStop", "L_ChatCopied", "L_ChatReasoning",
+            "L_ChatAsk", "L_ChatSend", "L_ChatStop", "L_ChatCopied", "L_ChatReasoning", "L_ChatDropFiles",
             "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatThink",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext",
@@ -1539,10 +1527,37 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     }
 
     /// <inheritdoc />
-    /// <remarks>Windows are the local machine's; run on the UI thread and show the user what the agent did.</remarks>
-    public Task<string> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
+    /// <remarks>Windows are the local machine's; run on the UI thread, show the screenshot, and hand it to the model.</remarks>
+    public Task<AgentToolResult> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
     {
-        var result = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
+        var outcome = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
+        var speaker = _speaking?.DisplayName ?? string.Empty;
+
+        Post(new { t = "note", html = Markdown.Escape($"{speaker}: {outcome.Text}") });
+
+        if (outcome.Png is not { Length: > 0 } png)
+        {
+            return Task.FromResult(new AgentToolResult(outcome.Text));
+        }
+
+        var uri = "data:image/png;base64," + Convert.ToBase64String(png);
+        Post(new { t = "image", label = speaker, src = uri, path = string.Empty });
+
+        return Task.FromResult(new AgentToolResult(outcome.Text, new AgentImage("image/png", Convert.ToBase64String(png))));
+    }
+
+    /// <inheritdoc />
+    public Task<string> ControlMouseAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var result = Dispatcher.Invoke(() => InputTools.Handle(argumentsJson));
+        Post(new { t = "note", html = Markdown.Escape($"{_speaking?.DisplayName}: {result}") });
+        return Task.FromResult(result);
+    }
+
+    /// <inheritdoc />
+    public Task<string> TypeKeysAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var result = Dispatcher.Invoke(() => InputTools.HandleKey(argumentsJson));
         Post(new { t = "note", html = Markdown.Escape($"{_speaking?.DisplayName}: {result}") });
         return Task.FromResult(result);
     }

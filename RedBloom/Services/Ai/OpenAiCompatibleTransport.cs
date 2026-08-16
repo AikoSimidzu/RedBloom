@@ -242,12 +242,54 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 {
                     yield return AgentEvent.Doing(AgentPhase.Running);
 
+                    var window = await _tools!.ManageWindowAsync(call.Command, cancellationToken).ConfigureAwait(false);
+
+                    // The tool message carries the text; a screenshot rides to the model as a
+                    // following user message, since most OpenAI-shaped endpoints do not accept an
+                    // image inside a tool result but do accept one in a user turn.
+                    messages.Add(new { role = "tool", tool_call_id = id, content = window.Text });
+
+                    if (window.Image is { } shot)
+                    {
+                        messages.Add(new
+                        {
+                            role = "user",
+                            content = new object[]
+                            {
+                                new { type = "text", text = "Screenshot from the window tool:" },
+                                new { type = "image_url", image_url = new { url = $"data:{shot.MediaType};base64,{shot.Base64}" } },
+                            },
+                        });
+                    }
+
+                    continue;
+                }
+
+                // Moving and clicking the mouse — a text result, arguments in Command.
+                if (call.Name == AgentTransports.Mouse.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
                     messages.Add(new
                     {
                         role = "tool",
                         tool_call_id = id,
-                        content = await _tools!.ManageWindowAsync(call.Command, cancellationToken)
-                            .ConfigureAwait(false),
+                        content = await _tools!.ControlMouseAsync(call.Command, cancellationToken).ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                // Typing on the keyboard — a text result too.
+                if (call.Name == AgentTransports.Keyboard.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.TypeKeysAsync(call.Command, cancellationToken).ConfigureAwait(false),
                     });
 
                     continue;
@@ -428,6 +470,8 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 // task fields itself and nothing here needs to know their shape.
                 if (name == AgentTransports.Tasks.Name
                     || name == AgentTransports.Window.Name
+                    || name == AgentTransports.Mouse.Name
+                    || name == AgentTransports.Keyboard.Name
                     || AgentTransports.Files.Names.Contains(name))
                 {
                     calls.Add(new Call(Id(id), name, root.GetRawText(), false, string.Empty, string.Empty));
@@ -556,6 +600,23 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     [AgentTransports.Window.Action] = Property("string", AgentTransports.Window.ActionDescription),
                     [AgentTransports.Window.Match] = Property("string", AgentTransports.Window.MatchDescription),
                 }, AgentTransports.Window.Action));
+
+                tools.Add(Function(AgentTransports.Mouse.Name, AgentTransports.Mouse.Description, new()
+                {
+                    [AgentTransports.Mouse.Action] = Property("string", AgentTransports.Mouse.ActionDescription),
+                    [AgentTransports.Mouse.X] = Property("integer", AgentTransports.Mouse.XDescription),
+                    [AgentTransports.Mouse.Y] = Property("integer", AgentTransports.Mouse.YDescription),
+                    [AgentTransports.Mouse.X2] = Property("integer", AgentTransports.Mouse.X2Description),
+                    [AgentTransports.Mouse.Y2] = Property("integer", AgentTransports.Mouse.Y2Description),
+                    [AgentTransports.Mouse.Button] = Property("string", AgentTransports.Mouse.ButtonDescription),
+                    [AgentTransports.Mouse.Amount] = Property("integer", AgentTransports.Mouse.AmountDescription),
+                }, AgentTransports.Mouse.Action));
+
+                tools.Add(Function(AgentTransports.Keyboard.Name, AgentTransports.Keyboard.Description, new()
+                {
+                    [AgentTransports.Keyboard.Text] = Property("string", AgentTransports.Keyboard.TextDescription),
+                    [AgentTransports.Keyboard.Keys] = Property("string", AgentTransports.Keyboard.KeysDescription),
+                }, Array.Empty<string>()));
             }
 
             if (_tools is { ImagesEnabled: true })

@@ -18,6 +18,12 @@ public enum AgentRole
 /// </remarks>
 public readonly record struct AgentImage(string MediaType, string Base64);
 
+/// <summary>
+/// What a tool hands back: the text the model reads, and optionally a picture it should see — a
+/// screenshot above all, so an agent can look at an app it launched rather than work blind.
+/// </summary>
+public readonly record struct AgentToolResult(string Text, AgentImage? Image = null);
+
 /// <summary>One turn of the conversation, as it is replayed to the model.</summary>
 /// <remarks>
 /// The system prompt is not a message here: both wire formats carry it out of band (Anthropic in
@@ -239,7 +245,20 @@ public interface IAgentToolHost
     /// and reports what happened.
     /// </summary>
     /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
-    Task<string> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken);
+    Task<AgentToolResult> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Moves and clicks the mouse on the user's screen, so the agent can drive an app it can see in
+    /// a screenshot.
+    /// </summary>
+    /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
+    Task<string> ControlMouseAsync(string argumentsJson, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Types text, or presses a key or a chord, into whichever window has focus.
+    /// </summary>
+    /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
+    Task<string> TypeKeysAsync(string argumentsJson, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds the transport an agent's provider calls for.</summary>
@@ -486,23 +505,100 @@ public static class AgentTransports
         public const string Name = "manage_window";
 
         public const string Description =
-            "Launch, see, focus and close application windows on the user's computer. Actions: "
+            "Launch, see, screenshot, focus and close application windows on the user's computer — "
+            + "this is how you actually work with and TEST a GUI app, not just start it. Actions: "
             + "\"launch\" starts an app and returns at once with it still running (put the app name, "
-            + "path or a document in \"match\"); \"list\" shows the open windows, each with its "
-            + "process name and pid; \"focus\" brings one to the front; \"close\" asks one to close "
-            + "(it may prompt to save). IMPORTANT: to start a GUI app, use launch here — do NOT run "
-            + "it through run_command, which blocks until the app is closed, so you would sit "
-            + "waiting instead of being able to focus or close it. For focus and close, give "
-            + "\"match\" as a word from the window title, the process name, or the pid.";
+            + "path or a document in \"match\"); \"screenshot\" returns a picture of a window (or the "
+            + "whole screen if no match is given) so you can SEE the app and check it works; "
+            + "\"list\" shows the open windows, each with process name and pid; \"focus\" brings one "
+            + "to the front; \"close\" asks one to close (it may prompt to save). A normal working "
+            + "loop is: launch → screenshot to see it → focus/interact → screenshot again to verify "
+            + "→ report. IMPORTANT: to start a GUI app use launch here, never run_command, which "
+            + "blocks until the app closes. For screenshot/focus/close, give \"match\" as a word "
+            + "from the window title, the process name, or the pid.";
 
         public const string Action = "action";
-        public const string ActionDescription = "One of: launch, list, focus, close.";
+        public const string ActionDescription = "One of: launch, list, screenshot, focus, close.";
 
         public const string Match = "match";
 
         public const string MatchDescription =
-            "For launch: the app name, path, or document to open. For focus and close: a word from "
-            + "the window title, the process name, or the pid.";
+            "For launch: the app name, path, or document to open. For screenshot, focus and close: a "
+            + "word from the window title, the process name, or the pid (screenshot with no match "
+            + "captures the whole screen).";
+    }
+
+    /// <summary>
+    /// The mouse tool, described the same way to both APIs — move and click on the user's screen.
+    /// </summary>
+    /// <remarks>
+    /// Paired with the window tool's screenshot: the agent takes a whole-screen screenshot, reads a
+    /// point off it, and clicks there. Coordinates are screen pixels in that same picture. Offered
+    /// alongside the command tool, the same standing as running a command.
+    /// </remarks>
+    public static class Mouse
+    {
+        public const string Name = "control_mouse";
+
+        public const string Description =
+            "Move and click the mouse on the user's screen, to drive a GUI app you can see. First "
+            + "take a WHOLE-screen screenshot (manage_window action \"screenshot\" with no match) — "
+            + "the x,y you give here are pixels in that picture. Actions: \"move\" (x,y), \"click\" "
+            + "(x,y; button left/right/middle, left by default), \"double\" (x,y), \"right\" (x,y), "
+            + "\"drag\" (x,y to x2,y2), \"scroll\" (amount in notches, positive up, negative down, at "
+            + "x,y), and \"position\" to read where the cursor is. After acting, screenshot again to "
+            + "see the result before the next click.";
+
+        public const string Action = "action";
+        public const string ActionDescription = "One of: move, click, double, right, drag, scroll, position.";
+
+        public const string X = "x";
+        public const string XDescription = "Screen-pixel x of the point, matching a whole-screen screenshot.";
+
+        public const string Y = "y";
+        public const string YDescription = "Screen-pixel y of the point, matching a whole-screen screenshot.";
+
+        public const string X2 = "x2";
+        public const string X2Description = "For drag: the x to drag to.";
+
+        public const string Y2 = "y2";
+        public const string Y2Description = "For drag: the y to drag to.";
+
+        public const string Button = "button";
+        public const string ButtonDescription = "Optional: left, right or middle. Left by default.";
+
+        public const string Amount = "amount";
+        public const string AmountDescription = "For scroll: notches, positive up, negative down.";
+    }
+
+    /// <summary>
+    /// The keyboard tool, described the same way to both APIs — type text or press keys.
+    /// </summary>
+    /// <remarks>
+    /// Input goes to whatever window has focus, so the agent clicks into the field it wants first
+    /// (with the mouse tool) and then types. Offered alongside the command tool.
+    /// </remarks>
+    public static class Keyboard
+    {
+        public const string Name = "type_keys";
+
+        public const string Description =
+            "Type on the keyboard into whichever window currently has focus — click into the field "
+            + "you want first with control_mouse. Give \"text\" to type a run of characters (a "
+            + "newline in it presses Enter), OR \"keys\" to press a single key or a chord, written "
+            + "with + between parts: \"enter\", \"tab\", \"esc\", \"backspace\", \"ctrl+s\", "
+            + "\"ctrl+shift+n\", \"alt+F4\", arrow keys \"up\"/\"down\"/\"left\"/\"right\", function "
+            + "keys \"F1\"–\"F12\". Use text for typing content and keys for shortcuts and single "
+            + "keys.";
+
+        public const string Text = "text";
+        public const string TextDescription = "A run of characters to type. A newline presses Enter.";
+
+        public const string Keys = "keys";
+
+        public const string KeysDescription =
+            "A single key or a chord like \"enter\", \"ctrl+s\", \"alt+F4\". Use this instead of "
+            + "\"text\" for shortcuts and special keys.";
     }
 
     /// <summary>The command tool, described the same way to both APIs.</summary>

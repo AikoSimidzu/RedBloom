@@ -263,33 +263,16 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     }
 
     /// <summary>
-    /// Lets a file, folder or several dropped onto the chat be attached, the same as the paperclip.
+    /// Lets files dropped onto the chat be attached, the same as the paperclip.
     /// </summary>
     /// <remarks>
-    /// The WebView's own drop handling is turned off first — left on, it would try to open the file
-    /// as a page — so the drop reaches this side, where the paths are pinned to the composer.
+    /// The drop is handled inside the page, not by WPF: a windowed WebView2 swallows the native
+    /// drop before WPF's own events fire, which is why dropping never worked before. So the WebView
+    /// keeps its own drop (the page's JavaScript reads the files and cancels the default navigation)
+    /// and sends the bytes here through a "drop" message, where they are written into the chat's
+    /// attachment folder and pinned.
     /// </remarks>
-    private void EnableFileDrop()
-    {
-        _webView.AllowExternalDrop = false;
-        _webView.AllowDrop = true;
-
-        _webView.DragOver += (_, e) =>
-        {
-            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
-            e.Handled = true;
-        };
-
-        _webView.Drop += (_, e) =>
-        {
-            if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] paths)
-            {
-                Attach(paths);
-            }
-
-            e.Handled = true;
-        };
-    }
+    private void EnableFileDrop() => _webView.AllowExternalDrop = true;
 
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -389,6 +372,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
             case "attach":
                 AttachFiles();
+                break;
+
+            case "drop":
+                Attach(DroppedFiles.Save(message, _chat.Id));
                 break;
 
             case "attachFolder":
@@ -543,7 +530,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         string[] keys =
         [
-            "L_ChatAsk", "L_ChatSend", "L_ChatAttachFile", "L_ChatAttachFolder", "L_ChatAttachSsh",
+            "L_ChatAsk", "L_ChatSend", "L_ChatAttachFile", "L_ChatAttachFolder", "L_ChatAttachSsh", "L_ChatDropFiles",
             "L_ChatRemove", "L_ChatOpenFile", "L_ChatOpenFolder", "L_ChatReveal",
             "L_ChatRun", "L_ChatSkip", "L_ChatAlways", "L_ChatAlwaysNote", "L_ChatAdminWarn",
             "L_ChatModelTitle", "L_ChatModelOther", "L_ChatModelPlaceholder",
@@ -1765,11 +1752,45 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
     /// <inheritdoc />
     /// <remarks>Runs the window call on the UI thread — focus is reliable from there — and shows the user what it did.</remarks>
-    public Task<string> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
+    public Task<AgentToolResult> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
     {
-        var result = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
+        var outcome = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
+        return Task.FromResult(WindowOutcome(outcome, BotName));
+    }
+
+    /// <inheritdoc />
+    public Task<string> ControlMouseAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var result = Dispatcher.Invoke(() => InputTools.Handle(argumentsJson));
         Post(new { t = "note", html = Markdown.Escape($"{BotName}: {result}") });
         return Task.FromResult(result);
+    }
+
+    /// <inheritdoc />
+    public Task<string> TypeKeysAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var result = Dispatcher.Invoke(() => InputTools.HandleKey(argumentsJson));
+        Post(new { t = "note", html = Markdown.Escape($"{BotName}: {result}") });
+        return Task.FromResult(result);
+    }
+
+    /// <summary>
+    /// Turns a window call's outcome into a tool result, showing a screenshot in the chat and
+    /// handing it to the model so it can see the app it is working with. Shared by chat and room.
+    /// </summary>
+    private AgentToolResult WindowOutcome(WindowTools.Outcome outcome, string speaker)
+    {
+        Post(new { t = "note", html = Markdown.Escape($"{speaker}: {outcome.Text}") });
+
+        if (outcome.Png is not { Length: > 0 } png)
+        {
+            return new AgentToolResult(outcome.Text);
+        }
+
+        var uri = "data:image/png;base64," + Convert.ToBase64String(png);
+        Post(new { t = "image", label = speaker, src = uri, path = string.Empty });
+
+        return new AgentToolResult(outcome.Text, new AgentImage("image/png", Convert.ToBase64String(png)));
     }
 
     /// <inheritdoc />

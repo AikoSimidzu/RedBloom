@@ -16,9 +16,16 @@ public static class WindowTools
     private const uint WmClose = 0x0010;
     private const byte VkMenu = 0x12;
     private const uint KeyEventKeyUp = 0x0002;
+    private const int SmXVirtualScreen = 76;
+    private const int SmYVirtualScreen = 77;
+    private const int SmCxVirtualScreen = 78;
+    private const int SmCyVirtualScreen = 79;
+
+    /// <summary>A window call's outcome: the text the model reads, and a screenshot when it asked for one.</summary>
+    public readonly record struct Outcome(string Text, byte[]? Png = null);
 
     /// <summary>Carries out one <c>manage_window</c> call from its raw arguments and reports back.</summary>
-    public static string Handle(string argumentsJson)
+    public static Outcome Handle(string argumentsJson)
     {
         JsonElement root;
 
@@ -28,7 +35,7 @@ public static class WindowTools
         }
         catch (JsonException)
         {
-            return "The window arguments could not be read.";
+            return new Outcome("The window arguments could not be read.");
         }
 
         var action = Str(root, "action").Trim().ToLowerInvariant();
@@ -36,11 +43,12 @@ public static class WindowTools
 
         return action switch
         {
-            "" or "list" => ListText(),
-            "launch" or "open" or "start" or "run" => Launch(match),
-            "focus" or "show" or "front" => Focus(match),
-            "close" or "quit" => Close(match),
-            _ => $"Unknown action \"{action}\". Use launch, list, focus or close.",
+            "" or "list" => new Outcome(ListText()),
+            "launch" or "open" or "start" or "run" => new Outcome(Launch(match)),
+            "screenshot" or "capture" or "shot" or "see" or "view" => Screenshot(match),
+            "focus" or "show" or "front" => new Outcome(Focus(match)),
+            "close" or "quit" => new Outcome(Close(match)),
+            _ => new Outcome($"Unknown action \"{action}\". Use launch, list, screenshot, focus or close."),
         };
     }
 
@@ -88,6 +96,68 @@ public static class WindowTools
             return $"Could not launch \"{what}\": {ex.Message}";
         }
     }
+
+    private static Outcome Screenshot(string match)
+    {
+        // A named window is brought to the front first so the pixels captured are its own and not
+        // whatever is sitting on top; with no match the whole virtual screen is taken.
+        System.Drawing.Rectangle rect;
+        string what;
+
+        if (match.Length > 0)
+        {
+            if (Find(match) is not { } window)
+            {
+                return new Outcome($"No open window matched \"{match}\", so there was nothing to capture.");
+            }
+
+            if (IsIconic(window.Hwnd))
+            {
+                ShowWindow(window.Hwnd, SwRestore);
+            }
+
+            KeybdEvent(VkMenu, 0, 0, IntPtr.Zero);
+            KeybdEvent(VkMenu, 0, KeyEventKeyUp, IntPtr.Zero);
+            SetForegroundWindow(window.Hwnd);
+            System.Threading.Thread.Sleep(200);
+
+            rect = GetWindowRect(window.Hwnd, out var r) ? System.Drawing.Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom) : Screen();
+            if (rect.Width <= 0 || rect.Height <= 0)
+            {
+                rect = Screen();
+            }
+
+            what = $"\"{window.Title}\" (pid {window.Pid})";
+        }
+        else
+        {
+            rect = Screen();
+            what = "the whole screen";
+        }
+
+        try
+        {
+            using var bitmap = new System.Drawing.Bitmap(rect.Width, rect.Height);
+            using (var g = System.Drawing.Graphics.FromImage(bitmap))
+            {
+                g.CopyFromScreen(rect.Left, rect.Top, 0, 0, bitmap.Size);
+            }
+
+            using var stream = new System.IO.MemoryStream();
+            bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+            return new Outcome($"Screenshot of {what}.", stream.ToArray());
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or OutOfMemoryException)
+        {
+            return new Outcome($"Could not capture {what}: {ex.Message}");
+        }
+    }
+
+    private static System.Drawing.Rectangle Screen() => new(
+        GetSystemMetrics(SmXVirtualScreen),
+        GetSystemMetrics(SmYVirtualScreen),
+        Math.Max(1, GetSystemMetrics(SmCxVirtualScreen)),
+        Math.Max(1, GetSystemMetrics(SmCyVirtualScreen)));
 
     private static string Focus(string match)
     {
@@ -261,4 +331,19 @@ public static class WindowTools
 
     [DllImport("user32.dll", EntryPoint = "keybd_event")]
     private static extern void KeybdEvent(byte key, byte scan, uint flags, IntPtr extra);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
 }

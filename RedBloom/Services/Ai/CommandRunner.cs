@@ -117,6 +117,12 @@ public static class CommandRunner
             workingDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         }
 
+        // Detect GUI applications and launch them asynchronously without waiting
+        if (IsGuiApplication(command))
+        {
+            return await LaunchGuiApplicationAsync(command, workingDir, cancellationToken).ConfigureAwait(false);
+        }
+
         var start = new ProcessStartInfo
         {
             FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
@@ -151,9 +157,44 @@ public static class CommandRunner
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(Timeout);
 
-        var stdout = process.StandardOutput.ReadToEndAsync(deadline.Token);
-        var stderr = process.StandardError.ReadToEndAsync(deadline.Token);
+        // Read output with early detection of "silent but alive" processes
+        var outputBuilder = new StringBuilder();
+        var errorBuilder = new StringBuilder();
+        var outputTask = ReadStreamAsync(process.StandardOutput, outputBuilder, deadline.Token);
+        var errorTask = ReadStreamAsync(process.StandardError, errorBuilder, deadline.Token);
 
+        // Wait up to 3 seconds for process to either exit or produce output
+        var silenceThreshold = TimeSpan.FromSeconds(3);
+        var started = DateTime.UtcNow;
+        var hasOutput = false;
+
+        while (!process.HasExited)
+        {
+            // Check if we have any output
+            if (outputBuilder.Length > 0 || errorBuilder.Length > 0)
+            {
+                hasOutput = true;
+                break;
+            }
+
+            // If process is silent for 3 seconds, assume it's a GUI app
+            if (!hasOutput && DateTime.UtcNow - started > silenceThreshold)
+            {
+                // Let it run in background
+                return ("Application launched and running in background.", 0);
+            }
+
+            try
+            {
+                await Task.Delay(100, deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        // Process either exited or produced output - wait for completion
         try
         {
             await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
@@ -167,16 +208,39 @@ public static class CommandRunner
                 : $"The command was still running after {Timeout.TotalMinutes:0} minutes and was stopped.", 0);
         }
 
-        var output = new StringBuilder();
-        output.Append(Decode(await Safe(stdout).ConfigureAwait(false)));
+        // Finish reading streams
+        await Task.WhenAll(outputTask, errorTask).ConfigureAwait(false);
 
-        var errors = Decode(await Safe(stderr).ConfigureAwait(false));
+        var output = new StringBuilder();
+        output.Append(Decode(outputBuilder.ToString()));
+
+        var errors = Decode(errorBuilder.ToString());
         if (errors.Length > 0)
         {
             output.Append(output.Length > 0 ? "\n" : string.Empty).Append(errors);
         }
 
         return (output.ToString().TrimEnd(), process.ExitCode);
+    }
+
+    /// <summary>
+    /// Reads from a stream into a StringBuilder for monitoring output.
+    /// </summary>
+    private static async Task ReadStreamAsync(StreamReader reader, StringBuilder output, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var buffer = new char[4096];
+            int read;
+            while ((read = await reader.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                output.Append(buffer, 0, read);
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException)
+        {
+            // Stream closed or cancelled
+        }
     }
 
     /// <summary>
@@ -251,6 +315,141 @@ public static class CommandRunner
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             // Already gone between the check and the kill; nothing left to stop.
+        }
+    }
+
+    /// <summary>
+    /// Detects if a command is launching a GUI application that should run asynchronously.
+    /// </summary>
+    private static bool IsGuiApplication(string command)
+    {
+        var trimmed = command.Trim();
+        var lower = trimmed.ToLowerInvariant();
+        
+        // Exclude commands that redirect output or pipe, as those are meant to be captured
+        if (lower.Contains(">") || lower.Contains("|"))
+        {
+            return false;
+        }
+
+        // Check if command explicitly uses 'start' command which is meant for GUI apps
+        if (lower.StartsWith("start "))
+        {
+            return true;
+        }
+
+        // Known GUI applications (executable name only, not path-based)
+        var guiApps = new[]
+        {
+            "notepad.exe",
+            "notepad",
+            "mspaint.exe",
+            "calc.exe",
+            "explorer.exe",
+            "code.exe",
+            "code",
+            "devenv.exe",
+            "winword.exe",
+            "excel.exe",
+            "powerpnt.exe",
+            "chrome.exe",
+            "firefox.exe",
+            "msedge.exe",
+            "iexplore.exe",
+        };
+
+        // Extract the executable name from the command (handle quoted paths)
+        var executableName = ExtractExecutableName(trimmed);
+        
+        foreach (var app in guiApps)
+        {
+            if (executableName.Equals(app, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Extracts the executable name from a command line, handling quotes and paths.
+    /// </summary>
+    private static string ExtractExecutableName(string command)
+    {
+        var trimmed = command.Trim();
+        
+        // Handle quoted paths
+        if (trimmed.StartsWith("\""))
+        {
+            var endQuote = trimmed.IndexOf("\"", 1, StringComparison.Ordinal);
+            if (endQuote > 0)
+            {
+                trimmed = trimmed[1..endQuote];
+            }
+        }
+        else
+        {
+            // Take first token before space
+            var spaceIndex = trimmed.IndexOf(' ');
+            if (spaceIndex > 0)
+            {
+                trimmed = trimmed[..spaceIndex];
+            }
+        }
+
+        // Get just the filename without path
+        var lastSlash = Math.Max(trimmed.LastIndexOf('\\'), trimmed.LastIndexOf('/'));
+        if (lastSlash >= 0)
+        {
+            trimmed = trimmed[(lastSlash + 1)..];
+        }
+
+        return trimmed.ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Launches a GUI application asynchronously without waiting for it to close.
+    /// </summary>
+    private static async Task<(string Text, int ExitCode)> LaunchGuiApplicationAsync(
+        string command, string workingDir, CancellationToken cancellationToken)
+    {
+        var start = new ProcessStartInfo
+        {
+            FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+            Arguments = $"/c {command}",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = workingDir,
+        };
+
+        try
+        {
+            using var process = new Process { StartInfo = start };
+            
+            if (!process.Start())
+            {
+                return ("The application could not be started.", 1);
+            }
+
+            // Wait a short moment to detect immediate failures (like file not found)
+            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+
+            if (process.HasExited && process.ExitCode != 0)
+            {
+                return ($"The application failed to start (exit code {process.ExitCode}).", process.ExitCode);
+            }
+
+            // Return immediately - the GUI app is now running independently
+            return ("Application launched successfully.", 0);
+        }
+        catch (OperationCanceledException)
+        {
+            return ("The launch was interrupted.", 1);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException)
+        {
+            return ($"The application could not be started: {ex.Message}", 1);
         }
     }
 }

@@ -442,10 +442,35 @@ public sealed class AnthropicTransport : IAgentTransport
                 {
                     yield return AgentEvent.Doing(AgentPhase.Running);
 
+                    var window = await _tools!.ManageWindowAsync(call.Arguments, cancellationToken).ConfigureAwait(false);
+                    results.Add(WindowResult(id, window));
+
+                    continue;
+                }
+
+                // Moving and clicking the mouse — the same standing as a command, a text result.
+                if (call.Name == AgentTransports.Mouse.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
                     results.Add(new ToolResultBlockParam
                     {
                         ToolUseID = id,
-                        Content = await _tools!.ManageWindowAsync(call.Arguments, cancellationToken).ConfigureAwait(false),
+                        Content = await _tools!.ControlMouseAsync(call.Arguments, cancellationToken).ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
+                // Typing on the keyboard — likewise a text result.
+                if (call.Name == AgentTransports.Keyboard.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Running);
+
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.TypeKeysAsync(call.Arguments, cancellationToken).ConfigureAwait(false),
                     });
 
                     continue;
@@ -935,6 +960,41 @@ public sealed class AnthropicTransport : IAgentTransport
                     Required = [AgentTransports.Window.Action],
                 },
             });
+
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Mouse.Name,
+                Description = AgentTransports.Mouse.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Mouse.Action] = Schema("string", AgentTransports.Mouse.ActionDescription),
+                        [AgentTransports.Mouse.X] = Schema("integer", AgentTransports.Mouse.XDescription),
+                        [AgentTransports.Mouse.Y] = Schema("integer", AgentTransports.Mouse.YDescription),
+                        [AgentTransports.Mouse.X2] = Schema("integer", AgentTransports.Mouse.X2Description),
+                        [AgentTransports.Mouse.Y2] = Schema("integer", AgentTransports.Mouse.Y2Description),
+                        [AgentTransports.Mouse.Button] = Schema("string", AgentTransports.Mouse.ButtonDescription),
+                        [AgentTransports.Mouse.Amount] = Schema("integer", AgentTransports.Mouse.AmountDescription),
+                    },
+                    Required = [AgentTransports.Mouse.Action],
+                },
+            });
+
+            tools.Add(new Tool
+            {
+                Name = AgentTransports.Keyboard.Name,
+                Description = AgentTransports.Keyboard.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.Keyboard.Text] = Schema("string", AgentTransports.Keyboard.TextDescription),
+                        [AgentTransports.Keyboard.Keys] = Schema("string", AgentTransports.Keyboard.KeysDescription),
+                    },
+                    Required = [],
+                },
+            });
         }
 
         if (_tools is { ImagesEnabled: true })
@@ -997,6 +1057,29 @@ public sealed class AnthropicTransport : IAgentTransport
         }
 
         return tools.Count == 0 ? null : tools;
+    }
+
+    /// <summary>
+    /// A window tool's result, carrying the screenshot as an image block when there is one so the
+    /// model can see it — Anthropic accepts image content inside a tool result.
+    /// </summary>
+    private static ToolResultBlockParam WindowResult(string id, AgentToolResult result)
+    {
+        if (result.Image is not { } image)
+        {
+            return new ToolResultBlockParam { ToolUseID = id, Content = result.Text };
+        }
+
+        var blocks = new List<Block>
+        {
+            new TextBlockParam { Text = result.Text },
+            new ImageBlockParam
+            {
+                Source = new Base64ImageSource { Data = image.Base64, MediaType = MediaFor(image.MediaType) },
+            },
+        };
+
+        return new ToolResultBlockParam { ToolUseID = id, Content = blocks };
     }
 
     private static System.Text.Json.JsonElement Schema(string type, string description) =>

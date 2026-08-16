@@ -1168,6 +1168,30 @@
   #rpwho button.on { background: var(--accent-dim); color: #fff; }
   #rpwho button.on:hover { color: #fff; }
 
+  /* ---- drag-and-drop overlay: shown while files are dragged over the chat ---- */
+  #dropzone {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(23, 22, 22, .72);
+    pointer-events: none;
+  }
+  #dropzone.on { display: flex; }
+  #dropzone .dzcard {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 26px 40px;
+    border: 2px dashed var(--accent);
+    border-radius: 14px;
+    background: var(--raised);
+    color: var(--text);
+    font-size: 14px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+  }
+  #dropzone .dzicon { font-family: "Segoe MDL2 Assets"; font-size: 30px; color: var(--accent); }
+
   /* ---- image lightbox ---- */
   #lightbox {
     position: fixed;
@@ -1232,6 +1256,13 @@
   </div>
 
   <div id="log"></div>
+
+  <div id="dropzone">
+    <div class="dzcard">
+      <span class="dzicon">&#xE896;</span>
+      <span id="dzlabel">Drop files to attach</span>
+    </div>
+  </div>
 
   <div id="lightbox" hidden>
     <span class="lb-count"></span>
@@ -1329,6 +1360,7 @@
      the same strings in whichever language the window is set to. */
   const S = {
     Ask: "Ask the agent…",
+    DropFiles: "Drop files to attach",
     Send: "Send",
     AttachFile: "Attach a file",
     AttachFolder: "Attach a folder",
@@ -2103,6 +2135,7 @@
       stop.disabled = false;
       modelBox.title = S.ModelTitle;
       modelText.placeholder = S.ModelPlaceholder;
+      if (S.DropFiles) dzlabel.textContent = S.DropFiles;
 
       const title = (id, text) => {
         const node = document.getElementById(id);
@@ -3168,6 +3201,68 @@
     for (const t of shown) body.appendChild(taskRow(t, { room: false, scope: "agent", agent: agentPick }));
     body.appendChild(addRow((v) => post({ t: "task", op: "add", scope: "agent", agent: agentPick, name: v })));
     if (shown.length) body.appendChild(shareAllFoot(shown));
+  }
+
+  // ---- drag and drop ----
+
+  // Handled inside the page rather than on the WPF side: a windowed WebView2 swallows the native
+  // drop before WPF sees it, so the reliable place is here. Files are read and sent to the host,
+  // which writes them into the chat's attachment folder and pins them to the composer.
+  const dropzone = document.getElementById("dropzone");
+  const dzlabel = document.getElementById("dzlabel");
+  let dragDepth = 0;
+
+  const hasFiles = (e) => {
+    const dt = e.dataTransfer;
+    if (!dt) return false;
+    if (dt.types) { for (const t of dt.types) if (t === "Files") return true; }
+    return false;
+  };
+
+  window.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    dropzone.classList.add("on");
+  });
+
+  window.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+
+  window.addEventListener("dragleave", (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dropzone.classList.remove("on");
+  });
+
+  window.addEventListener("drop", async (e) => {
+    dragDepth = 0;
+    dropzone.classList.remove("on");
+    if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+    e.preventDefault();
+
+    const files = [...e.dataTransfer.files];
+    const out = [];
+
+    for (const f of files) {
+      try {
+        out.push({ name: f.name, data: await readDataUrl(f) });
+      } catch (err) { /* unreadable file, skipped */ }
+    }
+
+    if (out.length) post({ t: "drop", files: out });
+  });
+
+  function readDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
   }
 
   post({ t: "ready" });

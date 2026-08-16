@@ -140,8 +140,13 @@ public static class SystemInfo
             + "20000 characters is cut, so filter with findstr rather than dumping whole files. Do "
             + "NOT start a GUI app with run_command — the command blocks until the app is closed, so "
             + "you would just sit waiting. Launch apps with the manage_window tool (action "
-            + "\"launch\"), which returns while the app keeps running, then use it again to list, "
-            + "focus or close windows.");
+            + "\"launch\"), which returns while the app keeps running. You cannot see the screen on "
+            + "your own, so to check or test a GUI app use manage_window action \"screenshot\" — it "
+            + "returns a picture of the window (or the whole screen) for you to look at. To actually "
+            + "operate an app, use control_mouse to move and click and type_keys to type text or "
+            + "press keys (click into a field first, then type) — take a whole-screen screenshot "
+            + "first, read the point off it, act, then screenshot again to see what happened. A good "
+            + "loop is launch → screenshot → click/type → screenshot to confirm → close.");
         sb.AppendLine();
         sb.AppendLine(
             "For files, use the file tools rather than the shell — they are exact and avoid the "
