@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -136,6 +137,55 @@ public sealed class ProjectGraphView : UserControl, IDisposable
             case "open" when root.TryGetProperty("kind", out var kind) && root.TryGetProperty("refId", out var refId):
                 OpenGraphNode(kind.GetString() ?? string.Empty, refId.GetString() ?? string.Empty);
                 break;
+
+            case "exportImage" when root.TryGetProperty("data", out var img):
+                SaveGraphImage(img.GetString() ?? string.Empty);
+                break;
+        }
+    }
+
+    /// <summary>Saves a data-URL PNG from the graph to a file the user picks, then opens it.</summary>
+    private void SaveGraphImage(string dataUrl)
+    {
+        var comma = dataUrl.IndexOf(',');
+        if (comma < 0 || !dataUrl.StartsWith("data:image/png;base64,", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(dataUrl[(comma + 1)..]);
+        }
+        catch (FormatException)
+        {
+            return;
+        }
+
+        var name = new string((_project.Name ?? "project").Trim()
+            .Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '-').ToArray()).Trim('-');
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = LocalizationService.T("L_GraphExport"),
+            Filter = "PNG image (*.png)|*.png",
+            FileName = $"{(name.Length > 0 ? name : "project")}-tree.png",
+            DefaultExt = ".png",
+        };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            System.IO.File.WriteAllBytes(dialog.FileName, bytes);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dialog.FileName) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(Window.GetWindow(this), ex.Message, LocalizationService.T("L_GraphExport"), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -218,6 +268,9 @@ public sealed class ProjectGraphView : UserControl, IDisposable
         dashed = LocalizationService.T("L_GraphDashed"),
         arrow = LocalizationService.T("L_GraphArrow"),
         color = LocalizationService.T("L_GraphColor"),
+        customColor = LocalizationService.T("L_GraphCustomColor"),
+        removeColor = LocalizationService.T("L_GraphRemoveColor"),
+        exportImage = LocalizationService.T("L_GraphExport"),
         none = LocalizationService.T("L_GraphDefault"),
         open = LocalizationService.T("L_GraphOpen"),
         del = LocalizationService.T("L_Delete"),

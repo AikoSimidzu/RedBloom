@@ -101,6 +101,14 @@
   #insp .sw span { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
   #insp .sw span.on { border-color: var(--text); }
   #insp .sw span.clear { background: var(--raised); border: 1px dashed var(--faint); display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--faint); }
+  #insp .sw span.add { position: relative; overflow: hidden; background: var(--raised); border: 1px dashed var(--faint); display: flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1; color: var(--faint); }
+  #insp .sw span.add:hover { border-color: var(--accent); color: var(--text); }
+  #insp .sw span.cust { position: relative; overflow: visible; }
+  #insp .sw span.cust .del { position: absolute; top: -5px; right: -5px; width: 13px; height: 13px; border-radius: 50%;
+          background: var(--chrome); color: var(--text); border: 1px solid var(--divider); font: normal 10px/11px var(--ui-font);
+          text-align: center; display: none; cursor: pointer; }
+  #insp .sw span.cust:hover .del { display: block; }
+  #insp .sw span.cust .del:hover { border-color: #ff6b74; color: #ff6b74; }
   #insp .chk { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; cursor: pointer; }
   #insp .acts { display: flex; gap: 8px; margin-top: 16px; }
   #insp .acts button { flex: 1; padding: 7px; border-radius: 6px; font: 12px var(--ui-font); cursor: pointer; }
@@ -142,7 +150,8 @@
   <div id="graph">
     <div id="world"><svg id="edges"></svg></div>
     <div id="bar"><button id="addNode">+ <span id="addNodeLbl"></span></button>
-      <button id="zin">+</button><button id="zout">&#8722;</button><button id="fit"></button></div>
+      <button id="zin">+</button><button id="zout">&#8722;</button><button id="fit"></button>
+      <button id="exportImg" style="font-family:'Segoe MDL2 Assets';font-size:12px">&#xE8B9;</button></div>
     <div id="ghint"></div>
     <div id="menu"></div>
     <div id="insp"></div>
@@ -309,6 +318,46 @@
     poly.setAttribute("points", `${p2.x},${p2.y} ${p2.x + Math.cos(a1) * size},${p2.y + Math.sin(a1) * size} ${p2.x + Math.cos(a2) * size},${p2.y + Math.sin(a2) * size}`);
     poly.setAttribute("fill", color); return poly; }
 
+  // ---------- export as image ----------
+  function cssVar(name, fb) { const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fb; }
+  function roundRectPath(ctx, x, y, w, hh, r) { r = Math.min(r, w / 2, hh / 2); ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + hh, r); ctx.arcTo(x + w, y + hh, x, y + hh, r); ctx.arcTo(x, y + hh, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+  function fitText(ctx, text, maxW) { if (ctx.measureText(text).width <= maxW) return text; let t = text; while (t.length > 1 && ctx.measureText(t + "…").width > maxW) t = t.slice(0, -1); return t + "…"; }
+  function exportImage() {
+    if (!state.nodes.length) return;
+    const boxes = state.nodes.map((n) => { const el = nodeEls.get(n.id); return { n, x: n.x, y: n.y, w: el ? el.offsetWidth : 176, h: el ? el.offsetHeight : 44 }; });
+    const pad = 44;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const b of boxes) { minX = Math.min(minX, b.x); minY = Math.min(minY, b.y); maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h); }
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    const W = Math.max(1, Math.ceil(maxX - minX)), H = Math.max(1, Math.ceil(maxY - minY)), scale = 2;
+    const cv = document.createElement("canvas"); cv.width = W * scale; cv.height = H * scale;
+    const ctx = cv.getContext("2d"); ctx.scale(scale, scale); ctx.translate(-minX, -minY);
+    const uiFont = cssVar("--ui-font", "sans-serif");
+    const col = { bg: cssVar("--surface2", "#191919"), raised: cssVar("--raised", "#242424"), divider: cssVar("--divider", "#333"),
+                  accent: cssVar("--accent", "#7a6ff0"), text: cssVar("--text", "#eee"), muted: cssVar("--muted", "#aaa"), faint: cssVar("--faint", "#888") };
+    ctx.fillStyle = col.bg; ctx.fillRect(minX, minY, W, H);
+    const rect = (id) => { const b = boxes.find((x) => x.n.id === id); return b ? { cx: b.x + b.w / 2, cy: b.y + b.h / 2, w: b.w, h: b.h } : null; };
+    const brd = (r, tx, ty) => { const dx = tx - r.cx, dy = ty - r.cy; if (!dx && !dy) return { x: r.cx, y: r.cy };
+      const s = (Math.abs(dx) * r.h > Math.abs(dy) * r.w) ? (r.w / 2) / Math.abs(dx) : (r.h / 2) / Math.abs(dy); return { x: r.cx + dx * s, y: r.cy + dy * s }; };
+    for (const e of state.edges) { const a = rect(e.from), b = rect(e.to); if (!a || !b) continue;
+      const p1 = brd(a, b.cx, b.cy), p2 = brd(b, a.cx, a.cy), color = e.color || col.accent, w = e.width || 2;
+      ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = "round"; ctx.setLineDash(e.dashed ? [7, 5] : []);
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); ctx.setLineDash([]);
+      if (e.directed) { const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x), size = 7 + w * 1.5, a1 = ang + Math.PI - 0.42, a2 = ang + Math.PI + 0.42;
+        ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(p2.x, p2.y); ctx.lineTo(p2.x + Math.cos(a1) * size, p2.y + Math.sin(a1) * size); ctx.lineTo(p2.x + Math.cos(a2) * size, p2.y + Math.sin(a2) * size); ctx.closePath(); ctx.fill(); }
+      if (e.label) { const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2 - 5; ctx.font = "11px " + uiFont; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.lineWidth = 3; ctx.strokeStyle = col.bg; ctx.strokeText(e.label, mx, my); ctx.fillStyle = col.muted; ctx.fillText(e.label, mx, my); ctx.textAlign = "left"; } }
+    for (const b of boxes) { const n = b.n, color = n.color || col.accent;
+      roundRectPath(ctx, b.x, b.y, b.w, b.h, 9); ctx.fillStyle = col.raised; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = col.divider; ctx.stroke();
+      ctx.save(); roundRectPath(ctx, b.x, b.y, b.w, b.h, 9); ctx.clip(); ctx.fillStyle = color; ctx.fillRect(b.x, b.y, 3, b.h); ctx.restore();
+      const ix = b.x + 12, iy = b.y + 11, kindTxt = (S.kinds && S.kinds[n.kind]) || n.kind;
+      ctx.textBaseline = "top"; ctx.font = '13px "Segoe MDL2 Assets"'; ctx.fillStyle = col.faint; ctx.fillText(KG[n.kind] || "", ix, iy + 1);
+      const tx = ix + 19; ctx.font = '600 12.5px ' + uiFont; ctx.fillStyle = col.text; ctx.fillText(fitText(ctx, n.label || kindTxt, b.w - (tx - b.x) - 11), tx, iy);
+      ctx.font = '10px ' + uiFont; ctx.fillStyle = col.faint; ctx.fillText(fitText(ctx, kindTxt.toUpperCase(), b.w - 24), b.x + 12, iy + 20); }
+    post({ t: "exportImage", data: cv.toDataURL("image/png") });
+  }
+
   graphEl.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".node") || e.target.closest("#insp") || e.target.closest("#bar") || e.target.closest("#menu")) return;
     if (e.target.tagName === "line" || e.target.tagName === "text") return;
@@ -326,6 +375,7 @@
     view.x = mx - (mx - view.x) * (nz / view.z); view.y = my - (my - view.y) * (nz / view.z); view.z = nz; applyView();
   }, { passive: false });
   $("zin").onclick = () => zoomBy(1.15); $("zout").onclick = () => zoomBy(1 / 1.15); $("fit").onclick = fit;
+  $("exportImg").onclick = () => exportImage();
   function zoomBy(f) { const r = graphEl.getBoundingClientRect(), mx = r.width / 2, my = r.height / 2;
     const nz = Math.min(2.5, Math.max(0.25, view.z * f)); view.x = mx - (mx - view.x) * (nz / view.z); view.y = my - (my - view.y) * (nz / view.z); view.z = nz; applyView(); }
   function fit() {
@@ -363,8 +413,26 @@
     if (sel.type === "node") inspectNode(state.nodes.find((n) => n.id === sel.id)); else inspectEdge(state.edges.find((e) => e.id === sel.id));
   }
   function h(t, c, x) { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; }
-  function swatches(cur, pick) { const w = h("div", "sw"); for (const c of PALETTE) { const s = h("span", cur === c ? "on" : (c === "" ? "clear" : ""));
-    if (c) s.style.background = c; else s.textContent = "×"; s.onclick = () => pick(c); w.appendChild(s); } return w; }
+  function customColors() { try { return JSON.parse(localStorage.getItem("rb.customColors") || "[]"); } catch (_) { return []; } }
+  function saveCustom(c) { if (!c || c[0] !== "#" || PALETTE.includes(c)) return; const list = customColors(); if (!list.includes(c)) { list.push(c); while (list.length > 12) list.shift(); localStorage.setItem("rb.customColors", JSON.stringify(list)); } }
+  function removeCustom(c) { localStorage.setItem("rb.customColors", JSON.stringify(customColors().filter((x) => x !== c))); }
+  function swatches(cur, pick) {
+    const w = h("div", "sw");
+    for (const c of PALETTE) { const s = h("span", cur === c ? "on" : (c === "" ? "clear" : "")); if (c) s.style.background = c; else s.textContent = "×"; s.onclick = () => pick(c); w.appendChild(s); }
+    // Saved custom colours: each carries its own delete badge on hover.
+    for (const c of customColors()) {
+      const s = h("span", "cust" + (cur === c ? " on" : "")); s.style.background = c; s.onclick = () => pick(c);
+      const x = h("i", "del", "×"); x.title = S.removeColor || "Remove colour"; x.onclick = (ev) => { ev.stopPropagation(); removeCustom(c); drawInspector(); };
+      s.appendChild(x); w.appendChild(s);
+    }
+    // Separate button: pick any colour from the system palette and keep it as a reusable swatch.
+    const add = h("span", "add", "+"); add.title = S.customColor || "Custom colour";
+    const inp = h("input"); inp.type = "color"; inp.value = (cur && cur[0] === "#") ? cur : "#7a6ff0";
+    inp.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;cursor:pointer;border:0;padding:0";
+    inp.onchange = () => { saveCustom(inp.value); pick(inp.value); };
+    add.appendChild(inp); w.appendChild(add);
+    return w;
+  }
   function inspectNode(n) { if (!n) return; insp.appendChild(h("h3", null, S.node || "Node"));
     insp.appendChild(h("label", null, S.label || "Label")); const lb = h("input"); lb.type = "text"; lb.value = n.label;
     lb.oninput = () => { n.label = lb.value; const el = nodeEls.get(n.id); if (el) el.querySelector(".lbl").textContent = n.label || ((S.kinds && S.kinds[n.kind]) || ""); drawEdges(); saveSoon(); }; insp.appendChild(lb);
@@ -440,6 +508,7 @@
       $("publishLbl").textContent = m.project.published ? (S.update || "Update") : (S.publish || "Publish");
       $("secGraph").textContent = S.secGraph || "RELATIONSHIP TREE"; $("expandGraph").textContent = S.expand || "Expand";
       $("addNodeLbl").textContent = S.node || "Node"; $("fit").textContent = S.fit || "Fit"; $("ghint").textContent = S.ghint || "";
+      $("exportImg").title = S.exportImage || "Export as image";
       $("secInfo").textContent = S.secInfo || "PROJECT INFO"; $("expandInfoLbl").textContent = S.expand || "Expand";
       showInfo(m.infoHtml || "");
       palette = m.palette || []; folderTree = m.folderTree || [];

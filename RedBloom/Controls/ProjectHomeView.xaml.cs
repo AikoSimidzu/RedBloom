@@ -196,6 +196,10 @@ public partial class ProjectHomeView : UserControl, IDisposable
                 EnsureInfoFile();
                 FileActivated?.Invoke(InfoPath);
                 break;
+
+            case "exportImage" when root.TryGetProperty("data", out var img):
+                SaveGraphImage(img.GetString() ?? string.Empty);
+                break;
         }
     }
 
@@ -306,6 +310,7 @@ public partial class ProjectHomeView : UserControl, IDisposable
         secGraph = LocalizationService.T("L_ProjectGraph"),
         expand = LocalizationService.T("L_ProjectExpand"),
         fit = LocalizationService.T("L_GraphFit"),
+        exportImage = LocalizationService.T("L_GraphExport"),
         ghint = LocalizationService.T("L_GraphHint"),
         secInfo = LocalizationService.T("L_ProjectInfo"),
         infoEmpty = LocalizationService.T("L_ProjectInfoEmpty"),
@@ -332,6 +337,8 @@ public partial class ProjectHomeView : UserControl, IDisposable
         label = LocalizationService.T("L_GraphLabel"),
         desc = LocalizationService.T("L_GraphDesc"),
         color = LocalizationService.T("L_GraphColor"),
+        customColor = LocalizationService.T("L_GraphCustomColor"),
+        removeColor = LocalizationService.T("L_GraphRemoveColor"),
         conn = LocalizationService.T("L_GraphConnection"),
         width = LocalizationService.T("L_GraphWidth"),
         dashed = LocalizationService.T("L_GraphDashed"),
@@ -705,6 +712,49 @@ public partial class ProjectHomeView : UserControl, IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Debug.WriteLine($"Could not export project metadata: {ex.Message}");
+        }
+    }
+
+    /// <summary>Saves a data-URL PNG from the graph to a file the user picks, then opens it.</summary>
+    private void SaveGraphImage(string dataUrl)
+    {
+        var comma = dataUrl.IndexOf(',');
+        if (comma < 0 || !dataUrl.StartsWith("data:image/png;base64,", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(dataUrl[(comma + 1)..]);
+        }
+        catch (FormatException)
+        {
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = LocalizationService.T("L_GraphExport"),
+            Filter = "PNG image (*.png)|*.png",
+            FileName = $"{SafeName(_project.Name)}-tree.png",
+            DefaultExt = ".png",
+        };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllBytes(dialog.FileName, bytes);
+            Process.Start(new ProcessStartInfo(dialog.FileName) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(Window.GetWindow(this), ex.Message, LocalizationService.T("L_GraphExport"), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
