@@ -109,6 +109,35 @@
                           Checked="ShellIntegration_Changed"
                           Unchecked="ShellIntegration_Changed" />
 
+                <!-- ============ GitHub ============ -->
+                <TextBlock Text="GitHub" Style="{StaticResource SectionTitle}" />
+                <TextBlock Text="{DynamicResource L_GhSettingsNote}" Style="{StaticResource SectionNote}" />
+
+                <StackPanel x:Name="GhConnectedPanel" Orientation="Horizontal" Margin="0,0,0,20" Visibility="Collapsed">
+                    <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                               Foreground="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock x:Name="GhLoginText" Foreground="{DynamicResource TextPrimary}"
+                               FontFamily="{DynamicResource UiFont}" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <Button Content="{DynamicResource L_GhDisconnect}" Style="{StaticResource GhostButton}"
+                            Padding="10,4" Click="GhDisconnect_Click" />
+                </StackPanel>
+
+                <StackPanel x:Name="GhAuthPanel" Margin="0,0,0,20">
+                    <Grid ColumnDefinitions="150,240,8,Auto">
+                        <TextBlock Grid.Column="0" Text="{DynamicResource L_GhTokenLabel}" Style="{StaticResource RowLabel}" />
+                        <PasswordBox x:Name="GhTokenBox" Grid.Column="1" Padding="7,4" />
+                        <Button Grid.Column="3" Content="{DynamicResource L_GhConnect}" Style="{StaticResource AccentButton}"
+                                Padding="14,5" Click="GhConnect_Click" />
+                    </Grid>
+                    <TextBlock Foreground="{DynamicResource TextFaint}" FontFamily="{DynamicResource UiFont}"
+                               FontSize="11" TextWrapping="Wrap" Margin="150,8,0,0">
+                        <Run Text="{DynamicResource L_GhTokenHint}" />
+                        <Hyperlink Click="GhTokenLink_Click" Foreground="{DynamicResource Accent}">github.com/settings/tokens</Hyperlink>
+                    </TextBlock>
+                    <TextBlock x:Name="GhErrorText" Foreground="#FF6B74" FontFamily="{DynamicResource UiFont}"
+                               FontSize="11.5" TextWrapping="Wrap" Margin="150,6,0,0" Visibility="Collapsed" />
+                </StackPanel>
+
                 <!-- ============ terminal text ============ -->
                 <TextBlock Text="{DynamicResource L_TerminalText}" Style="{StaticResource SectionTitle}" />
                 <TextBlock Text="{DynamicResource L_TerminalTextNote}"

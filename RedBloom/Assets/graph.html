@@ -53,6 +53,9 @@
   #menu .mi { padding: 7px 10px; border-radius: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; display: flex; align-items: center; gap: 8px; }
   #menu .mi:hover { background: var(--raised); }
   #menu .mi .ic { font-family: "Segoe MDL2 Assets"; font-size: 12px; color: var(--faint); }
+  #menu .mi .exp { display:inline-block; width:12px; text-align:center; color:var(--faint); font-size:9px; }
+  #menu .mi .exp:hover { color:var(--text); }
+  #menu .mi.ftree { gap:5px; }
   #menu .grp { padding: 8px 10px 3px; font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; }
 
   /* inspector */
@@ -110,11 +113,12 @@
   };
 
   const g = (c) => String.fromCharCode(c);
-  const KGLYPH = { note: g(0xE70B), chat: g(0xE8BD), room: g(0xE716), file: g(0xE8A5), milestone: g(0xE7C1) };
+  const KGLYPH = { note: g(0xE70B), chat: g(0xE8BD), room: g(0xE716), file: g(0xE8A5), source: g(0xE8B7), folder: g(0xE8B7), milestone: g(0xE7C1) };
   const PALETTE = ["", "#e0555f", "#e0913f", "#d8c14a", "#5bb85b", "#4aa6d8", "#7a6ff0", "#c46fd0"];
 
   let state = { nodes: [], edges: [] };
   let palette = [];
+  let folderTree = [];
   let view = { x: 60, y: 60, z: 1 };
   let sel = null;            // { type: "node"|"edge", id }
   const nodeEls = new Map();
@@ -443,9 +447,9 @@
     addNote.onclick = () => { addNode("note", "", ""); hideMenu(); };
     menu.appendChild(addNote);
 
-    const groups = { chat: [], room: [], file: [] };
+    const groups = { chat: [], room: [], file: [], source: [] };
     for (const p of palette) if (groups[p.kind]) groups[p.kind].push(p);
-    for (const kind of ["chat", "room", "file"]) {
+    for (const kind of ["source", "chat", "room", "file"]) {
       const items = groups[kind].filter((p) => !state.nodes.some((n) => n.kind === kind && n.refId === p.refId));
       if (items.length === 0) continue;
       menu.appendChild(h("div", "grp", S.kinds[kind]));
@@ -457,11 +461,40 @@
         menu.appendChild(mi);
       }
     }
+    renderFolderMenu();
 
     const r = $("add").getBoundingClientRect();
     menu.style.left = r.left + "px"; menu.style.top = (r.bottom + 6) + "px"; menu.style.display = "block";
   };
   function hideMenu() { menu.style.display = "none"; }
+  function renderFolderMenu() {
+    for (const src of folderTree) {
+      if (!src.folders || !src.folders.length) continue;
+      menu.appendChild(h("div", "grp", (S.kinds.folder || "Folders") + " · " + src.source));
+      for (const f of src.folders) menu.appendChild(folderRow(f, 0));
+    }
+  }
+  function folderRow(node, depth) {
+    const mi = h("div", "mi ftree"); mi.style.paddingLeft = (8 + depth * 14) + "px";
+    mi._node = node; mi._depth = depth; mi._kids = []; mi._open = false;
+    const has = node.children && node.children.length;
+    const exp = h("span", "exp"); exp.textContent = has ? "▸" : ""; mi._exp = exp;
+    if (has) exp.onclick = (e) => { e.stopPropagation(); mi._open ? collapseRow(mi) : expandRow(mi); };
+    mi.appendChild(exp);
+    mi.appendChild(Object.assign(h("span", "ic"), { textContent: KGLYPH.folder }));
+    mi.appendChild(h("span", null, node.name));
+    mi.onclick = () => { addNode("folder", node.path, node.name); hideMenu(); };
+    return mi;
+  }
+  function expandRow(mi) {
+    let after = mi;
+    for (const child of mi._node.children) { const row = folderRow(child, mi._depth + 1); after.after(row); after = row; mi._kids.push(row); }
+    mi._open = true; mi._exp.textContent = "▾";
+  }
+  function collapseRow(mi) {
+    for (const c of mi._kids) { if (c._open) collapseRow(c); c.remove(); }
+    mi._kids = []; mi._open = false; mi._exp.textContent = "▸";
+  }
 
   function addNode(kind, refId, label) {
     const r = stage.getBoundingClientRect();
@@ -482,7 +515,7 @@
     if (m.t === "init") {
       if (m.strings) S = Object.assign(S, m.strings);
       $("addLbl").textContent = S.node; $("fitLbl").textContent = S.fit || "Fit"; $("hint").textContent = S.edgeHint;
-      palette = m.palette || [];
+      palette = m.palette || []; folderTree = m.folderTree || [];
       state = m.graph && m.graph.nodes ? m.graph : { nodes: [], edges: [] };
       for (const n of state.nodes) { n.note = n.note || ""; n.color = n.color || ""; }
       render(); fit();

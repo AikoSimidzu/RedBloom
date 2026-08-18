@@ -1,166 +1,688 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 using RedBloom.Models;
 using RedBloom.Services;
+using RedBloom.Services.Ai;
 
 namespace RedBloom.Controls;
 
 /// <summary>
-/// A project's home: its name and description, its relationship tree shown inline (and expandable to
-/// a full tab), and a Markdown info file for everything else — edited with the same file editor used
-/// everywhere, so it reads and renders the same way opening any .md file does. The chats and rooms
-/// live in the sidebar tree under the project, not here.
+/// A project's home, drawn as one scrolling page in a WebView2: its name and description, the
+/// activity monitoring, the linked sources, the interactive relationship tree and the Markdown info,
+/// all in one surface. One WebView2 fixed under the tab strip scrolls its own content, so there is
+/// no airspace overlap — unlike several native panels each fighting the scroll.
 /// </summary>
-public partial class ProjectHomeView : UserControl
+public partial class ProjectHomeView : UserControl, IDisposable
 {
+    private const string VirtualHost = "redbloom.assets";
+    private const string PageUrl = $"https://{VirtualHost}/project.html";
+
+    private static readonly Lazy<Task<CoreWebView2Environment>> SharedEnvironment = new(() =>
+    {
+        var folder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RedBloom", "WebView2");
+        Directory.CreateDirectory(folder);
+        return CoreWebView2Environment.CreateAsync(userDataFolder: folder);
+    });
+
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
     private readonly Project _project;
-    private ProjectGraphView? _graph;
-    private FileEditorView? _info;
-    private bool _loading = true;
+    private readonly WebView2 _webView = new();
+    private bool _ready;
+    private bool _disposed;
 
     public ProjectHomeView(Project project)
     {
         _project = project;
         InitializeComponent();
-
-        NameBox.Text = project.Name;
-        DescriptionBox.Text = project.Description;
-        FolderText.Text = project.Folder;
-
-        _loading = false;
+        Host.Children.Add(_webView);
         Loaded += OnLoaded;
     }
 
-    /// <summary>Raised when a chat linked on the graph is opened.</summary>
     public event Action<ChatSession>? ChatActivated;
-
-    /// <summary>Raised when a room linked on the graph is opened.</summary>
     public event Action<ChatRoom>? RoomActivated;
-
-    /// <summary>Raised when a file is opened — a graph node, or the info file expanded to a full tab.</summary>
     public event Action<string>? FileActivated;
-
-    /// <summary>Raised by the "expand" button — the window opens the project's graph as a full tab.</summary>
     public event Action<Project>? GraphRequested;
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
+    private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         Loaded -= OnLoaded;
 
-        // The relationship tree is shown inline, right here — visible the moment the project opens,
-        // with the expand button for the full-tab view. The same graph is edited either way.
-        _graph = new ProjectGraphView(_project);
-        _graph.OpenRequested += OnGraphOpen;
-        GraphHost.Content = _graph;
-
-        // The info file is edited with the shared file editor, pointed at PROJECT.md in the folder.
-        EnsureInfoFile();
-        _info = new FileEditorView(InfoPath);
-        InfoHost.Content = _info;
-
-        RefreshStats();
-
-        // Coming back to this tab after editing the tree in the full-tab view: catch the inline copy up.
-        IsVisibleChanged += OnVisibleChanged;
-        Unloaded += (_, _) =>
-        {
-            IsVisibleChanged -= OnVisibleChanged;
-            _info?.Dispose();
-            _graph?.Dispose();
-        };
-    }
-
-    private void OnVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
-    {
-        if (e.NewValue is true)
-        {
-            _graph?.Reload();
-            RefreshStats();
-        }
-    }
-
-    // ---- activity monitoring ----
-
-    private async void RefreshStats()
-    {
-        ProjectStats.Stats stats;
         try
         {
-            stats = await ProjectStats.ComputeAsync(_project).ConfigureAwait(true);
+            var environment = await SharedEnvironment.Value.ConfigureAwait(true);
+            await _webView.EnsureCoreWebView2Async(environment).ConfigureAwait(true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is InvalidOperationException or WebView2RuntimeNotFoundException)
+        {
+            Host.Children.Clear();
+            Host.Children.Add(new TextBlock { Text = $"WebView2 failed to initialize: {ex.Message}", Margin = new(16) });
+            return;
+        }
+
+        if (_disposed)
         {
             return;
         }
 
-        StatsPanel.Children.Clear();
+        // Transparent, so the window's wallpaper shows through the page's empty areas; the graph and
+        // info panels paint their own solid background over it.
+        _webView.DefaultBackgroundColor = System.Drawing.Color.Transparent;
 
-        StatsPanel.Children.Add(Tile(
-            stats.Chats.ToString(),
-            $"{LocalizationService.T("L_StatChats")} · {stats.ChatMessages}"));
+        var core = _webView.CoreWebView2;
+        core.Settings.AreDefaultContextMenusEnabled = false;
+        core.Settings.IsStatusBarEnabled = false;
+        core.Settings.AreBrowserAcceleratorKeysEnabled = false;
+        core.SetVirtualHostNameToFolderMapping(
+            VirtualHost, Path.Combine(AppContext.BaseDirectory, "Assets"), CoreWebView2HostResourceAccessKind.Allow);
 
-        StatsPanel.Children.Add(Tile(
-            stats.Rooms.ToString(),
-            $"{LocalizationService.T("L_StatRooms")} · {stats.RoomMessages}"));
-
-        StatsPanel.Children.Add(Tile(
-            stats.Files.ToString(),
-            $"{LocalizationService.T("L_StatFiles")} · {HumanSize(stats.Bytes)}"));
-
-        if (stats.Git is { } git)
+        core.WebMessageReceived += OnWebMessage;
+        ThemeService.Applied += PushTheme;
+        IsVisibleChanged += OnVisibleChanged;
+        Unloaded += (_, _) =>
         {
-            var changes = git.Changes == 0
-                ? LocalizationService.T("L_StatClean")
-                : string.Format(LocalizationService.T("L_StatChanges"), git.Changes);
-            var tile = Tile(git.Branch, changes);
-            if (git.LastCommit.Length > 0)
-            {
-                tile.ToolTip = git.LastCommit;
-            }
+            ThemeService.Applied -= PushTheme;
+            IsVisibleChanged -= OnVisibleChanged;
+        };
 
-            StatsPanel.Children.Add(tile);
-        }
-
-        StatsPanel.Children.Add(Tile(
-            stats.LastActivity is { } when ? Relative(when) : "—",
-            LocalizationService.T("L_StatLastActivity")));
+        core.Navigate(PageUrl);
     }
 
-    /// <summary>One stat card: a big value over a small label.</summary>
-    private Border Tile(string value, string label)
+    private void OnVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        var stack = new StackPanel();
-        stack.Children.Add(new TextBlock
+        if (e.NewValue is true && _ready)
         {
-            Text = value,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
-            FontFamily = (System.Windows.Media.FontFamily)FindResource("UiFont"),
-            FontSize = 18,
-            FontWeight = FontWeights.SemiBold,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-        stack.Children.Add(new TextBlock
-        {
-            Text = label,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextFaint"),
-            FontFamily = (System.Windows.Media.FontFamily)FindResource("UiFont"),
-            FontSize = 10.5,
-            Margin = new Thickness(0, 2, 0, 0),
-        });
+            PushGraph();
+            PushStats();
+            PushSources();
+            PushGitBadges();
+            PushInfo();
+        }
+    }
 
-        return new Border
+    /// <summary>Re-sends the tree, so the inline graph catches up after edits in the expanded window.</summary>
+    private void PushGraph() => Post(new { t = "graph", graph = _project.Graph, palette = Palette(), folderTree = ProjectPalette.FolderTree(_project) });
+
+    /// <summary>Re-renders the info preview, so it catches up after edits in the expanded editor.</summary>
+    private void PushInfo() => Post(new { t = "infoHtml", html = Markdown.ToHtml(LoadMarkdown()) });
+
+    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        JsonElement root;
+        try
         {
-            Background = (System.Windows.Media.Brush)FindResource("Surface"),
-            BorderBrush = (System.Windows.Media.Brush)FindResource("Divider"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(13, 9, 15, 9),
-            Margin = new Thickness(0, 0, 8, 8),
-            MinWidth = 96,
-            Child = stack,
-        };
+            root = JsonDocument.Parse(e.TryGetWebMessageAsString()).RootElement;
+        }
+        catch (Exception ex) when (ex is JsonException or ArgumentException)
+        {
+            return;
+        }
+
+        var t = root.TryGetProperty("t", out var tv) ? tv.GetString() : null;
+        var value = root.TryGetProperty("value", out var vv) ? vv.GetString() ?? string.Empty : string.Empty;
+
+        switch (t)
+        {
+            case "ready":
+                _ready = true;
+                PushTheme();
+                PushInit();
+                PushStats();
+                PushGitBadges();
+                SetupWatchers();
+                break;
+
+            case "name":
+                _project.Name = value.Trim();
+                Save();
+                break;
+
+            case "desc":
+                _project.Description = value.Trim();
+                Save();
+                break;
+
+            case "openFolder":
+                Open(_project.Folder);
+                break;
+
+            case "saveGraph" when root.TryGetProperty("graph", out var graph):
+                SaveGraph(graph);
+                break;
+
+            case "openNode" when root.TryGetProperty("kind", out var k) && root.TryGetProperty("refId", out var r):
+                OpenNode(k.GetString() ?? string.Empty, r.GetString() ?? string.Empty);
+                break;
+
+            case "expandGraph":
+                GraphRequested?.Invoke(_project);
+                break;
+
+            case "addSource":
+                ShowAddSourceMenu();
+                break;
+
+            case "openSource" when root.TryGetProperty("id", out var oid):
+                OpenSource(oid.GetString() ?? string.Empty);
+                break;
+
+            case "openInVs" when root.TryGetProperty("id", out var vid):
+                OpenInVs(vid.GetString() ?? string.Empty);
+                break;
+
+            case "cloneSource" when root.TryGetProperty("id", out var cid):
+                CloneSource(cid.GetString() ?? string.Empty);
+                break;
+
+            case "publish":
+                PublishProject();
+                break;
+
+            case "removeSource" when root.TryGetProperty("id", out var rid):
+                var id = rid.GetString() ?? string.Empty;
+                _project.Sources.RemoveAll(s => s.Id == id);
+                Save();
+                PushSources();
+                SetupWatchers();
+                break;
+
+            case "expandInfo":
+                EnsureInfoFile();
+                FileActivated?.Invoke(InfoPath);
+                break;
+        }
+    }
+
+    // ---- pushes ----
+
+    private void PushInit()
+    {
+        Post(new
+        {
+            t = "init",
+            project = new { name = _project.Name, description = _project.Description, folder = _project.Folder },
+            graph = _project.Graph,
+            palette = Palette(),
+            folderTree = ProjectPalette.FolderTree(_project),
+            sources = SourceDtos(),
+            infoHtml = Markdown.ToHtml(LoadMarkdown()),
+            strings = Strings(),
+        });
+    }
+
+    private async void PushStats()
+    {
+        var stats = await ProjectStats.ComputeAsync(_project).ConfigureAwait(true);
+        Post(new
+        {
+            t = "stats",
+            stats = new
+            {
+                chats = stats.Chats,
+                chatMessages = stats.ChatMessages,
+                rooms = stats.Rooms,
+                roomMessages = stats.RoomMessages,
+                files = stats.Files,
+                size = HumanSize(stats.Bytes),
+                loc = stats.Loc,
+                languages = stats.Languages.Select(l => new { name = l.Name, lines = l.Lines }).ToList(),
+                last = stats.LastActivity is { } w ? Relative(w) : "—",
+                git = stats.Git is { } g ? new { branch = g.Branch, changes = g.Changes, commit = g.LastCommit } : null,
+            },
+        });
+    }
+
+    private void PushSources() => Post(new { t = "sources", sources = SourceDtos() });
+
+    private async void PushGitBadges()
+    {
+        foreach (var source in _project.Sources.Where(s => s.Path.Length > 0).ToList())
+        {
+            var git = await ProjectStats.GitAsync(source.Path).ConfigureAwait(true);
+            if (git is { } g)
+            {
+                var text = g.Changes == 0 ? g.Branch : $"{g.Branch} · {string.Format(LocalizationService.T("L_StatChanges"), g.Changes)}";
+                Post(new { t = "gitBadge", id = source.Id, text });
+            }
+        }
+    }
+
+    private object SourceDtos() => _project.Sources
+        .Select(s => new { id = s.Id, kind = s.Kind.ToString(), name = s.Name, path = s.Path, repo = s.Repo, url = s.Url })
+        .ToList();
+
+    private object Palette() =>
+        ProjectPalette.Build(_project).Select(i => new { kind = i.Kind, refId = i.RefId, label = i.Label }).ToList();
+
+    private void PushTheme()
+    {
+        var s = ThemeService.Settings;
+        Post(new
+        {
+            t = "theme",
+            vars = new Dictionary<string, string>
+            {
+                ["surface"] = s.TerminalBackground,
+                ["surface2"] = s.TerminalBackground,
+                ["raised"] = s.SurfaceRaised,
+                ["chrome"] = s.Chrome,
+                ["divider"] = s.Divider,
+                ["text"] = s.TerminalForeground,
+                ["muted"] = s.TextMuted,
+                ["faint"] = s.TextFaint,
+                ["accent"] = s.Accent,
+                ["accent-dim"] = s.AccentDim,
+                ["ui-font"] = s.UiFontFamily,
+                ["code-font"] = s.TerminalFontFamily,
+            },
+        });
+    }
+
+    private static object Strings() => new
+    {
+        openFolder = LocalizationService.T("L_ProjectOpenFolder"),
+        secSources = LocalizationService.T("L_SourcesTitle"),
+        srcAdd = LocalizationService.T("L_SourcesAdd"),
+        srcNone = LocalizationService.T("L_SourcesNone"),
+        srcOpen = LocalizationService.T("L_SourceOpen"),
+        srcRemove = LocalizationService.T("L_SourceRemove"),
+        srcOpenVs = LocalizationService.T("L_SourceOpenVs"),
+        srcClone = LocalizationService.T("L_SourceClone"),
+        publish = LocalizationService.T("L_Publish"),
+        statLoc = LocalizationService.T("L_StatLoc"),
+        secGraph = LocalizationService.T("L_ProjectGraph"),
+        expand = LocalizationService.T("L_ProjectExpand"),
+        fit = LocalizationService.T("L_GraphFit"),
+        ghint = LocalizationService.T("L_GraphHint"),
+        secInfo = LocalizationService.T("L_ProjectInfo"),
+        infoEmpty = LocalizationService.T("L_ProjectInfoEmpty"),
+        statChats = LocalizationService.T("L_StatChats"),
+        statRooms = LocalizationService.T("L_StatRooms"),
+        statFiles = LocalizationService.T("L_StatFiles"),
+        statClean = LocalizationService.T("L_StatClean"),
+        statChanges = LocalizationService.T("L_StatChanges"),
+        statLast = LocalizationService.T("L_StatLastActivity"),
+        node = LocalizationService.T("L_GraphNode"),
+        note = LocalizationService.T("L_GraphNote"),
+        label = LocalizationService.T("L_GraphLabel"),
+        desc = LocalizationService.T("L_GraphDesc"),
+        color = LocalizationService.T("L_GraphColor"),
+        conn = LocalizationService.T("L_GraphConnection"),
+        width = LocalizationService.T("L_GraphWidth"),
+        dashed = LocalizationService.T("L_GraphDashed"),
+        arrow = LocalizationService.T("L_GraphArrow"),
+        open = LocalizationService.T("L_GraphOpen"),
+        del = LocalizationService.T("L_Delete"),
+        kinds = new
+        {
+            note = LocalizationService.T("L_GraphKindNote"),
+            chat = LocalizationService.T("L_GraphKindChat"),
+            room = LocalizationService.T("L_GraphKindRoom"),
+            file = LocalizationService.T("L_GraphKindFile"),
+            source = LocalizationService.T("L_GraphKindSource"),
+            folder = LocalizationService.T("L_GraphKindFolder"),
+            milestone = LocalizationService.T("L_GraphKindMilestone"),
+        },
+    };
+
+    // ---- actions ----
+
+    private void Save()
+    {
+        _project.Touch();
+        ProjectStore.Save(_project);
+    }
+
+    private void SaveGraph(JsonElement graph)
+    {
+        try
+        {
+            if (graph.Deserialize<ProjectGraph>(JsonOptions) is { } parsed)
+            {
+                _project.Graph = parsed;
+                Save();
+            }
+        }
+        catch (JsonException)
+        {
+            // A malformed payload is dropped rather than overwriting the saved graph.
+        }
+    }
+
+    private void OpenNode(string kind, string refId)
+    {
+        switch (kind)
+        {
+            case "chat" when ChatStore.Chats.FirstOrDefault(c => c.Id == refId) is { } chat:
+                ChatActivated?.Invoke(chat);
+                break;
+            case "room" when RoomStore.Rooms.FirstOrDefault(r => r.Id == refId) is { } room:
+                RoomActivated?.Invoke(room);
+                break;
+            case "file":
+                FileActivated?.Invoke(refId);
+                break;
+            case "source":
+                OpenSource(refId);
+                break;
+            case "folder":
+                Open(refId);
+                break;
+        }
+    }
+
+    private string InfoPath => Path.Combine(
+        string.IsNullOrWhiteSpace(_project.Folder) ? ProjectStore.ProjectsRoot : _project.Folder, "PROJECT.md");
+
+    private string LoadMarkdown()
+    {
+        try
+        {
+            return File.Exists(InfoPath) ? File.ReadAllText(InfoPath) : string.Empty;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>Makes an empty PROJECT.md if there is none, so the expanded editor has a file to open.</summary>
+    private void EnsureInfoFile()
+    {
+        try
+        {
+            if (File.Exists(InfoPath))
+            {
+                return;
+            }
+
+            var dir = Path.GetDirectoryName(InfoPath);
+            if (dir is { Length: > 0 })
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllText(InfoPath, $"# {_project.Name}\n\n");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Could not create project info file: {ex.Message}");
+        }
+    }
+
+    // ---- sources ----
+
+    private void ShowAddSourceMenu()
+    {
+        var menu = new ContextMenu();
+
+        void Add(string key, Action run)
+        {
+            var item = new MenuItem { Header = LocalizationService.T(key) };
+            item.Click += (_, _) => run();
+            menu.Items.Add(item);
+        }
+
+        Add("L_SourceLocal", AddLocal);
+        Add("L_SourceVs", AddVs);
+        Add("L_SourceGitHub", AddGitHub);
+
+        menu.PlacementTarget = _webView;
+        menu.IsOpen = true;
+    }
+
+    private void AddLocal()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = LocalizationService.T("L_SourceLocal") };
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            AddSource(new ProjectSource
+            {
+                Kind = SourceKind.Local,
+                Name = Path.GetFileName(dialog.FolderName.TrimEnd('\\', '/')),
+                Path = dialog.FolderName,
+            });
+        }
+    }
+
+    private async void AddVs()
+    {
+        var solutions = await VisualStudioSources.DiscoverAsync().ConfigureAwait(true);
+        if (Views.VsSolutionsDialog.Pick(Window.GetWindow(this), solutions) is { } chosen)
+        {
+            AddSource(new ProjectSource { Kind = SourceKind.VisualStudio, Name = chosen.Name, Path = chosen.Folder });
+        }
+    }
+
+    private void AddGitHub()
+    {
+        if (Views.GitHubDialog.Pick(Window.GetWindow(this)) is { } repo)
+        {
+            AddSource(new ProjectSource { Kind = SourceKind.GitHub, Name = repo.Name, Repo = repo.FullName, Url = repo.Url });
+        }
+    }
+
+    private void AddSource(ProjectSource source)
+    {
+        _project.Sources.Add(source);
+        Save();
+        PushSources();
+        PushGitBadges();
+        SetupWatchers();
+    }
+
+    private void OpenSource(string id)
+    {
+        if (_project.Sources.FirstOrDefault(s => s.Id == id) is not { } source)
+        {
+            return;
+        }
+
+        Open(source.Path.Length > 0 ? source.Path : source.Url);
+    }
+
+    /// <summary>Opens a source's solution in Visual Studio, or its folder when no solution is found.</summary>
+    private void OpenInVs(string id)
+    {
+        if (_project.Sources.FirstOrDefault(s => s.Id == id) is not { Path.Length: > 0 } source)
+        {
+            return;
+        }
+
+        try
+        {
+            var sln = Directory.Exists(source.Path)
+                ? Directory.EnumerateFiles(source.Path, "*.sln").FirstOrDefault()
+                : File.Exists(source.Path) ? source.Path : null;
+
+            // The .sln opens in Visual Studio through the shell association; a folder just opens.
+            Process.Start(new ProcessStartInfo(sln ?? source.Path) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            Debug.WriteLine($"Could not open in VS: {ex.Message}");
+        }
+    }
+
+    /// <summary>Clones a linked GitHub repository into the project folder and tracks it locally.</summary>
+    private async void CloneSource(string id)
+    {
+        if (_project.Sources.FirstOrDefault(s => s.Id == id) is not { Kind: SourceKind.GitHub } source
+            || string.IsNullOrWhiteSpace(_project.Folder))
+        {
+            return;
+        }
+
+        var token = GitHubClient.CurrentToken();
+        var cloneUrl = source.Repo.Length > 0 ? $"https://github.com/{source.Repo}.git" : source.Url;
+        var target = Path.Combine(_project.Folder, SafeName(source.Name));
+
+        var (path, error) = await GitOps.CloneAsync(cloneUrl, token, target).ConfigureAwait(true);
+
+        if (path is null)
+        {
+            MessageBox.Show(Window.GetWindow(this), error ?? "Clone failed.", "GitHub", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        source.Path = path;
+        Save();
+        PushSources();
+        PushGitBadges();
+        SetupWatchers();
+    }
+
+    /// <summary>Publishes the project folder as a new private GitHub repository.</summary>
+    private async void PublishProject()
+    {
+        if (!GitHubClient.IsConnected)
+        {
+            MessageBox.Show(Window.GetWindow(this), LocalizationService.T("L_GhNotConnected"), "GitHub", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_project.Folder) || !Directory.Exists(_project.Folder))
+        {
+            return;
+        }
+
+        var name = SafeName(_project.Name);
+        if (MessageBox.Show(Window.GetWindow(this),
+                string.Format(LocalizationService.T("L_PublishConfirm"), name),
+                LocalizationService.T("L_PublishTitle"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        // Keep RedBloom's own per-chat/room folders out of the published repo.
+        WriteGitIgnore();
+
+        var repo = await GitHubClient.CreateRepoAsync(name, priv: true).ConfigureAwait(true);
+        if (repo is not { } r)
+        {
+            MessageBox.Show(Window.GetWindow(this), LocalizationService.T("L_PublishRepoFailed"), "GitHub", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var error = await GitOps.PublishAsync(_project.Folder, r.CloneUrl, GitHubClient.CurrentToken()).ConfigureAwait(true);
+
+        if (error is not null)
+        {
+            MessageBox.Show(Window.GetWindow(this), error, LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _project.Sources.Add(new ProjectSource { Kind = SourceKind.GitHub, Name = r.FullName, Repo = r.FullName, Url = r.HtmlUrl, Path = _project.Folder });
+        Save();
+        PushSources();
+        PushGitBadges();
+
+        MessageBox.Show(Window.GetWindow(this), string.Format(LocalizationService.T("L_PublishDone"), r.FullName),
+            LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void WriteGitIgnore()
+    {
+        try
+        {
+            var path = Path.Combine(_project.Folder, ".gitignore");
+            var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : [];
+            foreach (var entry in new[] { ".chats/", ".rooms/", "bin/", "obj/" })
+            {
+                if (!lines.Contains(entry))
+                {
+                    lines.Add(entry);
+                }
+            }
+
+            File.WriteAllLines(path, lines);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Could not write .gitignore: {ex.Message}");
+        }
+    }
+
+    private static string SafeName(string name)
+    {
+        var chars = name.Trim().Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '-').ToArray();
+        var safe = new string(chars).Trim('-');
+        return safe.Length > 0 ? safe : "project";
+    }
+
+    // ---- live file watching ----
+
+    private readonly List<FileSystemWatcher> _watchers = [];
+    private System.Windows.Threading.DispatcherTimer? _watchTimer;
+
+    private void SetupWatchers()
+    {
+        foreach (var w in _watchers)
+        {
+            w.Dispose();
+        }
+
+        _watchers.Clear();
+
+        _watchTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
+        _watchTimer.Tick -= OnWatchTick;
+        _watchTimer.Tick += OnWatchTick;
+
+        var dirs = new List<string> { _project.Folder };
+        dirs.AddRange(_project.Sources.Select(s => s.Path).Where(p => p.Length > 0));
+
+        foreach (var dir in dirs.Where(d => d.Length > 0 && Directory.Exists(d)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var watcher = new FileSystemWatcher(dir) { IncludeSubdirectories = true, EnableRaisingEvents = true };
+                watcher.Changed += OnFsChanged;
+                watcher.Created += OnFsChanged;
+                watcher.Deleted += OnFsChanged;
+                watcher.Renamed += OnFsChanged;
+                _watchers.Add(watcher);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or System.ComponentModel.Win32Exception)
+            {
+                // A folder we cannot watch is simply not watched.
+            }
+        }
+    }
+
+    private void OnFsChanged(object sender, FileSystemEventArgs e) =>
+        Dispatcher.BeginInvoke(() => { _watchTimer?.Stop(); _watchTimer?.Start(); });
+
+    private void OnWatchTick(object? sender, EventArgs e)
+    {
+        _watchTimer?.Stop();
+        if (_ready && !_disposed)
+        {
+            PushStats();
+            PushGitBadges();
+        }
+    }
+
+    // ---- helpers ----
+
+    private static void Open(string target)
+    {
+        try
+        {
+            if (target.Length > 0 && (Directory.Exists(target) || target.StartsWith("http", StringComparison.OrdinalIgnoreCase)))
+            {
+                Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            Debug.WriteLine($"Could not open {target}: {ex.Message}");
+        }
     }
 
     private static string HumanSize(long bytes) => bytes switch
@@ -181,93 +703,26 @@ public partial class ProjectHomeView : UserControl
         return when.ToString("d MMM yyyy");
     }
 
-    private void OnGraphOpen(string kind, string refId)
+    private void Post(object message)
     {
-        switch (kind)
+        if (!_ready || _disposed || _webView.CoreWebView2 is null)
         {
-            case "chat" when ChatStore.Chats.FirstOrDefault(c => c.Id == refId) is { } chat:
-                ChatActivated?.Invoke(chat);
-                break;
-            case "room" when RoomStore.Rooms.FirstOrDefault(r => r.Id == refId) is { } room:
-                RoomActivated?.Invoke(room);
-                break;
-            case "file":
-                FileActivated?.Invoke(refId);
-                break;
+            return;
         }
+
+        _webView.CoreWebView2.PostWebMessageAsString(JsonSerializer.Serialize(message, JsonOptions));
     }
 
-    // ---- header ----
-
-    private void Name_Changed(object sender, TextChangedEventArgs e)
+    public void Dispose()
     {
-        if (_loading) return;
-        _project.Name = NameBox.Text.Trim();
-        Save();
-    }
-
-    private void Description_Changed(object sender, TextChangedEventArgs e)
-    {
-        if (_loading) return;
-        _project.Description = DescriptionBox.Text.Trim();
-        Save();
-    }
-
-    private void OpenFolder_Click(object sender, RoutedEventArgs e) => OpenInExplorer(_project.Folder);
-
-    private void Graph_Click(object sender, RoutedEventArgs e) => GraphRequested?.Invoke(_project);
-
-    private void InfoExpand_Click(object sender, RoutedEventArgs e)
-    {
-        EnsureInfoFile();
-        FileActivated?.Invoke(InfoPath);
-    }
-
-    private void Save()
-    {
-        _project.Touch();
-        ProjectStore.Save(_project);
-    }
-
-    // ---- info file ----
-
-    private string InfoPath => Path.Combine(
-        string.IsNullOrWhiteSpace(_project.Folder) ? ProjectStore.ProjectsRoot : _project.Folder, "PROJECT.md");
-
-    /// <summary>Makes an empty PROJECT.md if there is none, so the editor has a file to open.</summary>
-    private void EnsureInfoFile()
-    {
-        try
+        _disposed = true;
+        _watchTimer?.Stop();
+        foreach (var w in _watchers)
         {
-            if (!File.Exists(InfoPath))
-            {
-                var dir = Path.GetDirectoryName(InfoPath);
-                if (dir is { Length: > 0 })
-                {
-                    Directory.CreateDirectory(dir);
-                }
+            w.Dispose();
+        }
 
-                File.WriteAllText(InfoPath, $"# {_project.Name}\n\n");
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Debug.WriteLine($"Could not create project info file: {ex.Message}");
-        }
-    }
-
-    private static void OpenInExplorer(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path))
-            {
-                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            }
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            Debug.WriteLine($"Could not open {path}: {ex.Message}");
-        }
+        _watchers.Clear();
+        _webView.Dispose();
     }
 }

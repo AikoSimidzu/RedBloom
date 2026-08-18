@@ -1,0 +1,452 @@
+<meta charset="utf-8" />
+<style>
+  :root {
+    --surface: #17181c; --surface2: #131418; --raised: #1e2026; --chrome: #24262e;
+    --divider: #33353d; --text: #e8e8ea; --muted: #a9abb3; --faint: #71737b;
+    --accent: #e0555f; --accent-dim: #8c2b33; --ui-font: "Segoe UI"; --code-font: Consolas;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  /* Transparent, so the app's wallpaper shows through the page; the graph and info panels below
+     keep a solid background of their own so they stay readable. */
+  body { background: transparent; color: var(--text); font-family: var(--ui-font);
+         overflow-y: auto; overflow-x: hidden; }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 26px 30px 60px; }
+
+  h2.sec { font-size: 10.5px; font-weight: 600; letter-spacing: .05em; color: var(--faint);
+           text-transform: uppercase; margin: 26px 0 8px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .grow { flex: 1; min-width: 0; }
+  .pill { border: 1px solid var(--divider); background: transparent; color: var(--muted);
+          border-radius: 6px; padding: 5px 11px; font: inherit; font-size: 11.5px; cursor: pointer; }
+  .pill:hover { color: var(--text); border-color: var(--accent); }
+  .ic { font-family: "Segoe MDL2 Assets"; }
+
+  /* header */
+  #name { background: none; border: 0; color: var(--text); font: 600 21px var(--ui-font);
+          width: 100%; padding: 0; outline: none; }
+  #desc { background: none; border: 0; color: var(--muted); font: 12.5px var(--ui-font);
+          width: 100%; padding: 0; margin-top: 5px; resize: none; outline: none; overflow: hidden; }
+  #folder { background: var(--surface2); border: 1px solid var(--divider); border-radius: 8px;
+            padding: 7px 12px; margin-top: 12px; }
+  #folder .path { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* stats */
+  #stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .tile { background: var(--surface2); border: 1px solid var(--divider); border-radius: 8px;
+          padding: 9px 15px 9px 13px; min-width: 92px; }
+  .tile .v { font-size: 18px; font-weight: 600; }
+  .tile .l { font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+
+  /* code-by-language chart */
+  #chart { margin-top: 10px; }
+  #chart .bar { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 11px; }
+  #chart .bar .nm { width: 92px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #chart .bar .track { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  #chart .bar .fill { height: 100%; border-radius: 4px; }
+  #chart .bar .n { width: 58px; text-align: right; color: var(--faint); }
+
+  /* sources */
+  #sources .src { display: flex; align-items: center; gap: 9px; padding: 6px 4px; }
+  #sources .src .g { color: var(--faint); font-family: "Segoe MDL2 Assets"; font-size: 13px; }
+  #sources .src .nm { font-size: 12.5px; }
+  #sources .src .sub { font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #sources .src .badge { font-size: 10.5px; color: var(--muted); margin: 0 6px; white-space: nowrap; }
+  #sources .src .act { color: var(--faint); background: none; border: 0; cursor: pointer; font-family: "Segoe MDL2 Assets"; font-size: 12px; padding: 4px; }
+  #sources .src .act:hover { color: var(--text); }
+  #sources .empty { color: var(--faint); font-size: 12px; padding: 3px 4px; }
+
+  /* graph */
+  #graph { position: relative; height: 66vh; min-height: 420px; margin-top: 8px;
+           border: 1px solid var(--divider); border-radius: 10px; overflow: hidden; background: var(--surface2); }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  #edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+  #edges .hit { stroke: transparent; stroke-width: 16; fill: none; cursor: pointer; pointer-events: stroke; }
+  #edges line, #edges text { pointer-events: stroke; }
+  #edges text { fill: var(--muted); font: 11px var(--ui-font); paint-order: stroke; stroke: var(--surface2); stroke-width: 3px; cursor: pointer; }
+  .node { position: absolute; width: 176px; min-height: 40px; background: var(--raised);
+          border: 1px solid var(--divider); border-left: 3px solid var(--accent); border-radius: 9px;
+          padding: 9px 11px; cursor: grab; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+  .node.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 6px 18px rgba(0,0,0,.45); }
+  .node .top { display: flex; align-items: center; gap: 7px; }
+  .node .nic { font-family: "Segoe MDL2 Assets"; font-size: 13px; color: var(--faint); }
+  .node .lbl { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node .kind { margin-top: 3px; font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+  .node .port { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px;
+                border-radius: 50%; background: var(--accent); border: 2px solid var(--surface2); cursor: crosshair; opacity: 0; transition: opacity .12s; }
+  .node:hover .port, .node.sel .port { opacity: 1; }
+  #bar { position: absolute; left: 12px; top: 12px; display: flex; gap: 6px; z-index: 6; }
+  #bar button { background: var(--chrome); color: var(--muted); border: 1px solid var(--divider);
+                border-radius: 7px; padding: 6px 10px; font: 12px var(--ui-font); cursor: pointer; }
+  #bar button:hover { color: var(--text); border-color: var(--accent); }
+  #ghint { position: absolute; left: 12px; bottom: 10px; color: var(--faint); font-size: 11px; z-index: 6; pointer-events: none; }
+  #menu { position: absolute; z-index: 12; min-width: 190px; max-height: 60%; overflow: auto; background: var(--chrome);
+          border: 1px solid var(--divider); border-radius: 9px; padding: 5px; box-shadow: 0 12px 30px rgba(0,0,0,.5); display: none; }
+  #menu .mi { padding: 7px 10px; border-radius: 6px; font-size: 12.5px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+  #menu .mi:hover { background: var(--raised); }
+  #menu .mi .nic { font-family: "Segoe MDL2 Assets"; font-size: 12px; color: var(--faint); }
+  #menu .mi .exp { display: inline-block; width: 12px; text-align: center; color: var(--faint); font-size: 9px; }
+  #menu .mi .exp:hover { color: var(--text); }
+  #menu .mi.ftree { padding-top: 5px; padding-bottom: 5px; gap: 5px; }
+  #menu .grp { padding: 8px 10px 3px; font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; }
+  #insp { position: absolute; right: 0; top: 0; bottom: 0; width: 258px; z-index: 10; background: var(--surface);
+          border-left: 1px solid var(--divider); padding: 15px; overflow: auto; transform: translateX(100%); transition: transform .16s ease; }
+  #insp.on { transform: none; }
+  #insp h3 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
+  #insp label { display: block; font-size: 11px; color: var(--muted); margin: 12px 0 4px; }
+  #insp input[type=text], #insp textarea, #insp select { width: 100%; background: var(--raised); border: 1px solid var(--divider);
+          border-radius: 6px; color: var(--text); font: 12.5px var(--ui-font); padding: 6px 8px; }
+  #insp textarea { min-height: 56px; resize: vertical; }
+  #insp .sw { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+  #insp .sw span { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+  #insp .sw span.on { border-color: var(--text); }
+  #insp .sw span.clear { background: var(--raised); border: 1px dashed var(--faint); display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--faint); }
+  #insp .chk { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; cursor: pointer; }
+  #insp .acts { display: flex; gap: 8px; margin-top: 16px; }
+  #insp .acts button { flex: 1; padding: 7px; border-radius: 6px; font: 12px var(--ui-font); cursor: pointer; }
+  #insp .open { background: var(--accent-dim); color: var(--text); border: 1px solid var(--accent); }
+  #insp .del { background: transparent; color: var(--muted); border: 1px solid var(--divider); }
+  #insp .del:hover { color: #ff6b74; border-color: #ff6b74; }
+
+  /* info / markdown */
+  #infobox { position: relative; margin-top: 8px; border: 1px solid var(--divider); border-radius: 10px;
+             background: var(--surface2); min-height: 180px; padding: 4px 4px; }
+  #mdview { padding: 10px 16px 14px; }
+  #mdview:empty { display: none; }
+  #mdempty { padding: 22px 16px; color: var(--faint); font-size: 12px; text-align: center; }
+  #mdview h1 { font-size: 20px; } #mdview h2 { font-size: 16px; } #mdview h3 { font-size: 14px; }
+  #mdview code { background: var(--chrome); border-radius: 3px; padding: 1px 4px; font-family: var(--code-font); }
+  #mdview pre { background: var(--chrome); padding: 10px; border-radius: 6px; overflow: auto; }
+  #mdview a { color: var(--accent); }
+</style>
+
+<div class="wrap">
+  <input id="name" spellcheck="false" />
+  <textarea id="desc" rows="1" spellcheck="false"></textarea>
+
+  <div id="folder" class="row">
+    <span class="ic" style="color:var(--faint);font-size:13px">&#xE8B7;</span>
+    <span class="path grow" id="folderPath"></span>
+    <button class="pill" id="openFolder"></button>
+  </div>
+
+  <div id="stats"></div>
+  <div id="chart"></div>
+
+  <div class="row"><h2 class="sec grow" id="secSources"></h2>
+    <button class="pill" id="publish" style="margin-right:6px"><span class="ic">&#xE898;</span> <span id="publishLbl"></span></button>
+    <button class="pill" id="addSource">+ <span id="addSourceLbl"></span></button></div>
+  <div id="sources"></div>
+
+  <div class="row"><h2 class="sec grow" id="secGraph"></h2><button class="pill" id="expandGraph"></button></div>
+  <div id="graph">
+    <div id="world"><svg id="edges"></svg></div>
+    <div id="bar"><button id="addNode">+ <span id="addNodeLbl"></span></button>
+      <button id="zin">+</button><button id="zout">&#8722;</button><button id="fit"></button></div>
+    <div id="ghint"></div>
+    <div id="menu"></div>
+    <div id="insp"></div>
+  </div>
+
+  <div class="row"><h2 class="sec grow" id="secInfo"></h2>
+    <button class="pill" id="expandInfo"><span class="ic">&#xE740;</span> <span id="expandInfoLbl"></span></button></div>
+  <div id="infobox">
+    <div id="mdview"></div>
+    <div id="mdempty"></div>
+  </div>
+</div>
+
+<script>
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const post = (m) => window.chrome.webview.postMessage(JSON.stringify(m));
+  const $ = (id) => document.getElementById(id);
+  const graphEl = $("graph"), world = $("world"), svg = $("edges"), menu = $("menu"), insp = $("insp");
+
+  let S = {};
+  const g = (c) => String.fromCharCode(c);
+  const KG = { note: g(0xE70B), chat: g(0xE8BD), room: g(0xE716), file: g(0xE8A5), source: g(0xE8B7), folder: g(0xE8B7), milestone: g(0xE7C1) };
+  const SRCG = { Local: g(0xE8B7), VisualStudio: g(0xE943), GitHub: g(0xE71B) };
+  const PALETTE = ["", "#e0555f", "#e0913f", "#d8c14a", "#5bb85b", "#4aa6d8", "#7a6ff0", "#c46fd0"];
+
+  let state = { nodes: [], edges: [] };
+  let palette = [];
+  let folderTree = [];
+  let view = { x: 50, y: 50, z: 1 };
+  let sel = null;
+  const nodeEls = new Map();
+
+  // ---------- header ----------
+  const nameEl = $("name"), descEl = $("desc");
+  nameEl.addEventListener("input", () => post({ t: "name", value: nameEl.value }));
+  function fitDesc() { descEl.style.height = "auto"; descEl.style.height = descEl.scrollHeight + "px"; }
+  descEl.addEventListener("input", () => { fitDesc(); post({ t: "desc", value: descEl.value }); });
+  $("openFolder").onclick = () => post({ t: "openFolder" });
+  $("addSource").onclick = () => post({ t: "addSource" });
+  $("publish").onclick = () => post({ t: "publish" });
+  $("expandGraph").onclick = () => post({ t: "expandGraph" });
+
+  // ---------- stats ----------
+  function renderStats(st) {
+    const box = $("stats"); box.innerHTML = "";
+    if (!st) return;
+    const tile = (v, l, tip) => { const d = document.createElement("div"); d.className = "tile"; if (tip) d.title = tip;
+      d.innerHTML = `<div class="v"></div><div class="l"></div>`; d.querySelector(".v").textContent = v; d.querySelector(".l").textContent = l; return d; };
+    box.appendChild(tile(st.chats, (S.statChats || "chats") + " · " + st.chatMessages));
+    box.appendChild(tile(st.rooms, (S.statRooms || "rooms") + " · " + st.roomMessages));
+    box.appendChild(tile(st.files, (S.statFiles || "files") + " · " + st.size));
+    box.appendChild(tile(fmt(st.loc), S.statLoc || "lines of code"));
+    if (st.git) box.appendChild(tile(st.git.branch, st.git.changes === 0 ? (S.statClean || "clean") : (S.statChanges || "{0} changed").replace("{0}", st.git.changes), st.git.commit));
+    box.appendChild(tile(st.last || "—", S.statLast || "last activity"));
+    renderChart(st.languages);
+  }
+  function fmt(n) { return (n || 0).toLocaleString(); }
+  const CHART_COLORS = ["#e0555f", "#e0913f", "#d8c14a", "#5bb85b", "#4aa6d8", "#7a6ff0", "#c46fd0", "#888a92"];
+  function renderChart(langs) {
+    const c = $("chart"); c.innerHTML = "";
+    if (!langs || !langs.length) return;
+    const max = Math.max.apply(null, langs.map((l) => l.lines).concat([1]));
+    langs.forEach((l, i) => {
+      const b = document.createElement("div"); b.className = "bar";
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = l.name;
+      const tr = document.createElement("div"); tr.className = "track";
+      const f = document.createElement("div"); f.className = "fill";
+      f.style.width = Math.max(2, Math.round(l.lines / max * 100)) + "%"; f.style.background = CHART_COLORS[i % CHART_COLORS.length];
+      tr.appendChild(f);
+      const n = document.createElement("span"); n.className = "n"; n.textContent = fmt(l.lines);
+      b.appendChild(nm); b.appendChild(tr); b.appendChild(n); c.appendChild(b);
+    });
+  }
+
+  // ---------- sources ----------
+  function renderSources(list) {
+    const box = $("sources"); box.innerHTML = "";
+    if (!list || list.length === 0) { const e = document.createElement("div"); e.className = "empty"; e.textContent = S.srcNone || ""; box.appendChild(e); return; }
+    for (const s of list) {
+      const row = document.createElement("div"); row.className = "src";
+      const ic = document.createElement("span"); ic.className = "g"; ic.textContent = SRCG[s.kind] || SRCG.Local;
+      const mid = document.createElement("div"); mid.className = "grow";
+      const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = s.name;
+      const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = s.kind === "GitHub" && s.repo ? s.repo : s.path;
+      mid.appendChild(nm); mid.appendChild(sub);
+      const badge = document.createElement("span"); badge.className = "badge"; badge.dataset.src = s.id;
+      row.appendChild(ic); row.appendChild(mid); row.appendChild(badge);
+      const act = (glyph, tip, fn) => { const bt = document.createElement("button"); bt.className = "act"; bt.title = tip || ""; bt.textContent = glyph; bt.onclick = fn; row.appendChild(bt); };
+      if (s.kind === "VisualStudio") act(g(0xE943), S.srcOpenVs || "", () => post({ t: "openInVs", id: s.id }));
+      if (s.kind === "GitHub" && !s.path) act(g(0xE896), S.srcClone || "", () => post({ t: "cloneSource", id: s.id }));
+      act(g(0xE8A7), S.srcOpen || "", () => post({ t: "openSource", id: s.id }));
+      act(g(0xE74D), S.srcRemove || "", () => post({ t: "removeSource", id: s.id }));
+      box.appendChild(row);
+    }
+  }
+
+  // ---------- markdown ----------
+  // Read-only rendered Markdown; editing happens in the expanded view (the file editor).
+  const mdView = $("mdview"), mdEmpty = $("mdempty");
+  function showInfo(html) {
+    mdView.innerHTML = html || "";
+    mdEmpty.style.display = (html && html.trim()) ? "none" : "block";
+    mdEmpty.textContent = S.infoEmpty || "";
+  }
+  $("expandInfo").onclick = () => post({ t: "expandInfo" });
+
+  // ---------- graph ----------
+  function applyView() { world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.z})`; }
+  function toWorld(cx, cy) { const r = graphEl.getBoundingClientRect(); return { x: (cx - r.left - view.x) / view.z, y: (cy - r.top - view.y) / view.z }; }
+
+  function renderGraph() {
+    for (const el of nodeEls.values()) el.remove(); nodeEls.clear();
+    for (const n of state.nodes) world.appendChild(nodeEl(n));
+    drawEdges(); applyView();
+  }
+  function nodeEl(n) {
+    const d = document.createElement("div"); d.className = "node" + (sel && sel.type === "node" && sel.id === n.id ? " sel" : "");
+    d.style.left = n.x + "px"; d.style.top = n.y + "px"; if (n.color) d.style.borderLeftColor = n.color; d.dataset.id = n.id;
+    const top = document.createElement("div"); top.className = "top";
+    const ic = document.createElement("span"); ic.className = "nic"; ic.textContent = KG[n.kind] || KG.note;
+    const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = n.label || ((S.kinds && S.kinds[n.kind]) || "Note");
+    top.appendChild(ic); top.appendChild(lbl); d.appendChild(top);
+    const kind = document.createElement("div"); kind.className = "kind"; kind.textContent = (S.kinds && S.kinds[n.kind]) || n.kind; d.appendChild(kind);
+    const port = document.createElement("div"); port.className = "port"; d.appendChild(port);
+    port.addEventListener("pointerdown", (e) => startConnect(e, n));
+    d.addEventListener("pointerdown", (e) => startNodeDrag(e, n, d));
+    nodeEls.set(n.id, d); return d;
+  }
+  function rectOf(id) { const el = nodeEls.get(id), n = state.nodes.find((x) => x.id === id); if (!el || !n) return null;
+    return { cx: n.x + el.offsetWidth / 2, cy: n.y + el.offsetHeight / 2, w: el.offsetWidth, h: el.offsetHeight }; }
+  function border(r, tx, ty) { const dx = tx - r.cx, dy = ty - r.cy; if (dx === 0 && dy === 0) return { x: r.cx, y: r.cy };
+    const s = (Math.abs(dx) * r.h > Math.abs(dy) * r.w) ? (r.w / 2) / Math.abs(dx) : (r.h / 2) / Math.abs(dy); return { x: r.cx + dx * s, y: r.cy + dy * s }; }
+  function drawEdges() {
+    svg.textContent = "";
+    for (const e of state.edges) {
+      const a = rectOf(e.from), b = rectOf(e.to); if (!a || !b) continue;
+      const p1 = border(a, b.cx, b.cy), p2 = border(b, a.cx, a.cy);
+      const color = e.color || "var(--accent)", selk = sel && sel.type === "edge" && sel.id === e.id;
+      const line = document.createElementNS(SVGNS, "line"); line.setAttribute("x1", p1.x); line.setAttribute("y1", p1.y);
+      line.setAttribute("x2", p2.x); line.setAttribute("y2", p2.y); line.setAttribute("stroke", color); line.setAttribute("stroke-width", e.width || 2);
+      if (e.dashed) line.setAttribute("stroke-dasharray", "7 5"); line.setAttribute("stroke-linecap", "round");
+      if (selk) line.setAttribute("filter", "drop-shadow(0 0 4px var(--accent))"); svg.appendChild(line);
+      if (e.directed) svg.appendChild(arrow(p1, p2, color, e.width || 2));
+      const hit = document.createElementNS(SVGNS, "line"); hit.setAttribute("x1", p1.x); hit.setAttribute("y1", p1.y);
+      hit.setAttribute("x2", p2.x); hit.setAttribute("y2", p2.y); hit.setAttribute("class", "hit");
+      hit.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); select("edge", e.id); }); svg.appendChild(hit);
+      if (e.label) { const t = document.createElementNS(SVGNS, "text"); t.setAttribute("x", (p1.x + p2.x) / 2); t.setAttribute("y", (p1.y + p2.y) / 2 - 5);
+        t.setAttribute("text-anchor", "middle"); t.textContent = e.label;
+        t.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); select("edge", e.id); }); svg.appendChild(t); }
+    }
+  }
+  function arrow(p1, p2, color, w) { const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x), size = 7 + w * 1.5, a1 = ang + Math.PI - 0.42, a2 = ang + Math.PI + 0.42;
+    const poly = document.createElementNS(SVGNS, "polygon");
+    poly.setAttribute("points", `${p2.x},${p2.y} ${p2.x + Math.cos(a1) * size},${p2.y + Math.sin(a1) * size} ${p2.x + Math.cos(a2) * size},${p2.y + Math.sin(a2) * size}`);
+    poly.setAttribute("fill", color); return poly; }
+
+  graphEl.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".node") || e.target.closest("#insp") || e.target.closest("#bar") || e.target.closest("#menu")) return;
+    if (e.target.tagName === "line" || e.target.tagName === "text") return;
+    select(null); hideMenu();
+    const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+    graphEl.setPointerCapture(e.pointerId);
+    const mv = (ev) => { view.x = start.vx + (ev.clientX - start.x); view.y = start.vy + (ev.clientY - start.y); applyView(); };
+    const up = () => { graphEl.removeEventListener("pointermove", mv); graphEl.removeEventListener("pointerup", up); };
+    graphEl.addEventListener("pointermove", mv); graphEl.addEventListener("pointerup", up);
+  });
+  graphEl.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = graphEl.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const nz = Math.min(2.5, Math.max(0.25, view.z * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    view.x = mx - (mx - view.x) * (nz / view.z); view.y = my - (my - view.y) * (nz / view.z); view.z = nz; applyView();
+  }, { passive: false });
+  $("zin").onclick = () => zoomBy(1.15); $("zout").onclick = () => zoomBy(1 / 1.15); $("fit").onclick = fit;
+  function zoomBy(f) { const r = graphEl.getBoundingClientRect(), mx = r.width / 2, my = r.height / 2;
+    const nz = Math.min(2.5, Math.max(0.25, view.z * f)); view.x = mx - (mx - view.x) * (nz / view.z); view.y = my - (my - view.y) * (nz / view.z); view.z = nz; applyView(); }
+  function fit() {
+    if (state.nodes.length === 0) { view = { x: 50, y: 50, z: 1 }; applyView(); return; }
+    let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+    for (const n of state.nodes) { const el = nodeEls.get(n.id), w = el ? el.offsetWidth : 176, h = el ? el.offsetHeight : 48;
+      a = Math.min(a, n.x); b = Math.min(b, n.y); c = Math.max(c, n.x + w); d = Math.max(d, n.y + h); }
+    const r = graphEl.getBoundingClientRect(), pad = 50, z = Math.min(2, Math.max(0.3, Math.min((r.width - pad * 2) / (c - a || 1), (r.height - pad * 2) / (d - b || 1))));
+    view.z = z; view.x = pad - a * z + (r.width - pad * 2 - (c - a) * z) / 2; view.y = pad - b * z + (r.height - pad * 2 - (d - b) * z) / 2; applyView();
+  }
+  function startNodeDrag(e, n, d) {
+    if (e.target.classList.contains("port")) return; e.stopPropagation(); d.setPointerCapture(e.pointerId);
+    const sw = toWorld(e.clientX, e.clientY), o = { x: n.x, y: n.y }; let moved = false;
+    const mv = (ev) => { const w = toWorld(ev.clientX, ev.clientY); n.x = o.x + (w.x - sw.x); n.y = o.y + (w.y - sw.y);
+      d.style.left = n.x + "px"; d.style.top = n.y + "px"; moved = true; drawEdges(); };
+    const up = () => { d.removeEventListener("pointermove", mv); d.removeEventListener("pointerup", up); if (moved) save(); else select("node", n.id); };
+    d.addEventListener("pointermove", mv); d.addEventListener("pointerup", up);
+  }
+  function startConnect(e, from) {
+    e.stopPropagation(); const temp = document.createElementNS(SVGNS, "line");
+    temp.setAttribute("stroke", "var(--accent)"); temp.setAttribute("stroke-width", "2"); temp.setAttribute("stroke-dasharray", "5 4"); svg.appendChild(temp);
+    const a = rectOf(from.id); graphEl.setPointerCapture(e.pointerId);
+    const mv = (ev) => { const w = toWorld(ev.clientX, ev.clientY), p = border(a, w.x, w.y);
+      temp.setAttribute("x1", p.x); temp.setAttribute("y1", p.y); temp.setAttribute("x2", w.x); temp.setAttribute("y2", w.y); };
+    const up = (ev) => { graphEl.removeEventListener("pointermove", mv); graphEl.removeEventListener("pointerup", up); temp.remove();
+      const el = document.elementFromPoint(ev.clientX, ev.clientY), t = el && el.closest(".node");
+      if (t && t.dataset.id && t.dataset.id !== from.id) { const edge = { id: uid(), from: from.id, to: t.dataset.id, label: "", note: "", color: "", width: 2, dashed: false, directed: true };
+        state.edges.push(edge); renderGraph(); select("edge", edge.id); save(); } };
+    graphEl.addEventListener("pointermove", mv); graphEl.addEventListener("pointerup", up);
+  }
+  function select(type, id) { sel = type ? { type, id } : null; renderGraph(); drawInspector(); }
+  function drawInspector() {
+    if (!sel) { insp.classList.remove("on"); insp.innerHTML = ""; return; }
+    insp.classList.add("on"); insp.innerHTML = "";
+    if (sel.type === "node") inspectNode(state.nodes.find((n) => n.id === sel.id)); else inspectEdge(state.edges.find((e) => e.id === sel.id));
+  }
+  function h(t, c, x) { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; }
+  function swatches(cur, pick) { const w = h("div", "sw"); for (const c of PALETTE) { const s = h("span", cur === c ? "on" : (c === "" ? "clear" : ""));
+    if (c) s.style.background = c; else s.textContent = "×"; s.onclick = () => pick(c); w.appendChild(s); } return w; }
+  function inspectNode(n) { if (!n) return; insp.appendChild(h("h3", null, S.node || "Node"));
+    insp.appendChild(h("label", null, S.label || "Label")); const lb = h("input"); lb.type = "text"; lb.value = n.label;
+    lb.oninput = () => { n.label = lb.value; const el = nodeEls.get(n.id); if (el) el.querySelector(".lbl").textContent = n.label || ((S.kinds && S.kinds[n.kind]) || ""); drawEdges(); saveSoon(); }; insp.appendChild(lb);
+    insp.appendChild(h("label", null, S.desc || "Description")); const nt = h("textarea"); nt.value = n.note; nt.oninput = () => { n.note = nt.value; saveSoon(); }; insp.appendChild(nt);
+    insp.appendChild(h("label", null, S.color || "Colour")); insp.appendChild(swatches(n.color, (c) => { n.color = c; renderGraph(); select("node", n.id); save(); }));
+    const acts = h("div", "acts"); if (n.refId) { const o = h("button", "open", S.open || "Open"); o.onclick = () => post({ t: "openNode", kind: n.kind, refId: n.refId }); acts.appendChild(o); }
+    const del = h("button", "del", S.del || "Delete"); del.onclick = () => { state.edges = state.edges.filter((e) => e.from !== n.id && e.to !== n.id); state.nodes = state.nodes.filter((x) => x.id !== n.id); select(null); save(); }; acts.appendChild(del); insp.appendChild(acts); }
+  function inspectEdge(e) { if (!e) return; insp.appendChild(h("h3", null, S.conn || "Connection"));
+    insp.appendChild(h("label", null, S.label || "Label")); const lb = h("input"); lb.type = "text"; lb.value = e.label; lb.oninput = () => { e.label = lb.value; drawEdges(); saveSoon(); }; insp.appendChild(lb);
+    insp.appendChild(h("label", null, S.desc || "Description")); const nt = h("textarea"); nt.value = e.note; nt.oninput = () => { e.note = nt.value; saveSoon(); }; insp.appendChild(nt);
+    insp.appendChild(h("label", null, S.color || "Colour")); insp.appendChild(swatches(e.color, (c) => { e.color = c; drawEdges(); save(); }));
+    insp.appendChild(h("label", null, S.width || "Width")); const ws = h("select"); for (const w of [1, 2, 3, 4, 6]) { const o = h("option", null, w + " px"); o.value = w; if (e.width === w) o.selected = true; ws.appendChild(o); } ws.onchange = () => { e.width = parseInt(ws.value, 10); drawEdges(); save(); }; insp.appendChild(ws);
+    const dl = h("label", "chk"); const dc = h("input"); dc.type = "checkbox"; dc.checked = e.dashed; dc.onchange = () => { e.dashed = dc.checked; drawEdges(); save(); }; dl.appendChild(dc); dl.appendChild(h("span", null, S.dashed || "Dashed")); insp.appendChild(dl);
+    const ar = h("label", "chk"); const ac = h("input"); ac.type = "checkbox"; ac.checked = e.directed; ac.onchange = () => { e.directed = ac.checked; drawEdges(); save(); }; ar.appendChild(ac); ar.appendChild(h("span", null, S.arrow || "Arrow")); insp.appendChild(ar);
+    const acts = h("div", "acts"); const del = h("button", "del", S.del || "Delete"); del.onclick = () => { state.edges = state.edges.filter((x) => x.id !== e.id); select(null); save(); }; acts.appendChild(del); insp.appendChild(acts); }
+  $("addNode").onclick = (ev) => { ev.stopPropagation(); menu.innerHTML = "";
+    const note = h("div", "mi"); note.appendChild(Object.assign(h("span", "nic"), { textContent: KG.note })); note.appendChild(h("span", null, S.note || "Note"));
+    note.onclick = () => { addNode("note", "", ""); hideMenu(); }; menu.appendChild(note);
+    const groups = { chat: [], room: [], file: [], source: [] }; for (const p of palette) if (groups[p.kind]) groups[p.kind].push(p);
+    for (const kind of ["source", "chat", "room", "file"]) { const items = groups[kind].filter((p) => !state.nodes.some((n) => n.kind === kind && n.refId === p.refId)); if (!items.length) continue;
+      menu.appendChild(h("div", "grp", (S.kinds && S.kinds[kind]) || kind));
+      for (const p of items) { const mi = h("div", "mi"); mi.appendChild(Object.assign(h("span", "nic"), { textContent: KG[kind] })); mi.appendChild(h("span", null, p.label));
+        mi.onclick = () => { addNode(kind, p.refId, p.label); hideMenu(); }; menu.appendChild(mi); } }
+    renderFolderMenu();
+    const gr = graphEl.getBoundingClientRect(), br = $("addNode").getBoundingClientRect();
+    menu.style.left = (br.left - gr.left) + "px"; menu.style.top = (br.bottom - gr.top + 6) + "px"; menu.style.display = "block"; };
+  function hideMenu() { menu.style.display = "none"; }
+  function renderFolderMenu() {
+    for (const src of folderTree) {
+      if (!src.folders || !src.folders.length) continue;
+      menu.appendChild(h("div", "grp", ((S.kinds && S.kinds.folder) || "Folders") + " · " + src.source));
+      for (const f of src.folders) menu.appendChild(folderRow(f, 0));
+    }
+  }
+  function folderRow(node, depth) {
+    const mi = h("div", "mi ftree"); mi.style.paddingLeft = (8 + depth * 14) + "px";
+    mi._node = node; mi._depth = depth; mi._kids = []; mi._open = false;
+    const has = node.children && node.children.length;
+    const exp = h("span", "exp"); exp.textContent = has ? "▸" : ""; mi._exp = exp;
+    if (has) exp.onclick = (e) => { e.stopPropagation(); mi._open ? collapseRow(mi) : expandRow(mi); };
+    mi.appendChild(exp);
+    mi.appendChild(Object.assign(h("span", "nic"), { textContent: KG.folder }));
+    mi.appendChild(h("span", null, node.name));
+    mi.onclick = () => { addNode("folder", node.path, node.name); hideMenu(); };
+    return mi;
+  }
+  function expandRow(mi) {
+    let after = mi;
+    for (const child of mi._node.children) { const row = folderRow(child, mi._depth + 1); after.after(row); after = row; mi._kids.push(row); }
+    mi._open = true; mi._exp.textContent = "▾";
+  }
+  function collapseRow(mi) {
+    for (const c of mi._kids) { if (c._open) collapseRow(c); c.remove(); }
+    mi._kids = []; mi._open = false; mi._exp.textContent = "▸";
+  }
+  function addNode(kind, refId, label) { const r = graphEl.getBoundingClientRect(), c = toWorld(r.left + r.width / 2, r.top + r.height / 2);
+    const n = { id: uid(), kind, refId, label, note: "", color: "", x: Math.round(c.x - 88), y: Math.round(c.y - 24) }; state.nodes.push(n); renderGraph(); select("node", n.id); save(); }
+
+  let saveTimer = null;
+  function save() { post({ t: "saveGraph", graph: state }); }
+  function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 500); }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
+  // ---------- host messages ----------
+  window.chrome.webview.addEventListener("message", (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.t === "init") {
+      S = m.strings || {};
+      nameEl.value = m.project.name; descEl.value = m.project.description; fitDesc();
+      $("folderPath").textContent = m.project.folder;
+      $("openFolder").textContent = S.openFolder || "Open folder";
+      $("secSources").textContent = S.secSources || "SOURCES"; $("addSourceLbl").textContent = S.srcAdd || "Add"; $("publishLbl").textContent = S.publish || "Publish";
+      $("secGraph").textContent = S.secGraph || "RELATIONSHIP TREE"; $("expandGraph").textContent = S.expand || "Expand";
+      $("addNodeLbl").textContent = S.node || "Node"; $("fit").textContent = S.fit || "Fit"; $("ghint").textContent = S.ghint || "";
+      $("secInfo").textContent = S.secInfo || "PROJECT INFO"; $("expandInfoLbl").textContent = S.expand || "Expand";
+      showInfo(m.infoHtml || "");
+      palette = m.palette || []; folderTree = m.folderTree || [];
+      state = (m.graph && m.graph.nodes) ? m.graph : { nodes: [], edges: [] };
+      for (const n of state.nodes) { n.note = n.note || ""; n.color = n.color || ""; }
+      renderStats(m.stats); renderSources(m.sources); renderGraph(); fit();
+    } else if (m.t === "graph") {
+      // Re-sync the tree from the host — e.g. after it was edited in the expanded window.
+      palette = m.palette || palette; folderTree = m.folderTree || folderTree;
+      state = (m.graph && m.graph.nodes) ? m.graph : { nodes: [], edges: [] };
+      for (const n of state.nodes) { n.note = n.note || ""; n.color = n.color || ""; }
+      sel = null; renderGraph(); fit();
+    } else if (m.t === "theme" && m.vars) { for (const [k, v] of Object.entries(m.vars)) document.documentElement.style.setProperty("--" + k, v); drawEdges();
+    } else if (m.t === "stats") { renderStats(m.stats);
+    } else if (m.t === "sources") { renderSources(m.sources);
+    } else if (m.t === "infoHtml") { showInfo(m.html || "");
+    } else if (m.t === "gitBadge") { const el = document.querySelector('.badge[data-src="' + m.id + '"]'); if (el) el.textContent = m.text || ""; }
+  });
+
+  post({ t: "ready" });
+</script>

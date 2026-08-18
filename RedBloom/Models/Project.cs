@@ -41,6 +41,9 @@ public sealed class Project : INotifyPropertyChanged
     /// <summary>The relationship tree: nodes and the connections drawn between them.</summary>
     public ProjectGraph Graph { get; set; } = new();
 
+    /// <summary>Source folders and repositories linked to this project and tracked with it.</summary>
+    public List<ProjectSource> Sources { get; set; } = [];
+
     [JsonIgnore]
     public string Summary
     {

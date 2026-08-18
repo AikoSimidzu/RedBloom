@@ -39,7 +39,54 @@ public partial class SettingsPage : UserControl
             LiveWallpaperBroker.Frame -= OnPreviewFrame;
         };
 
+        RefreshGitHub();
         _loading = false;
+    }
+
+    // ---- GitHub account ----
+
+    private void RefreshGitHub()
+    {
+        var connected = GitHubClient.IsConnected;
+        GhConnectedPanel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        GhAuthPanel.Visibility = connected ? Visibility.Collapsed : Visibility.Visible;
+        GhLoginText.Text = GitHubClient.Login.Length > 0 ? "@" + GitHubClient.Login : GitHubClient.Login;
+    }
+
+    private async void GhConnect_Click(object sender, RoutedEventArgs e)
+    {
+        GhErrorText.Visibility = Visibility.Collapsed;
+        var error = await GitHubClient.ConnectAsync(GhTokenBox.Password).ConfigureAwait(true);
+
+        if (error is not null)
+        {
+            GhErrorText.Text = error;
+            GhErrorText.Visibility = Visibility.Visible;
+            return;
+        }
+
+        GhTokenBox.Clear();
+        RefreshGitHub();
+    }
+
+    private void GhDisconnect_Click(object sender, RoutedEventArgs e)
+    {
+        GitHubClient.Disconnect();
+        RefreshGitHub();
+    }
+
+    private void GhTokenLink_Click(object sender, RoutedEventArgs e) => OpenUrl("https://github.com/settings/tokens");
+
+    private static void OpenUrl(string url)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            System.Diagnostics.Debug.WriteLine($"Could not open {url}: {ex.Message}");
+        }
     }
 
     /// <summary>Rebuilds the text this page sets from code, which DynamicResource cannot reach.</summary>

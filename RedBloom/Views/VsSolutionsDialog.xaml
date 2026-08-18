@@ -1,0 +1,57 @@
+<Window x:Class="RedBloom.Views.VsSolutionsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Visual Studio"
+        Width="520" Height="480"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+
+    <Border Background="{DynamicResource Chrome}" BorderBrush="{DynamicResource Divider}"
+            BorderThickness="1" CornerRadius="9" MouseLeftButtonDown="Root_MouseLeftButtonDown">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="26" ShadowDepth="6" Opacity="0.6" Color="Black" />
+        </Border.Effect>
+        <Grid Margin="20,18,20,16" RowDefinitions="Auto,Auto,*,Auto">
+            <TextBlock Grid.Row="0" Text="{DynamicResource L_VsPickTitle}"
+                       Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource UiFont}"
+                       FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <TextBlock Grid.Row="1" Text="{DynamicResource L_VsPickHint}"
+                       Foreground="{DynamicResource TextFaint}" FontFamily="{DynamicResource UiFont}"
+                       FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+            <Border Grid.Row="2" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Divider}"
+                    BorderThickness="1" CornerRadius="7">
+                <Grid>
+                    <ListBox x:Name="List" Background="Transparent" BorderThickness="0"
+                             HorizontalContentAlignment="Stretch"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             MouseDoubleClick="List_DoubleClick">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="4,5">
+                                    <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TextPrimary}"
+                                               FontFamily="{DynamicResource UiFont}" FontSize="12.5" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Path}" Foreground="{DynamicResource TextFaint}"
+                                               FontFamily="{DynamicResource UiFont}" FontSize="10.5"
+                                               TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock x:Name="Empty" Text="{DynamicResource L_VsPickNone}"
+                               Foreground="{DynamicResource TextFaint}" FontFamily="{DynamicResource UiFont}"
+                               FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               TextAlignment="Center" TextWrapping="Wrap" Margin="24" Visibility="Collapsed" />
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button Content="{DynamicResource L_Cancel}" Style="{StaticResource GhostButton}" Padding="14,5" Click="Cancel_Click" />
+                <Button Content="{DynamicResource L_SourceAddBtn}" Style="{StaticResource AccentButton}" Padding="14,5" Margin="8,0,0,0" Click="Ok_Click" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

@@ -2,8 +2,13 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:RedBloom"
+             xmlns:prim="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Styles/Scrollbars.xaml" />
+            </ResourceDictionary.MergedDictionaries>
 
         <!-- ==== palette ==== -->
         <Color x:Key="SurfaceColor">#FF171616</Color>
@@ -626,10 +631,10 @@
                                     </Thumb>
                                 </Track.Thumb>
                                 <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" />
+                                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" />
                                 </Track.IncreaseRepeatButton>
                                 <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" />
+                                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" />
                                 </Track.DecreaseRepeatButton>
                             </Track>
                         </Grid>
@@ -650,6 +655,7 @@
             </Style.Triggers>
         </Style>
 
+        </ResourceDictionary>
     </Application.Resources>
 </Application>
 

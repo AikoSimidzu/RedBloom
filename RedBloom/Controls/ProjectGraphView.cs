@@ -89,9 +89,24 @@ public sealed class ProjectGraphView : UserControl, IDisposable
 
         core.WebMessageReceived += OnWebMessage;
         ThemeService.Applied += PushTheme;
-        Unloaded += (_, _) => ThemeService.Applied -= PushTheme;
+
+        // Switching back to this tab after editing the tree inline should show those edits.
+        IsVisibleChanged += OnVisibleChanged;
+        Unloaded += (_, _) =>
+        {
+            ThemeService.Applied -= PushTheme;
+            IsVisibleChanged -= OnVisibleChanged;
+        };
 
         core.Navigate(PageUrl);
+    }
+
+    private void OnVisibleChanged(object sender, System.Windows.DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true)
+        {
+            Reload();
+        }
     }
 
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -119,7 +134,7 @@ public sealed class ProjectGraphView : UserControl, IDisposable
                 break;
 
             case "open" when root.TryGetProperty("kind", out var kind) && root.TryGetProperty("refId", out var refId):
-                OpenRequested?.Invoke(kind.GetString() ?? string.Empty, refId.GetString() ?? string.Empty);
+                OpenGraphNode(kind.GetString() ?? string.Empty, refId.GetString() ?? string.Empty);
                 break;
         }
     }
@@ -142,53 +157,55 @@ public sealed class ProjectGraphView : UserControl, IDisposable
     }
 
     /// <summary>Hands the page the graph and the pieces of the project it can drop onto the canvas.</summary>
-    private void PushInit()
+    /// <summary>
+    /// Opens a node's target: a source or folder is opened here (it is the project's, not a chat's);
+    /// a chat, room or file is routed to the window to open as a tab.
+    /// </summary>
+    private void OpenGraphNode(string kind, string refId)
     {
-        var palette = new List<object>();
-
-        foreach (var chat in ChatStore.Chats.Where(c => c.ProjectId == _project.Id))
+        switch (kind)
         {
-            palette.Add(new { kind = "chat", refId = chat.Id, label = chat.Title });
+            case "source":
+                if (_project.Sources.FirstOrDefault(s => s.Id == refId) is { } source)
+                {
+                    OpenPath(source.Path.Length > 0 ? source.Path : source.Url);
+                }
+
+                break;
+
+            case "folder":
+                OpenPath(refId);
+                break;
+
+            default:
+                OpenRequested?.Invoke(kind, refId);
+                break;
         }
-
-        foreach (var room in RoomStore.Rooms.Where(r => r.ProjectId == _project.Id))
-        {
-            palette.Add(new { kind = "room", refId = room.Id, label = room.Title });
-        }
-
-        foreach (var file in ProjectFiles())
-        {
-            palette.Add(new { kind = "file", refId = file, label = Path.GetFileName(file) });
-        }
-
-        Post(new
-        {
-            t = "init",
-            graph = _project.Graph,
-            palette,
-            strings = Strings(),
-        });
     }
 
-    private IEnumerable<string> ProjectFiles()
+    private static void OpenPath(string target)
     {
-        if (string.IsNullOrWhiteSpace(_project.Folder) || !Directory.Exists(_project.Folder))
-        {
-            return [];
-        }
-
         try
         {
-            return Directory.EnumerateFiles(_project.Folder)
-                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                .Take(200)
-                .ToList();
+            if (target.Length > 0 && (Directory.Exists(target) || target.StartsWith("http", StringComparison.OrdinalIgnoreCase)))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true });
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return [];
+            System.Diagnostics.Debug.WriteLine($"Could not open {target}: {ex.Message}");
         }
     }
+
+    private void PushInit() => Post(new
+    {
+        t = "init",
+        graph = _project.Graph,
+        palette = ProjectPalette.Build(_project).Select(i => new { kind = i.Kind, refId = i.RefId, label = i.Label }).ToList(),
+        folderTree = ProjectPalette.FolderTree(_project),
+        strings = Strings(),
+    });
 
     private static object Strings() => new
     {
@@ -212,6 +229,8 @@ public sealed class ProjectGraphView : UserControl, IDisposable
             chat = LocalizationService.T("L_GraphKindChat"),
             room = LocalizationService.T("L_GraphKindRoom"),
             file = LocalizationService.T("L_GraphKindFile"),
+            source = LocalizationService.T("L_GraphKindSource"),
+            folder = LocalizationService.T("L_GraphKindFolder"),
             milestone = LocalizationService.T("L_GraphKindMilestone"),
         },
     };
