@@ -16,6 +16,8 @@ public static class ProjectStats
         int Rooms, int RoomMessages,
         int Files, long Bytes,
         int Loc, IReadOnlyList<LangCount> Languages,
+        int GraphNodes, int GraphEdges, int Isolated, string TopNode,
+        int Complexity, string ComplexityLevel,
         DateTime? LastActivity,
         GitInfo? Git);
 
@@ -68,8 +70,66 @@ public static class ProjectStats
 
         var languages = lang.OrderByDescending(kv => kv.Value).Take(8).Select(kv => new LangCount(kv.Key, kv.Value)).ToList();
 
-        return new Stats(chats.Count, chatMessages, rooms.Count, roomMessages, files, bytes, loc, languages, last, Git(project.Folder));
+        var (nodes, edges, isolated, top) = Connections(project.Graph);
+        var (score, level) = Complexity(loc, files, languages.Count, project.Sources.Count, chats.Count + rooms.Count, nodes, edges);
+
+        return new Stats(chats.Count, chatMessages, rooms.Count, roomMessages, files, bytes, loc, languages,
+            nodes, edges, isolated, top, score, level, last, Git(project.Folder));
     });
+
+    /// <summary>Reads the relationship tree: how many nodes and edges, how many are unconnected, and the busiest node.</summary>
+    private static (int Nodes, int Edges, int Isolated, string Top) Connections(ProjectGraph graph)
+    {
+        var degree = new Dictionary<string, int>();
+        foreach (var e in graph.Edges)
+        {
+            degree[e.From] = degree.GetValueOrDefault(e.From) + 1;
+            degree[e.To] = degree.GetValueOrDefault(e.To) + 1;
+        }
+
+        var isolated = graph.Nodes.Count(n => degree.GetValueOrDefault(n.Id) == 0);
+
+        var top = string.Empty;
+        var best = 0;
+        foreach (var n in graph.Nodes)
+        {
+            var d = degree.GetValueOrDefault(n.Id);
+            if (d > best)
+            {
+                best = d;
+                top = n.Label.Length > 0 ? n.Label : n.Kind;
+            }
+        }
+
+        return (graph.Nodes.Count, graph.Edges.Count, isolated, top);
+    }
+
+    /// <summary>
+    /// A rough complexity score (0–100) from the project's size and structure, and the level it falls
+    /// in. Size metrics are log-scaled so a big codebase does not swamp everything else.
+    /// </summary>
+    private static (int Score, string Level) Complexity(int loc, int files, int languages, int sources, int conversations, int nodes, int edges)
+    {
+        var score =
+            Math.Log10(loc + 1) * 9
+            + Math.Log10(files + 1) * 6
+            + languages * 3
+            + sources * 4
+            + conversations * 2
+            + nodes * 1.5
+            + edges * 1.2;
+
+        var capped = (int)Math.Round(Math.Min(100, score));
+        var level = capped switch
+        {
+            < 20 => "low",
+            < 45 => "medium",
+            < 70 => "high",
+            _ => "veryhigh",
+        };
+
+        return (capped, level);
+    }
 
     /// <summary>The language a file's extension names, for the code counter, or null to skip it.</summary>
     private static string? Language(string ext) => ext.ToLowerInvariant() switch

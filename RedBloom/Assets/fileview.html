@@ -180,12 +180,20 @@
     lineWrapping: false,
   };
 
+  let saveTimer = null;
+
   function ensureCm() {
     if (cm) return cm;
     cm = CodeMirror.fromTextArea(document.getElementById("editor"), cmOpts);
     cm.on("change", () => {
-      if (!readOnly) { dirty = true; }
+      if (readOnly) return;
+      dirty = true;
+      // Auto-save shortly after typing stops, so edits are never lost by switching away.
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, 900);
     });
+    // And save at once when focus leaves the editor (e.g. switching tabs).
+    cm.on("blur", () => { if (dirty) save(); });
     cm.setOption("extraKeys", {
       "Ctrl-S": () => save(),
       "Cmd-S": () => save(),

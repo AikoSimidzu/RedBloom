@@ -195,6 +195,16 @@
     box.appendChild(tile(st.rooms, (S.statRooms || "rooms") + " · " + st.roomMessages));
     box.appendChild(tile(st.files, (S.statFiles || "files") + " · " + st.size));
     box.appendChild(tile(fmt(st.loc), S.statLoc || "lines of code"));
+    // complexity, coloured by level
+    const cxColors = { low: "#5bb85b", medium: "#d8c14a", high: "#e0913f", veryhigh: "#e0555f" };
+    const cxLabel = (S.cx && S.cx[st.complexityLevel]) || st.complexityLevel || "—";
+    const cxTile = tile(cxLabel, S.statComplexity || "complexity", (st.complexity || 0) + "/100");
+    const cv = cxTile.querySelector(".v"); if (cv) cv.style.color = cxColors[st.complexityLevel] || "";
+    box.appendChild(cxTile);
+    // connections
+    box.appendChild(tile(st.edges || 0,
+      (S.statConnections || "connections") + " · " + (st.nodes || 0) + " " + (S.statNodes || "nodes"),
+      (S.statIsolated || "isolated") + ": " + (st.isolated || 0) + (st.topNode ? "  ·  " + (S.statTop || "top") + ": " + st.topNode : "")));
     if (st.git) box.appendChild(tile(st.git.branch, st.git.changes === 0 ? (S.statClean || "clean") : (S.statChanges || "{0} changed").replace("{0}", st.git.changes), st.git.commit));
     box.appendChild(tile(st.last || "—", S.statLast || "last activity"));
     renderChart(st.languages);
