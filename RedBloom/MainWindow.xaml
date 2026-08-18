@@ -446,7 +446,7 @@
                         Background="{DynamicResource Chrome}"
                         CornerRadius="6"
                         Padding="2">
-                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" >
+                    <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,*" >
                         <RadioButton x:Name="SshModeButton"
                                      Grid.Row="0" Grid.Column="0"
                                      Style="{StaticResource SegmentedRadio}"
@@ -463,6 +463,12 @@
                                      Margin="0,2,0,0"
                                      Style="{StaticResource SegmentedRadio}"
                                      Content="{DynamicResource L_RoomsTab}"
+                                     Checked="SidebarMode_Changed" />
+                        <RadioButton x:Name="ProjectsModeButton"
+                                     Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                     Margin="0,2,0,0"
+                                     Style="{StaticResource SegmentedRadio}"
+                                     Content="{DynamicResource L_ProjectsTab}"
                                      Checked="SidebarMode_Changed" />
                     </Grid>
                 </Border>
@@ -535,7 +541,7 @@
                 <!-- ==== AI: pick an agent, then its chats ==== -->
                 <Grid x:Name="AiPanel"
                       Grid.Row="1"
-                      RowDefinitions="Auto,Auto,*"
+                      RowDefinitions="Auto,Auto,Auto,*"
                       Visibility="Collapsed">
 
                     <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="14,12,8,6">
@@ -579,7 +585,34 @@
                         </ComboBox.ItemTemplate>
                     </ComboBox>
 
-                    <Grid Grid.Row="2">
+                    <Border Grid.Row="2" Margin="12,0,12,8"
+                            Background="{DynamicResource Surface}"
+                            BorderBrush="{DynamicResource Divider}"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Grid.Column="0"
+                                       Text="&#xE721;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,4,0" />
+                            <TextBox Grid.Column="1"
+                                     x:Name="ChatSearchBox"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Padding="2,5"
+                                     Foreground="{DynamicResource TextPrimary}"
+                                     CaretBrush="{DynamicResource Accent}"
+                                     FontFamily="{DynamicResource UiFont}"
+                                     FontSize="12"
+                                     VerticalContentAlignment="Center"
+                                     TextChanged="ChatSearch_Changed" />
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="3">
                         <ListBox x:Name="ChatList"
                                  Background="Transparent"
                                  BorderThickness="0"
@@ -645,6 +678,173 @@
                                     IsHitTestVisible="False"
                                     Visibility="Collapsed">
                             <TextBlock Text="{DynamicResource L_RoomNone}"
+                                       Foreground="{DynamicResource TextFaint}"
+                                       FontFamily="{DynamicResource UiFont}"
+                                       FontSize="11.5"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- ==== Projects: grouped work, filled in later ==== -->
+                <Grid x:Name="ProjectsPanel"
+                      Grid.Row="1"
+                      RowDefinitions="Auto,*"
+                      Visibility="Collapsed">
+
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="14,12,8,6">
+                        <TextBlock Grid.Column="0"
+                                   Text="{DynamicResource L_ProjectsTab}"
+                                   Foreground="{DynamicResource TextFaint}"
+                                   FontFamily="{DynamicResource UiFont}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                x:Name="NewProjectButton"
+                                Style="{StaticResource IconButton}"
+                                Content="&#xE710;"
+                                Width="22" Height="22"
+                                Click="NewProject_Click"
+                                ToolTip="{DynamicResource L_ProjectNew}" />
+                    </Grid>
+
+                    <Grid Grid.Row="1">
+                        <TreeView x:Name="ProjectTree"
+                                  Background="Transparent"
+                                  BorderThickness="0"
+                                  Padding="4,0,0,0"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  MouseDoubleClick="ProjectTree_DoubleClick"
+                                  MouseRightButtonUp="ProjectTree_RightClick">
+                            <TreeView.Resources>
+                                <!-- Kill the default system-blue selection so the tree reads in the theme. -->
+                                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#2EFFFFFF" />
+                                <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FFFFFFFF" />
+                                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#1FFFFFFF" />
+                                <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#FFFFFFFF" />
+
+                                <!-- DockPanel, not a horizontal StackPanel: the label needs a bounded
+                                     width for CharacterEllipsis to work, otherwise a long name is
+                                     clipped hard at the row edge instead of trimmed. -->
+                                <HierarchicalDataTemplate DataType="{x:Type controls:ProjectTreeItem}"
+                                                          ItemsSource="{Binding Children}">
+                                    <DockPanel LastChildFill="True">
+                                        <Border DockPanel.Dock="Left" Width="3" Height="26" CornerRadius="2"
+                                                Background="{DynamicResource Accent}" Margin="0,0,9,0" VerticalAlignment="Center" />
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}"
+                                                       Foreground="{DynamicResource TextPrimary}"
+                                                       FontFamily="{DynamicResource UiFont}"
+                                                       FontSize="12" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Project.Summary}"
+                                                       Foreground="{DynamicResource TextFaint}"
+                                                       FontFamily="{DynamicResource UiFont}"
+                                                       FontSize="10.5"
+                                                       TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </HierarchicalDataTemplate>
+
+                                <DataTemplate DataType="{x:Type controls:ProjectTreeChild}">
+                                    <DockPanel Margin="0,1" LastChildFill="True">
+                                        <TextBlock DockPanel.Dock="Left" Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="11" Foreground="{DynamicResource TextFaint}"
+                                                   Margin="0,0,7,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding Title}"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontFamily="{DynamicResource UiFont}"
+                                                   FontSize="11.5"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </TreeView.Resources>
+                            <TreeView.ItemContainerStyle>
+                                <Style TargetType="TreeViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+                                    <Setter Property="IsExpanded" Value="True" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="TreeViewItem">
+                                                <Grid>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+
+                                                    <!-- The highlight wraps the row content, so its height comes from the
+                                                         content plus this padding — the same way a room row is sized,
+                                                         rather than a fixed plate the text is centred inside. -->
+                                                    <Border x:Name="Row" Grid.Row="0"
+                                                            Background="Transparent" CornerRadius="5"
+                                                            Margin="6,1" Padding="6,7">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="15" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+
+                                                            <ToggleButton x:Name="Expander" Grid.Column="0"
+                                                                          Focusable="False" VerticalAlignment="Center"
+                                                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}"
+                                                                          ClickMode="Press">
+                                                                <ToggleButton.Template>
+                                                                    <ControlTemplate TargetType="ToggleButton">
+                                                                        <Border Background="Transparent" Width="15" Height="18">
+                                                                            <Path x:Name="Arrow" Data="M 0 0 L 4 4 L 0 8 Z"
+                                                                                  Fill="{DynamicResource TextFaint}"
+                                                                                  HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                                        </Border>
+                                                                        <ControlTemplate.Triggers>
+                                                                            <Trigger Property="IsChecked" Value="True">
+                                                                                <Setter TargetName="Arrow" Property="Data" Value="M 0 0 L 8 0 L 4 4 Z" />
+                                                                            </Trigger>
+                                                                        </ControlTemplate.Triggers>
+                                                                    </ControlTemplate>
+                                                                </ToggleButton.Template>
+                                                            </ToggleButton>
+
+                                                            <ContentPresenter x:Name="PART_Header" Grid.Column="1"
+                                                                              ContentSource="Header"
+                                                                              HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                                                        </Grid>
+                                                    </Border>
+
+                                                    <ItemsPresenter x:Name="ItemsHost" Grid.Row="1" Margin="15,0,0,0" />
+                                                </Grid>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsExpanded" Value="False">
+                                                        <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
+                                                    </Trigger>
+                                                    <Trigger Property="HasItems" Value="False">
+                                                        <Setter TargetName="Expander" Property="Visibility" Value="Hidden" />
+                                                    </Trigger>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="Row" Property="Background" Value="{DynamicResource SurfaceRaised}" />
+                                                    </Trigger>
+                                                    <MultiTrigger>
+                                                        <MultiTrigger.Conditions>
+                                                            <Condition Property="IsSelected" Value="False" />
+                                                            <Condition Property="IsMouseOver" Value="True" />
+                                                        </MultiTrigger.Conditions>
+                                                        <Setter TargetName="Row" Property="Background" Value="{DynamicResource ChromeHover}" />
+                                                    </MultiTrigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </TreeView.ItemContainerStyle>
+                        </TreeView>
+
+                        <StackPanel x:Name="NoProjects"
+                                    VerticalAlignment="Center"
+                                    Margin="24,0"
+                                    IsHitTestVisible="False">
+                            <TextBlock Text="{DynamicResource L_ProjectNone}"
                                        Foreground="{DynamicResource TextFaint}"
                                        FontFamily="{DynamicResource UiFont}"
                                        FontSize="11.5"

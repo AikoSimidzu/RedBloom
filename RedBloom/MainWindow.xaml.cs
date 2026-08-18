@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -47,6 +48,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Services.Ai.AgentTunnel.ApproveAsync = _hostKeyPolicy.ApproveAsync;
         ChatStore.Load();
         RoomStore.Load();
+        ProjectStore.Load();
 
         SessionsView = CollectionViewSource.GetDefaultView(_store.Sessions);
         SessionsView.Filter = FilterSession;
@@ -71,6 +73,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // in the sidebar — so the list follows the store instead of being rebuilt by hand.
         ChatStore.Chats.CollectionChanged += (_, _) => RefreshChats();
         RoomStore.Rooms.CollectionChanged += (_, _) => RefreshRooms();
+        ProjectStore.Projects.CollectionChanged += (_, _) => RefreshProjects();
 
         Loaded += OnFirstLoad;
     }
@@ -127,6 +130,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // ones (~8px against RoundSmall's ~4px). A maximized window stays square on its own.
         Interop.Dwm.SetCornerPreference(handle, Interop.Dwm.CornerPreference.Round);
         Interop.MaximizeBounds.Attach(handle, this);
+
+        SetupInputGuard(handle);
 
         HookWallpaperCapture();
         ApplyBackdrops();
@@ -328,18 +333,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SidebarMode_Changed(object sender, RoutedEventArgs e)
     {
         // Fires during XAML load, before the panels exist.
-        if (SshPanel is null || AiPanel is null || RoomsPanel is null)
+        if (SshPanel is null || AiPanel is null || RoomsPanel is null || ProjectsPanel is null)
         {
             return;
         }
 
         var ai = AiModeButton.IsChecked == true;
         var rooms = RoomsModeButton.IsChecked == true;
-        var ssh = !ai && !rooms;
+        var projects = ProjectsModeButton.IsChecked == true;
+        var ssh = !ai && !rooms && !projects;
 
         SshPanel.Visibility = ssh ? Visibility.Visible : Visibility.Collapsed;
         AiPanel.Visibility = ai ? Visibility.Visible : Visibility.Collapsed;
         RoomsPanel.Visibility = rooms ? Visibility.Visible : Visibility.Collapsed;
+        ProjectsPanel.Visibility = projects ? Visibility.Visible : Visibility.Collapsed;
 
         if (ai)
         {
@@ -348,6 +355,277 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         else if (rooms)
         {
             RefreshRooms();
+        }
+        else if (projects)
+        {
+            RefreshProjects();
+        }
+    }
+
+    // ================= projects =================
+
+    private void RefreshProjects()
+    {
+        if (ProjectTree is null || NoProjects is null)
+        {
+            return;
+        }
+
+        var items = new List<ProjectTreeItem>();
+
+        foreach (var project in ProjectStore.Projects.OrderByDescending(p => p.UpdatedAt))
+        {
+            var item = new ProjectTreeItem(project);
+
+            foreach (var chat in ChatStore.Chats.Where(c => c.ProjectId == project.Id).OrderByDescending(c => c.UpdatedAt))
+            {
+                item.Children.Add(new ProjectTreeChild
+                {
+                    Title = chat.Title.Length > 0 ? chat.Title : LocalizationService.T("L_AiNewChat"),
+                    Glyph = "",
+                    Chat = chat,
+                });
+            }
+
+            foreach (var room in RoomStore.Rooms.Where(r => r.ProjectId == project.Id).OrderByDescending(r => r.UpdatedAt))
+            {
+                item.Children.Add(new ProjectTreeChild { Title = room.Title, Glyph = "", Room = room });
+            }
+
+            items.Add(item);
+        }
+
+        ProjectTree.ItemsSource = items;
+        NoProjects.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void NewProject_Click(object sender, RoutedEventArgs e)
+    {
+        if (ProjectDialog.Create(this) is not { } created)
+        {
+            return;
+        }
+
+        var project = ProjectStore.Create(created.Name, created.Description);
+        RefreshProjects();
+        OpenProjectTab(project);
+    }
+
+    private void ProjectTree_DoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        switch (ProjectTree.SelectedItem)
+        {
+            case ProjectTreeItem item:
+                OpenProjectTab(item.Project);
+                break;
+            case ProjectTreeChild { Chat: { } chat } when AgentForChat(chat) is { } agent:
+                OpenChatTab(agent.Clone(), chat);
+                break;
+            case ProjectTreeChild { Room: { } room }:
+                OpenRoomTab(room);
+                break;
+            default:
+                return;
+        }
+
+        e.Handled = true;
+    }
+
+    private void ProjectTree_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FindTreeViewItem(e.OriginalSource as DependencyObject) is { } container)
+        {
+            container.IsSelected = true;
+        }
+
+        var menu = new ContextMenu();
+
+        void Add(string key, Action run)
+        {
+            var item = new MenuItem { Header = LocalizationService.T(key) };
+            item.Click += (_, _) => run();
+            menu.Items.Add(item);
+        }
+
+        switch (ProjectTree.SelectedItem)
+        {
+            case ProjectTreeItem item:
+                Add("L_ChatOpenTab", () => OpenProjectTab(item.Project));
+                Add("L_ProjectNewChat", () => NewChatInProject(item.Project));
+                Add("L_ProjectNewRoom", () => NewRoomInProject(item.Project));
+                Add("L_ChatOpenWorkspace", () => OpenProjectFolder(item.Project));
+                menu.Items.Add(new Separator());
+
+                // Deleting only unfiles the project; its folder and its chats/rooms are left untouched.
+                Add("L_Delete", () =>
+                {
+                    if (ConfirmDelete(item.Project.Name))
+                    {
+                        ProjectStore.Delete(item.Project);
+                        RefreshProjects();
+                    }
+                });
+
+                break;
+
+            case ProjectTreeChild { Chat: { } chat }:
+                Add("L_ChatOpenTab", () =>
+                {
+                    if (AgentForChat(chat) is { } agent)
+                    {
+                        OpenChatTab(agent.Clone(), chat);
+                    }
+                });
+                menu.Items.Add(MoveToProjectMenu(chat.ProjectId, id => AssignChatProject(chat, id)));
+                break;
+
+            case ProjectTreeChild { Room: { } room }:
+                Add("L_ChatOpenTab", () => OpenRoomTab(room));
+                menu.Items.Add(MoveToProjectMenu(room.ProjectId, id => AssignRoomProject(room, id)));
+                break;
+
+            default:
+                return;
+        }
+
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private static void OpenProjectFolder(Project project)
+    {
+        try
+        {
+            if (Directory.Exists(project.Folder))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(project.Folder) { UseShellExecute = true });
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // Nothing to do if Explorer will not open the folder.
+        }
+    }
+
+    /// <summary>Walks up from a clicked element to the tree row it sits in, so a right-click selects it.</summary>
+    private static TreeViewItem? FindTreeViewItem(DependencyObject? source)
+    {
+        while (source is not null and not TreeViewItem)
+        {
+            source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+        }
+
+        return source as TreeViewItem;
+    }
+
+    private void OpenProjectTab(Project project)
+    {
+        if (Tabs.FirstOrDefault(t => t.Project?.Id == project.Id) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        var view = new ProjectHomeView(project);
+        var tab = AddTab(view, project.Name, AiGlyph, project.Name);
+        tab.Project = project;
+        tab.Card = project.Card;
+
+        view.ChatActivated += chat =>
+        {
+            if (AgentForChat(chat) is { } agent)
+            {
+                OpenChatTab(agent.Clone(), chat);
+            }
+        };
+        view.RoomActivated += OpenRoomTab;
+        view.FileActivated += OpenFileTab;
+        view.GraphRequested += OpenProjectGraphTab;
+
+        project.Card.Changed += () => ProjectStore.Save(project);
+        project.Changed += () =>
+        {
+            tab.Title = project.Name;
+            RefreshProjects();
+        };
+    }
+
+    /// <summary>
+    /// Opens a fresh chat filed under the project with the selected agent. Like any chat it becomes
+    /// saved once it is first answered, at which point it appears in the project's chat list.
+    /// </summary>
+    private void NewChatInProject(Project project)
+    {
+        if (SelectedAgent is not { } agent)
+        {
+            MessageBox.Show(this, LocalizationService.T("L_ProjectNeedAgent"),
+                LocalizationService.T("L_ProjectsTab"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        OpenChatTab(agent.Clone(), new ChatSession { AgentId = agent.Id, ProjectId = project.Id });
+    }
+
+    /// <summary>Opens a project's relationship tree as its own tab.</summary>
+    private void OpenProjectGraphTab(Project project)
+    {
+        if (Tabs.FirstOrDefault(t => t.Content is ProjectGraphView g && ReferenceEquals(g.Tag, project)) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        var view = new ProjectGraphView(project) { Tag = project };
+        AddTab(view, $"{project.Name} · {LocalizationService.T("L_ProjectGraph")}", AiGlyph, project.Name);
+
+        view.OpenRequested += (kind, refId) =>
+        {
+            switch (kind)
+            {
+                case "chat":
+                    if (ChatStore.Chats.FirstOrDefault(c => c.Id == refId) is { } chat && AgentForChat(chat) is { } agent)
+                    {
+                        OpenChatTab(agent.Clone(), chat);
+                    }
+
+                    break;
+
+                case "room":
+                    if (RoomStore.Rooms.FirstOrDefault(r => r.Id == refId) is { } room)
+                    {
+                        OpenRoomTab(room);
+                    }
+
+                    break;
+
+                case "file":
+                    if (File.Exists(refId))
+                    {
+                        OpenFileTab(refId);
+                    }
+
+                    break;
+            }
+        };
+    }
+
+    /// <summary>Makes a room filed under the project and opens it.</summary>
+    private void NewRoomInProject(Project project)
+    {
+        if (ThemeService.Settings.Agents.Count == 0)
+        {
+            MessageBox.Show(this, LocalizationService.T("L_RoomNeedAgents"),
+                LocalizationService.T("L_RoomTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var room = new ChatRoom { ProjectId = project.Id };
+
+        if (RoomDialog.Edit(this, room))
+        {
+            RoomStore.Save(room);
+            RefreshRooms();
+            OpenRoomTab(room);
         }
     }
 
@@ -376,6 +654,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             SshPanel.Visibility = Visibility.Collapsed;
             AiPanel.Visibility = Visibility.Collapsed;
             RoomsPanel.Visibility = Visibility.Collapsed;
+            ProjectsPanel.Visibility = Visibility.Collapsed;
             FilesPanel.Visibility = Visibility.Visible;
             FilesToggle.Foreground = (System.Windows.Media.Brush)FindResource("Accent");
             RefreshFiles();
@@ -625,11 +904,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var chats = SelectedAgent is { } agent ? ChatStore.ForAgent(agent.Id).ToList() : [];
-        ChatList.ItemsSource = chats;
+        var query = ChatSearchBox?.Text?.Trim() ?? string.Empty;
 
+        // With a search typed, look across every agent's chats by title and message text — so a
+        // conversation is found wherever it lives; empty search shows the selected agent's loose
+        // chats. A chat filed under a project is shown only under that project in the tree.
+        var chats = query.Length > 0
+            ? ChatStore.Chats.Where(c => Matches(c, query)).OrderByDescending(c => c.UpdatedAt).ToList()
+            : SelectedAgent is { } agent
+                ? ChatStore.ForAgent(agent.Id).Where(c => c.ProjectId.Length == 0).ToList()
+                : [];
+
+        ChatList.ItemsSource = chats;
         NoChats.Visibility = chats.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private static bool Matches(ChatSession chat, string query) =>
+        chat.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+        || chat.Turns.Any(t => t.Text.Contains(query, StringComparison.OrdinalIgnoreCase));
+
+    private void ChatSearch_Changed(object sender, TextChangedEventArgs e) => RefreshChats();
 
     private void NewChat_Click(object sender, RoutedEventArgs e)
     {
@@ -686,7 +980,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var rooms = RoomStore.Rooms.OrderByDescending(r => r.UpdatedAt).ToList();
+        // Rooms filed under a project are shown only under that project in the tree.
+        var rooms = RoomStore.Rooms.Where(r => r.ProjectId.Length == 0).OrderByDescending(r => r.UpdatedAt).ToList();
         RoomList.ItemsSource = rooms;
         NoRooms.Visibility = rooms.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -764,11 +1059,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void RoomList_RightClick(object sender, MouseButtonEventArgs e)
     {
-        if (RoomList.SelectedItem is not ChatRoom room)
+        // Wired on both the row template and the list; take the room from whichever fired, since a
+        // right-click does not select the row, so SelectedItem would be stale or null.
+        if (((sender as FrameworkElement)?.DataContext as ChatRoom ?? RoomList.SelectedItem as ChatRoom) is not { } room)
         {
             return;
         }
 
+        e.Handled = true;
         var menu = new ContextMenu();
 
         var edit = new MenuItem { Header = LocalizationService.T("L_RoomEdit") };
@@ -793,6 +1091,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         };
 
         menu.Items.Add(edit);
+        menu.Items.Add(MoveToProjectMenu(room.ProjectId, id => AssignRoomProject(room, id)));
+        menu.Items.Add(new Separator());
         menu.Items.Add(delete);
         menu.IsOpen = true;
     }
@@ -822,9 +1122,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         };
     }
 
+    /// <summary>
+    /// The agent a chat belongs to, by its stored id — not just the selected one, since a search
+    /// lists chats from every agent, and opening one under the wrong agent would point it at the
+    /// wrong endpoint.
+    /// </summary>
+    private AiAgent? AgentForChat(ChatSession chat)
+    {
+        if (AgentPicker.ItemsSource is IEnumerable<AiAgent> agents
+            && agents.FirstOrDefault(a => a.Id == chat.AgentId) is { } owner)
+        {
+            return owner;
+        }
+
+        return SelectedAgent;
+    }
+
     private void ChatList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (ChatList.SelectedItem is ChatSession chat && SelectedAgent is { } agent)
+        if (ChatList.SelectedItem is ChatSession chat && AgentForChat(chat) is { } agent)
         {
             OpenChatTab(agent.Clone(), chat);
         }
@@ -837,7 +1153,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (e.Key == Key.Enter && SelectedAgent is { } agent)
+        if (e.Key == Key.Enter && AgentForChat(chat) is { } agent)
         {
             OpenChatTab(agent.Clone(), chat);
             e.Handled = true;
@@ -1334,13 +1650,147 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     /// </remarks>
     private void ChatList_RightClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: ChatSession chat })
+        if (sender is not FrameworkElement { DataContext: ChatSession chat } element)
         {
             return;
         }
 
-        OpenCardEditor(chat.Card, (UIElement)sender, tab: null, chat);
+        var menu = new ContextMenu();
+
+        void Add(string key, Action run)
+        {
+            var item = new MenuItem { Header = LocalizationService.T(key) };
+            item.Click += (_, _) => run();
+            menu.Items.Add(item);
+        }
+
+        Add("L_ChatOpenTab", () =>
+        {
+            if (AgentForChat(chat) is { } agent)
+            {
+                OpenChatTab(agent.Clone(), chat);
+            }
+        });
+        Add("L_AiRenameChat", () => RenameChat(chat));
+        Add("L_ChatExportMd", () => ExportChat(chat));
+        Add("L_ChatOpenWorkspace", () => OpenFolderInExplorer(Workspace.ForChat(chat)));
+        Add("L_ChatCardStyle", () => OpenCardEditor(chat.Card, element, tab: null, chat));
+        menu.Items.Add(MoveToProjectMenu(chat.ProjectId, id => AssignChatProject(chat, id)));
+        menu.Items.Add(new Separator());
+        Add("L_Delete", () => RemoveChat(chat));
+
+        menu.PlacementTarget = element;
+        menu.IsOpen = true;
         e.Handled = true;
+    }
+
+    /// <summary>A "Move to project" submenu listing every project, plus "remove" when already filed.</summary>
+    private MenuItem MoveToProjectMenu(string currentProjectId, Action<string> assign)
+    {
+        var root = new MenuItem { Header = LocalizationService.T("L_MoveToProject") };
+
+        foreach (var project in ProjectStore.Projects.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var id = project.Id;
+            var item = new MenuItem { Header = project.Name, IsChecked = project.Id == currentProjectId };
+            item.Click += (_, _) => assign(id);
+            root.Items.Add(item);
+        }
+
+        if (currentProjectId.Length > 0)
+        {
+            root.Items.Add(new Separator());
+            var none = new MenuItem { Header = LocalizationService.T("L_RemoveFromProject") };
+            none.Click += (_, _) => assign(string.Empty);
+            root.Items.Add(none);
+        }
+        else if (ProjectStore.Projects.Count == 0)
+        {
+            root.IsEnabled = false;
+        }
+
+        return root;
+    }
+
+    private void AssignChatProject(ChatSession chat, string projectId)
+    {
+        var from = chat.ProjectId;
+        chat.ProjectId = projectId;
+        ChatStore.Save(chat);
+        Workspace.MoveChat(chat.Id, from, projectId);
+        RefreshProjects();
+        RefreshChats();
+        ToastMoved(projectId);
+    }
+
+    private void AssignRoomProject(ChatRoom room, string projectId)
+    {
+        var from = room.ProjectId;
+        room.ProjectId = projectId;
+        RoomStore.Save(room);
+        Workspace.MoveRoom(room.Id, from, projectId);
+        RefreshProjects();
+        RefreshRooms();
+        ToastMoved(projectId);
+    }
+
+    /// <summary>Confirms a move, since the item stays visible in its own list — only the tree shows it move.</summary>
+    private void ToastMoved(string projectId)
+    {
+        var name = ProjectStore.Projects.FirstOrDefault(p => p.Id == projectId)?.Name;
+        var message = name is null
+            ? LocalizationService.T("L_MovedOut")
+            : string.Format(LocalizationService.T("L_MovedTo"), name);
+
+        ShowToast(message, actionLabel: null, onAction: null);
+    }
+
+    /// <summary>Opens the working folder for a chat or room in Explorer, making it if need be.</summary>
+    private void OpenFolderInExplorer(string folder)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            ShowToast($"Could not open {folder}: {ex.Message}", actionLabel: null, onAction: null);
+        }
+    }
+
+    /// <summary>Writes a chat out as a Markdown transcript the user chooses the location for.</summary>
+    private void ExportChat(ChatSession chat)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "Markdown (*.md)|*.md|All files|*.*",
+            FileName = ChatExport.SuggestName(chat),
+            DefaultExt = ".md",
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, ChatExport.ToMarkdown(chat));
+            ShowToast(LocalizationService.T("L_ChatExported"),
+                actionLabel: LocalizationService.T("L_ChatOpenWorkspace"),
+                onAction: () =>
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{dialog.FileName}\"") { UseShellExecute = true });
+                    }
+                    catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
+                });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowToast($"Could not export: {ex.Message}", actionLabel: null, onAction: null);
+        }
     }
 
     /// <summary>
@@ -2166,6 +2616,83 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     // ================= window chrome =================
 
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    // ================= agent input guard =================
+
+    private Controls.InputIndicator? _inputIndicator;
+    private const int PanicHotkeyId = 0xB10C;
+
+    /// <summary>
+    /// Wires up the floating "agent is controlling input" badge and the global panic hotkey
+    /// (Ctrl+Alt+Pause) that stops every agent at once, even when RedBloom is not the active window.
+    /// </summary>
+    private void SetupInputGuard(IntPtr handle)
+    {
+        HwndSource.FromHwnd(handle)?.AddHook(InputGuardHook);
+
+        // MOD_CONTROL | MOD_ALT = 0x0003; VK_PAUSE = 0x13. Not fatal if it fails — the badge's own
+        // note still tells the user the key, and a busy hotkey is simply unavailable.
+        RegisterHotKey(handle, PanicHotkeyId, 0x0003, 0x13);
+
+        InputGuard.ActivityChanged += OnAgentInputActivity;
+        InputGuard.PanicRequested += OnPanic;
+        Closed += (_, _) =>
+        {
+            UnregisterHotKey(handle, PanicHotkeyId);
+            InputGuard.ActivityChanged -= OnAgentInputActivity;
+            InputGuard.PanicRequested -= OnPanic;
+        };
+    }
+
+    private IntPtr InputGuardHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WmHotkey = 0x0312;
+
+        if (msg == WmHotkey && wParam.ToInt32() == PanicHotkeyId)
+        {
+            InputGuard.Panic();
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private void OnAgentInputActivity(bool active) => Dispatcher.Invoke(() =>
+    {
+        if (active)
+        {
+            _inputIndicator ??= new Controls.InputIndicator { Owner = null };
+            _inputIndicator.SetText(LocalizationService.T("L_InputControlling"));
+            _inputIndicator.Show();
+        }
+        else
+        {
+            _inputIndicator?.Hide();
+        }
+    });
+
+    /// <summary>The panic key was hit: cancel every running turn and tell the user how to resume.</summary>
+    private void OnPanic() => Dispatcher.Invoke(() =>
+    {
+        foreach (var tab in Tabs)
+        {
+            (tab.Content as Controls.AgentChatView)?.StopTurn();
+            (tab.Content as Controls.RoomChatView)?.StopTurn();
+        }
+
+        _inputIndicator?.Hide();
+
+        ShowToast(
+            LocalizationService.T("L_InputPaused"),
+            actionLabel: LocalizationService.T("L_InputResume"),
+            onAction: () => InputGuard.Resume());
+    });
+
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hwnd, int id);
 
     // ================= tray & elevation =================
 

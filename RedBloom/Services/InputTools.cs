@@ -25,6 +25,20 @@ public static class InputTools
     private const ushort VkMenu = 0x12;
     private const ushort VkLWin = 0x5B;
 
+    /// <summary>The action a mouse call names, so a view can confirm the first click before running.</summary>
+    public static string ActionOf(string argumentsJson)
+    {
+        try
+        {
+            var root = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson).RootElement;
+            return Str(root, "action").Trim().ToLowerInvariant();
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
     /// <summary>Carries out one <c>control_mouse</c> call from its raw arguments and reports back.</summary>
     public static string Handle(string argumentsJson)
     {
@@ -41,6 +55,15 @@ public static class InputTools
 
         var action = Str(root, "action").Trim().ToLowerInvariant();
         var button = Str(root, "button").Trim().ToLowerInvariant();
+
+        // "position" only reads the cursor, so it is allowed even while paused; anything that moves
+        // or clicks is a real input action and is refused when the user has hit the panic key.
+        if (action is not ("" or "position" or "where") && InputGuard.Paused)
+        {
+            return "Input is paused by the user (panic key). It will not act until they resume.";
+        }
+
+        using var _ = action is "" or "position" or "where" ? null : InputGuard.Begin();
 
         return action switch
         {
@@ -69,6 +92,13 @@ public static class InputTools
         {
             return "The keyboard arguments could not be read.";
         }
+
+        if (InputGuard.Paused)
+        {
+            return "Input is paused by the user (panic key). It will not act until they resume.";
+        }
+
+        using var _ = InputGuard.Begin();
 
         var text = Str(root, "text");
 

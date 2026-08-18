@@ -1,0 +1,73 @@
+<Window x:Class="RedBloom.Views.ProjectDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Project"
+        Width="420"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+
+    <Border Background="{DynamicResource Chrome}"
+            BorderBrush="{DynamicResource Divider}"
+            BorderThickness="1"
+            CornerRadius="9"
+            MouseLeftButtonDown="Root_MouseLeftButtonDown">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="26" ShadowDepth="6" Opacity="0.6" Color="Black" />
+        </Border.Effect>
+
+        <StackPanel Margin="22,20,22,18">
+            <TextBlock Text="{DynamicResource L_ProjectDialogTitle}"
+                       Foreground="{DynamicResource TextPrimary}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,14" />
+
+            <TextBlock Text="{DynamicResource L_ProjectName}"
+                       Foreground="{DynamicResource TextMuted}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="12"
+                       Margin="0,0,0,4" />
+            <TextBox x:Name="NameBox" Padding="7,5" Margin="0,0,0,12" />
+
+            <TextBlock Text="{DynamicResource L_ProjectDescription}"
+                       Foreground="{DynamicResource TextMuted}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="12"
+                       Margin="0,0,0,4" />
+            <TextBox x:Name="DescriptionBox"
+                     Padding="7,5"
+                     Margin="0,0,0,6"
+                     Height="66"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" />
+
+            <TextBlock Text="{DynamicResource L_ProjectDialogNote}"
+                       Foreground="{DynamicResource TextFaint}"
+                       FontFamily="{DynamicResource UiFont}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,16" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="{DynamicResource L_Cancel}"
+                        Style="{StaticResource GhostButton}"
+                        Padding="14,5"
+                        Click="Cancel_Click" />
+                <Button Content="{DynamicResource L_ProjectCreate}"
+                        Style="{StaticResource AccentButton}"
+                        Padding="14,5"
+                        Margin="8,0,0,0"
+                        Click="Ok_Click" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

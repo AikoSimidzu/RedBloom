@@ -23,6 +23,25 @@ namespace RedBloom
                 Environment.Exit(0);
             }
 
+            // Surface an otherwise-fatal UI exception instead of vanishing: write it aside and show
+            // it, so a crash on a new feature can be diagnosed rather than guessed at. Temporary.
+            DispatcherUnhandledException += (_, ex) =>
+            {
+                try
+                {
+                    var log = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RedBloom", "crash.log");
+                    System.IO.File.WriteAllText(log, ex.Exception.ToString());
+                }
+                catch
+                {
+                    // Logging the crash must not itself crash.
+                }
+
+                MessageBox.Show(ex.Exception.ToString(), "RedBloom error", MessageBoxButton.OK, MessageBoxImage.Error);
+                ex.Handled = true;
+            };
+
             // Loaded before base.OnStartup, which is what creates and shows the main window
             // via StartupUri. The other way round the window is built against the default
             // palette and only repainted afterwards.

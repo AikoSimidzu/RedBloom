@@ -315,6 +315,15 @@
                                Style="{StaticResource SectionNote}"
                                Margin="150,0,0,14" />
 
+                    <CheckBox x:Name="VisionBox"
+                              Content="{DynamicResource L_AiVision}"
+                              Margin="150,0,0,4"
+                              Checked="Field_Changed"
+                              Unchecked="Field_Changed" />
+                    <TextBlock Text="{DynamicResource L_AiVisionNote}"
+                               Style="{StaticResource SectionNote}"
+                               Margin="150,0,0,10" />
+
                     <CheckBox x:Name="AllowImagesBox"
                               Content="{DynamicResource L_AiAllowImages}"
                               Margin="150,0,0,4"

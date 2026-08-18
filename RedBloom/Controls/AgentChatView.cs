@@ -104,7 +104,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         _agent = agent;
         _chat = chat;
-        _cwd = Workspace.For(chat.Id);
+        _cwd = Workspace.ForChat(chat);
 
         // A chat that was switched to another model keeps it. Only the name is overridden; the
         // endpoint, key and permissions stay the agent's.
@@ -341,6 +341,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 FileOpenRequested?.Invoke(fp.GetString() ?? string.Empty);
                 break;
 
+            case "revertFile" when message.TryGetProperty("path", out var rp) && message.TryGetProperty("token", out var rt):
+                var revertNote = FileTools.Revert(rp.GetString() ?? string.Empty, rt.GetString() ?? string.Empty);
+                Post(new { t = "note", html = Markdown.Escape(revertNote) });
+                break;
+
             case "task" when message.TryGetProperty("scope", out var scope) && scope.GetString() == "agent":
                 if (TaskPanel.Apply(_agent.Tasks, message))
                 {
@@ -375,7 +380,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 break;
 
             case "drop":
-                Attach(DroppedFiles.Save(message, _chat.Id));
+                Attach(DroppedFiles.Save(message, Workspace.ForChat(_chat)));
                 break;
 
             case "attachFolder":
@@ -387,10 +392,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 break;
 
             case "stop":
-                // Whatever has already arrived is kept: the cancelled turn is committed to the
-                // history as far as it got, so a long answer stopped halfway is still there.
-                _turn?.Cancel();
-                _approval?.TrySetResult('n');
+                StopTurn();
                 break;
 
             case "detach" when message.TryGetProperty("path", out var drop):
@@ -418,6 +420,16 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 _approval = null;
                 break;
         }
+    }
+
+    /// <summary>
+    /// Stops the running turn, keeping whatever has already arrived. Used both by the composer's
+    /// Stop button and by the global panic key, so an agent driving the machine can be halted at once.
+    /// </summary>
+    public void StopTurn()
+    {
+        _turn?.Cancel();
+        _approval?.TrySetResult('n');
     }
 
     private void Post(object message)
@@ -530,7 +542,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         string[] keys =
         [
-            "L_ChatAsk", "L_ChatSend", "L_ChatAttachFile", "L_ChatAttachFolder", "L_ChatAttachSsh", "L_ChatDropFiles",
+            "L_ChatAsk", "L_ChatSend", "L_ChatAttachFile", "L_ChatAttachFolder", "L_ChatAttachSsh", "L_ChatDropFiles", "L_ChatRevert", "L_ChatReverted",
             "L_ChatRemove", "L_ChatOpenFile", "L_ChatOpenFolder", "L_ChatReveal",
             "L_ChatRun", "L_ChatSkip", "L_ChatAlways", "L_ChatAlwaysNote", "L_ChatAdminWarn",
             "L_ChatModelTitle", "L_ChatModelOther", "L_ChatModelPlaceholder",
@@ -1477,7 +1489,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         {
             _paint.Stop();
             PaintReply();
-            Post(new { t = "endTurn" });
+
+            // The turn's token cost travels with its close, so the finished reply can carry a small
+            // spend badge in its action row — how much this answer actually cost, kept beside it.
+            Post(new { t = "endTurn", input = _spentIn, output = _spentOut });
             Post(new { t = "status", text = _agent.Origin, busy = false });
 
             _turn = null;
@@ -1750,20 +1765,46 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         labels = TaskPanel.AgentLabels(),
     });
 
+    /// <summary>True once the user has allowed this chat's agent to drive the mouse, so only the first click asks.</summary>
+    private bool _mouseAllowed;
+
     /// <inheritdoc />
     /// <remarks>Runs the window call on the UI thread — focus is reliable from there — and shows the user what it did.</remarks>
-    public Task<AgentToolResult> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
+    public async Task<AgentToolResult> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
     {
+        // Closing a window can lose unsaved work, so it is always put to the user first.
+        if (WindowTools.ActionOf(argumentsJson) is "close" or "quit"
+            && !await ApproveAsync(LocalizationService.T("L_ConfirmCloseWindow"), elevated: false, cancellationToken).ConfigureAwait(true))
+        {
+            return new AgentToolResult("The user declined closing the window.");
+        }
+
         var outcome = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
-        return Task.FromResult(WindowOutcome(outcome, BotName));
+        return await WindowOutcomeAsync(outcome, BotName, _agent.Vision).ConfigureAwait(true);
     }
 
     /// <inheritdoc />
-    public Task<string> ControlMouseAsync(string argumentsJson, CancellationToken cancellationToken)
+    public async Task<string> ControlMouseAsync(string argumentsJson, CancellationToken cancellationToken)
     {
+        // The first time the agent actually clicks or drags, the user is asked to allow it; after
+        // that it drives freely until the chat is closed. Moving and reading the position do not ask.
+        var action = InputTools.ActionOf(argumentsJson);
+        var clicks = action is "click" or "double" or "doubleclick" or "double_click"
+            or "right" or "rightclick" or "right_click" or "middle" or "drag";
+
+        if (clicks && !_mouseAllowed)
+        {
+            if (!await ApproveAsync(LocalizationService.T("L_ConfirmMouse"), elevated: false, cancellationToken).ConfigureAwait(true))
+            {
+                return "The user declined mouse control.";
+            }
+
+            _mouseAllowed = true;
+        }
+
         var result = Dispatcher.Invoke(() => InputTools.Handle(argumentsJson));
         Post(new { t = "note", html = Markdown.Escape($"{BotName}: {result}") });
-        return Task.FromResult(result);
+        return result;
     }
 
     /// <inheritdoc />
@@ -1775,10 +1816,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     }
 
     /// <summary>
-    /// Turns a window call's outcome into a tool result, showing a screenshot in the chat and
-    /// handing it to the model so it can see the app it is working with. Shared by chat and room.
+    /// Turns a window call's outcome into a tool result, showing a screenshot in the chat. A model
+    /// that can see gets the picture; a text-only one gets the text read off it by on-device OCR,
+    /// so it can still work from what is on screen.
     /// </summary>
-    private AgentToolResult WindowOutcome(WindowTools.Outcome outcome, string speaker)
+    private async Task<AgentToolResult> WindowOutcomeAsync(WindowTools.Outcome outcome, string speaker, bool vision)
     {
         Post(new { t = "note", html = Markdown.Escape($"{speaker}: {outcome.Text}") });
 
@@ -1787,10 +1829,21 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             return new AgentToolResult(outcome.Text);
         }
 
+        // The user always sees the shot, whatever the model can take.
         var uri = "data:image/png;base64," + Convert.ToBase64String(png);
         Post(new { t = "image", label = speaker, src = uri, path = string.Empty });
 
-        return new AgentToolResult(outcome.Text, new AgentImage("image/png", Convert.ToBase64String(png)));
+        if (vision)
+        {
+            return new AgentToolResult(outcome.Text, new AgentImage("image/png", Convert.ToBase64String(png)));
+        }
+
+        var text = await OcrService.ReadAsync(png).ConfigureAwait(true);
+        var body = text.Length > 0
+            ? $"{outcome.Text}\n\nText recognised on screen (OCR):\n{text}"
+            : $"{outcome.Text}\n\n(No text could be recognised on screen.)";
+
+        return new AgentToolResult(body);
     }
 
     /// <inheritdoc />
@@ -1835,7 +1888,14 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         if (result.Ok)
         {
             AgentFiles.Touched(path);
-            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, result.Diff);
+            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, result.Diff, result.Undo);
+        }
+        else
+        {
+            // A failed change — most often edit_file not finding its exact old text — used to be
+            // silent to the user, which reads as "the agent said it changed the file but did not".
+            // Show it, so a miss is visible and not mistaken for the tool being broken.
+            Post(new { t = "note", html = Markdown.Escape($"⚠ {name}: {result.Message}") });
         }
 
         return result.Message;
@@ -1873,13 +1933,20 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     /// Draws a file the agent wrote or edited as a change card — the path, jumpable, and the diff
     /// when the file is under git — and keeps it in the history so it survives reopening.
     /// </summary>
-    private void ShowFileChange(string verb, string path, string diff)
+    private void ShowFileChange(string verb, string path, string diff, string undo = "")
     {
         _activity++;
         var pathHtml = $"<span data-file=\"{Markdown.Escape(path)}\">{Markdown.Escape(path)}</span>";
 
         Post(new { t = "activity", id = _activity.ToString(), state = "done", label = verb, codeHtml = pathHtml });
-        Post(new { t = "activityDone", id = _activity.ToString(), diffHtml = DiffHtml(diff) });
+        Post(new
+        {
+            t = "activityDone",
+            id = _activity.ToString(),
+            diffHtml = DiffHtml(diff),
+            revert = undo,
+            revertPath = undo.Length > 0 ? path : string.Empty,
+        });
 
         _history.Add(new ChatTurn { Role = "command", Command = $"{verb} {path}", Output = string.Empty, Diff = diff });
         Persist();

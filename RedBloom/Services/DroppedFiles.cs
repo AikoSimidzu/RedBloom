@@ -17,7 +17,7 @@ public static class DroppedFiles
     /// Saves the files a "drop" message carried into the workspace's <c>dropped</c> folder and
     /// returns their paths, ready to attach. Skips anything unreadable or too large.
     /// </summary>
-    public static List<string> Save(JsonElement message, string workspaceId)
+    public static List<string> Save(JsonElement message, string workspaceFolder)
     {
         var saved = new List<string>();
 
@@ -29,7 +29,7 @@ public static class DroppedFiles
         string folder;
         try
         {
-            folder = Path.Combine(Workspace.For(workspaceId), "dropped");
+            folder = Path.Combine(workspaceFolder, "dropped");
             Directory.CreateDirectory(folder);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)

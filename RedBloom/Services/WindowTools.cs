@@ -24,6 +24,20 @@ public static class WindowTools
     /// <summary>A window call's outcome: the text the model reads, and a screenshot when it asked for one.</summary>
     public readonly record struct Outcome(string Text, byte[]? Png = null);
 
+    /// <summary>The action a call names, so a view can decide whether to confirm it before running.</summary>
+    public static string ActionOf(string argumentsJson)
+    {
+        try
+        {
+            var root = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson).RootElement;
+            return Str(root, "action").Trim().ToLowerInvariant();
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
     /// <summary>Carries out one <c>manage_window</c> call from its raw arguments and reports back.</summary>
     public static Outcome Handle(string argumentsJson)
     {
@@ -40,6 +54,18 @@ public static class WindowTools
 
         var action = Str(root, "action").Trim().ToLowerInvariant();
         var match = Str(root, "match").Trim();
+
+        // Reading — list and screenshot — is always allowed; launching, focusing or closing an app
+        // changes the machine's state, so it is refused while the user has input paused.
+        var changesState = action is "launch" or "open" or "start" or "run"
+            or "focus" or "show" or "front" or "close" or "quit";
+
+        if (changesState && InputGuard.Paused)
+        {
+            return new Outcome("Input is paused by the user (panic key). It will not act until they resume.");
+        }
+
+        using var _ = changesState ? InputGuard.Begin() : null;
 
         return action switch
         {

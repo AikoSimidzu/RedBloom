@@ -38,6 +38,9 @@ public sealed class ChatRoom : INotifyPropertyChanged
 
     public string Id { get; set; } = Guid.NewGuid().ToString("n");
 
+    /// <summary>Which project this room is filed under, by <see cref="Project.Id"/>. Empty when loose.</summary>
+    public string ProjectId { get; set; } = string.Empty;
+
     public string Title { get => _title; set => Set(ref _title, value); }
 
     /// <summary>The agents in the room, by <see cref="AiAgent.Id"/>, in speaking order.</summary>

@@ -406,16 +406,59 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="MenuItem">
-                        <Border x:Name="Root"
-                                Background="Transparent"
-                                CornerRadius="4"
-                                Padding="{TemplateBinding Padding}"
-                                Margin="1">
-                            <ContentPresenter ContentSource="Header" VerticalAlignment="Center" />
-                        </Border>
+                        <Grid>
+                            <Border x:Name="Root"
+                                    Background="Transparent"
+                                    CornerRadius="4"
+                                    Padding="{TemplateBinding Padding}"
+                                    Margin="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- A check for a ticked item (e.g. the current project). -->
+                                    <TextBlock x:Name="Check" Grid.Column="0"
+                                               Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                               Foreground="{DynamicResource Accent}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0"
+                                               Visibility="Collapsed" />
+
+                                    <ContentPresenter Grid.Column="1" ContentSource="Header" VerticalAlignment="Center" />
+
+                                    <!-- Submenu arrow, shown only when this item has children. -->
+                                    <Path x:Name="Arrow" Grid.Column="2"
+                                          Data="M 0 0 L 4 4 L 0 8 Z" Fill="{DynamicResource TextFaint}"
+                                          VerticalAlignment="Center" Margin="14,0,0,0" Visibility="Collapsed" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Named PART_Popup so WPF's MenuItem drives it: opening, keyboard nav,
+                                 and submenu placement (to the right, flipping near a screen edge). -->
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Right"
+                                   IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                <Border Background="{DynamicResource Chrome}" BorderBrush="{DynamicResource Divider}"
+                                        BorderThickness="1" CornerRadius="8" Padding="4" Margin="0,0,8,8">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.5" Color="Black" />
+                                    </Border.Effect>
+                                    <ItemsPresenter />
+                                </Border>
+                            </Popup>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="{DynamicResource ChromeHover}" />
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="Arrow" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Check" Property="Visibility" Value="Visible" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Foreground" Value="{DynamicResource TextFaint}" />

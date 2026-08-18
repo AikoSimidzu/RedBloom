@@ -70,6 +70,9 @@ public sealed class ChatSession : INotifyPropertyChanged
     /// <summary>Which agent this belongs to, by <see cref="AiAgent.Id"/>.</summary>
     public string AgentId { get; set; } = string.Empty;
 
+    /// <summary>Which project this chat is filed under, by <see cref="Project.Id"/>. Empty when loose.</summary>
+    public string ProjectId { get; set; } = string.Empty;
+
     /// <summary>Taken from the first thing the user asked, until they rename it.</summary>
     public string Title
     {

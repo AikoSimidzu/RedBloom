@@ -18,10 +18,80 @@ public static class FileTools
     private const int MaxEntries = 400;
 
     /// <summary>
-    /// The outcome of a change: the message the model reads, and the unified diff of what changed,
-    /// so the chat can show the added and removed lines even outside a git repository.
+    /// The outcome of a change: the message the model reads, the unified diff of what changed, and a
+    /// token that can undo it — a backup id for an overwritten file, or <c>new</c> for one that did
+    /// not exist before (undo deletes it). Empty when there is nothing to undo.
     /// </summary>
-    public readonly record struct Result(bool Ok, string Message, string Diff = "");
+    public readonly record struct Result(bool Ok, string Message, string Diff = "", string Undo = "");
+
+    /// <summary>Where a file's contents are kept so a change to it can be undone.</summary>
+    private static readonly string BackupFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RedBloom", "backups");
+
+    /// <summary>The marker meaning "this file was created" — undoing it deletes the file.</summary>
+    public const string NewFileToken = "new";
+
+    /// <summary>Copies a file aside before it is changed, returning the token that restores it.</summary>
+    private static string Backup(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return NewFileToken;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(BackupFolder);
+            var token = Guid.NewGuid().ToString("n");
+            File.Copy(path, Path.Combine(BackupFolder, token + ".bak"), overwrite: true);
+            return token;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Undoes a change: restores the backed-up contents, or deletes a file that had been created.
+    /// Returns the message to show.
+    /// </summary>
+    public static string Revert(string path, string token)
+    {
+        if (token == NewFileToken)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                return $"Reverted: deleted {path}.";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return $"Could not delete {path}: {ex.Message}";
+            }
+        }
+
+        var backup = Path.Combine(BackupFolder, token + ".bak");
+
+        if (token.Length == 0 || !File.Exists(backup))
+        {
+            return "This change can no longer be undone — its backup is gone.";
+        }
+
+        try
+        {
+            File.Copy(backup, path, overwrite: true);
+            return $"Reverted {path} to before the change.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"Could not restore {path}: {ex.Message}";
+        }
+    }
 
     /// <summary>The absolute path a tool call names, resolved against the chat's working directory.</summary>
     public static string? PathOf(string argumentsJson, string cwd)
@@ -129,10 +199,11 @@ public static class FileTools
             var old = existed && !LooksBinary(path) ? File.ReadAllText(path) : string.Empty;
             var next = content.Replace("\r\n", "\n");
 
+            var undo = Backup(path);
             File.WriteAllText(path, next, new UTF8Encoding(false));
 
             var lines = content.Length == 0 ? 0 : next.Split('\n').Length;
-            return new Result(true, $"{(existed ? "Replaced" : "Wrote")} {path} ({lines} lines).", TextDiff.Unified(path, old, next));
+            return new Result(true, $"{(existed ? "Replaced" : "Wrote")} {path} ({lines} lines).", TextDiff.Unified(path, old, next), undo);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -180,12 +251,15 @@ public static class FileTools
             }
 
             var updated = all ? text.Replace(oldText, newText) : ReplaceFirst(text, oldText, newText);
+
+            var undo = Backup(path);
             File.WriteAllText(path, updated, new UTF8Encoding(false));
 
             return new Result(
                 true,
                 $"Edited {path} ({count} {(count == 1 ? "replacement" : "replacements")}).",
-                TextDiff.Unified(path, text, updated));
+                TextDiff.Unified(path, text, updated),
+                undo);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

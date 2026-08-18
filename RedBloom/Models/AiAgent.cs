@@ -74,6 +74,7 @@ public sealed class AiAgent : INotifyPropertyChanged
     private string _nameColor = string.Empty;
     private bool _allowCommands;
     private bool _allowImages;
+    private bool? _vision;
     private bool _allowAgents;
     private bool _askBeforeRun = true;
     private bool _isRemoteLocal;
@@ -342,6 +343,26 @@ public sealed class AiAgent : INotifyPropertyChanged
     public bool AllowCommands { get => _allowCommands; set => Set(ref _allowCommands, value); }
 
     /// <summary>
+    /// Whether this model can see images. When off, a screenshot is turned into text by on-device
+    /// OCR before it goes to the model, so a text-only model can still work from what is on screen.
+    /// </summary>
+    /// <remarks>
+    /// The default depends on the kind of agent: on for a hosted endpoint (Anthropic, Gemini and
+    /// the OpenAI-shaped ones all see images), off for a local model or the command-line tool,
+    /// which are usually text-only. Once the user sets it either way it holds; an agent saved before
+    /// this setting existed simply takes the default for its kind.
+    /// </remarks>
+    public bool Vision
+    {
+        get => _vision ?? DefaultVision;
+        set => Set(ref _vision, (bool?)value);
+    }
+
+    /// <summary>What <see cref="Vision"/> falls back to when it has not been set: off for local/CLI agents.</summary>
+    [JsonIgnore]
+    private bool DefaultVision => !(IsLocal || _isRemoteLocal || _provider == AiProvider.ClaudeCli);
+
+    /// <summary>
     /// Whether this agent is offered a tool for drawing pictures with the local image model.
     /// </summary>
     /// <remarks>
@@ -517,6 +538,7 @@ public sealed class AiAgent : INotifyPropertyChanged
         AvatarPath = other.AvatarPath;
         NameColor = other.NameColor;
         AllowCommands = other.AllowCommands;
+        Vision = other.Vision;
         AllowImages = other.AllowImages;
         AllowAgents = other.AllowAgents;
         AskBeforeRun = other.AskBeforeRun;

@@ -246,6 +246,7 @@ public partial class AiSettingsPage : UserControl
             EffortBox.SelectedIndex = EffortIndex(agent.Effort);
             ThinkingBox.IsChecked = agent.Thinking;
             AllowCommandsBox.IsChecked = agent.AllowCommands;
+            VisionBox.IsChecked = agent.Vision;
             AllowImagesBox.IsChecked = agent.AllowImages;
             AllowAgentsBox.IsChecked = agent.AllowAgents;
             AskBeforeRunBox.IsChecked = agent.AskBeforeRun;
@@ -447,6 +448,7 @@ public partial class AiSettingsPage : UserControl
         agent.SystemPrompt = SystemPromptBox.Text;
         agent.Thinking = ThinkingBox.IsChecked == true;
         agent.AllowCommands = AllowCommandsBox.IsChecked == true;
+        agent.Vision = VisionBox.IsChecked == true;
         agent.AllowImages = AllowImagesBox.IsChecked == true;
         agent.AllowAgents = AllowAgentsBox.IsChecked == true;
         agent.AskBeforeRun = AskBeforeRunBox.IsChecked == true;

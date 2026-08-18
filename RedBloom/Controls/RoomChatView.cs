@@ -87,7 +87,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     public RoomChatView(ChatRoom room)
     {
         _room = room;
-        _cwd = Workspace.ForRoom(room.Id);
+        _cwd = Workspace.ForRoom(room);
         ApplyWebViewBackground();
         Content = _webView;
         Loaded += OnLoaded;
@@ -226,8 +226,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                 break;
 
             case "stop":
-                _turn?.Cancel();
-                _approval?.TrySetResult('n');
+                StopTurn();
                 break;
 
             case "approve" when message.TryGetProperty("answer", out var answer):
@@ -246,6 +245,11 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
             case "openFile" when message.TryGetProperty("path", out var fp):
                 FileOpenRequested?.Invoke(fp.GetString() ?? string.Empty);
+                break;
+
+            case "revertFile" when message.TryGetProperty("path", out var rp) && message.TryGetProperty("token", out var rt):
+                var revertNote = FileTools.Revert(rp.GetString() ?? string.Empty, rt.GetString() ?? string.Empty);
+                Post(new { t = "note", html = Markdown.Escape(revertNote) });
                 break;
 
             case "task" when message.TryGetProperty("scope", out var scope) && scope.GetString() == "agent":
@@ -283,7 +287,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                 break;
 
             case "drop":
-                Attach(DroppedFiles.Save(message, "room-" + _room.Id));
+                Attach(DroppedFiles.Save(message, Workspace.ForRoom(_room)));
                 break;
 
             case "attachFolder":
@@ -1286,7 +1290,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     {
         string[] keys =
         [
-            "L_ChatAsk", "L_ChatSend", "L_ChatStop", "L_ChatCopied", "L_ChatReasoning", "L_ChatDropFiles",
+            "L_ChatAsk", "L_ChatSend", "L_ChatStop", "L_ChatCopied", "L_ChatReasoning", "L_ChatDropFiles", "L_ChatRevert", "L_ChatReverted",
             "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatThink",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext",
@@ -1331,6 +1335,13 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                 ["code-size"] = $"{s.TerminalFontSize:0.#}px",
             },
         });
+    }
+
+    /// <summary>Stops the running round, for the Stop button and the global panic key.</summary>
+    public void StopTurn()
+    {
+        _turn?.Cancel();
+        _approval?.TrySetResult('n');
     }
 
     private void Post(object message)
@@ -1520,16 +1531,31 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         if (result.Ok)
         {
             AgentFiles.Touched(path);
-            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, result.Diff);
+            ShowFileChange(name == AgentTransports.Files.Write ? "wrote" : "edited", path, result.Diff, result.Undo);
+        }
+        else
+        {
+            // A failed change — usually edit_file missing its exact old text — is shown rather than
+            // left silent, so it is not mistaken for the agent refusing to edit.
+            Post(new { t = "note", html = Markdown.Escape($"⚠ {name}: {result.Message}") });
         }
 
         return result.Message;
     }
 
+    /// <summary>True once the user has allowed this room's agents to drive the mouse, so only the first click asks.</summary>
+    private bool _mouseAllowed;
+
     /// <inheritdoc />
     /// <remarks>Windows are the local machine's; run on the UI thread, show the screenshot, and hand it to the model.</remarks>
-    public Task<AgentToolResult> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
+    public async Task<AgentToolResult> ManageWindowAsync(string argumentsJson, CancellationToken cancellationToken)
     {
+        if (WindowTools.ActionOf(argumentsJson) is "close" or "quit"
+            && !await ApproveAsync(LocalizationService.T("L_ConfirmCloseWindow"), elevated: false, cancellationToken).ConfigureAwait(true))
+        {
+            return new AgentToolResult("The user declined closing the window.");
+        }
+
         var outcome = Dispatcher.Invoke(() => WindowTools.Handle(argumentsJson));
         var speaker = _speaking?.DisplayName ?? string.Empty;
 
@@ -1537,21 +1563,44 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
         if (outcome.Png is not { Length: > 0 } png)
         {
-            return Task.FromResult(new AgentToolResult(outcome.Text));
+            return new AgentToolResult(outcome.Text);
         }
 
         var uri = "data:image/png;base64," + Convert.ToBase64String(png);
         Post(new { t = "image", label = speaker, src = uri, path = string.Empty });
 
-        return Task.FromResult(new AgentToolResult(outcome.Text, new AgentImage("image/png", Convert.ToBase64String(png))));
+        // A seeing model gets the picture; a text-only one gets OCR text so it can still work.
+        if (_speaking?.Vision ?? true)
+        {
+            return new AgentToolResult(outcome.Text, new AgentImage("image/png", Convert.ToBase64String(png)));
+        }
+
+        var ocr = await OcrService.ReadAsync(png).ConfigureAwait(true);
+        return new AgentToolResult(ocr.Length > 0
+            ? $"{outcome.Text}\n\nText recognised on screen (OCR):\n{ocr}"
+            : $"{outcome.Text}\n\n(No text could be recognised on screen.)");
     }
 
     /// <inheritdoc />
-    public Task<string> ControlMouseAsync(string argumentsJson, CancellationToken cancellationToken)
+    public async Task<string> ControlMouseAsync(string argumentsJson, CancellationToken cancellationToken)
     {
+        var action = InputTools.ActionOf(argumentsJson);
+        var clicks = action is "click" or "double" or "doubleclick" or "double_click"
+            or "right" or "rightclick" or "right_click" or "middle" or "drag";
+
+        if (clicks && !_mouseAllowed)
+        {
+            if (!await ApproveAsync(LocalizationService.T("L_ConfirmMouse"), elevated: false, cancellationToken).ConfigureAwait(true))
+            {
+                return "The user declined mouse control.";
+            }
+
+            _mouseAllowed = true;
+        }
+
         var result = Dispatcher.Invoke(() => InputTools.Handle(argumentsJson));
         Post(new { t = "note", html = Markdown.Escape($"{_speaking?.DisplayName}: {result}") });
-        return Task.FromResult(result);
+        return result;
     }
 
     /// <inheritdoc />
@@ -1591,13 +1640,20 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
     }
 
     /// <summary>Draws a file the speaking agent wrote or edited as a change card, kept in the room's history.</summary>
-    private void ShowFileChange(string verb, string path, string diff)
+    private void ShowFileChange(string verb, string path, string diff, string undo = "")
     {
         _activity++;
         var pathHtml = $"<span data-file=\"{Markdown.Escape(path)}\">{Markdown.Escape(path)}</span>";
 
         Post(new { t = "activity", id = _activity.ToString(), state = "done", label = verb, codeHtml = pathHtml });
-        Post(new { t = "activityDone", id = _activity.ToString(), diffHtml = GitDiff.RenderHtml(diff) });
+        Post(new
+        {
+            t = "activityDone",
+            id = _activity.ToString(),
+            diffHtml = GitDiff.RenderHtml(diff),
+            revert = undo,
+            revertPath = undo.Length > 0 ? path : string.Empty,
+        });
 
         _room.Turns.Add(new ChatTurn
         {
