@@ -44,6 +44,9 @@ public sealed class Project : INotifyPropertyChanged
     /// <summary>Source folders and repositories linked to this project and tracked with it.</summary>
     public List<ProjectSource> Sources { get; set; } = [];
 
+    /// <summary>The GitHub repository this project's folder was published to, as <c>owner/name</c>. Empty until published.</summary>
+    public string PublishedRepo { get; set; } = string.Empty;
+
     [JsonIgnore]
     public string Summary
     {

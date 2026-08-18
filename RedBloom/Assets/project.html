@@ -436,7 +436,8 @@
       nameEl.value = m.project.name; descEl.value = m.project.description; fitDesc();
       $("folderPath").textContent = m.project.folder;
       $("openFolder").textContent = S.openFolder || "Open folder";
-      $("secSources").textContent = S.secSources || "SOURCES"; $("addSourceLbl").textContent = S.srcAdd || "Add"; $("publishLbl").textContent = S.publish || "Publish";
+      $("secSources").textContent = S.secSources || "SOURCES"; $("addSourceLbl").textContent = S.srcAdd || "Add";
+      $("publishLbl").textContent = m.project.published ? (S.update || "Update") : (S.publish || "Publish");
       $("secGraph").textContent = S.secGraph || "RELATIONSHIP TREE"; $("expandGraph").textContent = S.expand || "Expand";
       $("addNodeLbl").textContent = S.node || "Node"; $("fit").textContent = S.fit || "Fit"; $("ghint").textContent = S.ghint || "";
       $("secInfo").textContent = S.secInfo || "PROJECT INFO"; $("expandInfoLbl").textContent = S.expand || "Expand";
@@ -454,6 +455,7 @@
     } else if (m.t === "theme" && m.vars) { for (const [k, v] of Object.entries(m.vars)) document.documentElement.style.setProperty("--" + k, v); drawEdges();
     } else if (m.t === "stats") { renderStats(m.stats);
     } else if (m.t === "sources") { renderSources(m.sources);
+    } else if (m.t === "published") { $("publishLbl").textContent = S.update || "Update";
     } else if (m.t === "infoHtml") { showInfo(m.html || "");
     } else if (m.t === "gitBadge") { const el = document.querySelector('.badge[data-src="' + m.id + '"]'); if (el) el.textContent = m.text || ""; }
   });

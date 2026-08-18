@@ -206,7 +206,7 @@ public partial class ProjectHomeView : UserControl, IDisposable
         Post(new
         {
             t = "init",
-            project = new { name = _project.Name, description = _project.Description, folder = _project.Folder },
+            project = new { name = _project.Name, description = _project.Description, folder = _project.Folder, published = _project.PublishedRepo.Length > 0 },
             graph = _project.Graph,
             palette = Palette(),
             folderTree = ProjectPalette.FolderTree(_project),
@@ -301,6 +301,7 @@ public partial class ProjectHomeView : UserControl, IDisposable
         srcOpenVs = LocalizationService.T("L_SourceOpenVs"),
         srcClone = LocalizationService.T("L_SourceClone"),
         publish = LocalizationService.T("L_Publish"),
+        update = LocalizationService.T("L_PublishUpdate"),
         statLoc = LocalizationService.T("L_StatLoc"),
         secGraph = LocalizationService.T("L_ProjectGraph"),
         expand = LocalizationService.T("L_ProjectExpand"),
@@ -556,7 +557,10 @@ public partial class ProjectHomeView : UserControl, IDisposable
         SetupWatchers();
     }
 
-    /// <summary>Publishes the project folder as a new private GitHub repository.</summary>
+    /// <summary>
+    /// Publishes the project to a new private GitHub repository the first time, and on later calls
+    /// commits and pushes the changes to that same repository.
+    /// </summary>
     private async void PublishProject()
     {
         if (!GitHubClient.IsConnected)
@@ -570,60 +574,137 @@ public partial class ProjectHomeView : UserControl, IDisposable
             return;
         }
 
-        var name = SafeName(_project.Name);
-        if (MessageBox.Show(Window.GetWindow(this),
-                string.Format(LocalizationService.T("L_PublishConfirm"), name),
-                LocalizationService.T("L_PublishTitle"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (_project.PublishedRepo.Length > 0)
+        {
+            await UpdateRepo();
+        }
+        else
+        {
+            await PublishNew();
+        }
+    }
+
+    private async Task PublishNew()
+    {
+        var changes = await GitOps.ChangesAsync(_project.Folder).ConfigureAwait(true);
+        if (Views.PublishDialog.Show(Window.GetWindow(this), isUpdate: false, SafeName(_project.Name), string.Empty, changes) is not { } choice)
         {
             return;
         }
 
-        // Keep RedBloom's own per-chat/room folders out of the published repo.
-        WriteGitIgnore();
+        ExportMetadata();
+        WriteGitIgnore(choice.ImportAll);
 
-        var repo = await GitHubClient.CreateRepoAsync(name, priv: true).ConfigureAwait(true);
+        var repo = await GitHubClient.CreateRepoAsync(SafeName(choice.Name), choice.Private).ConfigureAwait(true);
         if (repo is not { } r)
         {
             MessageBox.Show(Window.GetWindow(this), LocalizationService.T("L_PublishRepoFailed"), "GitHub", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        var error = await GitOps.PublishAsync(_project.Folder, r.CloneUrl, GitHubClient.CurrentToken()).ConfigureAwait(true);
-
+        var error = await GitOps.PublishAsync(_project.Folder, r.CloneUrl, GitHubClient.CurrentToken(), choice.Message).ConfigureAwait(true);
         if (error is not null)
         {
             MessageBox.Show(Window.GetWindow(this), error, LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
+        _project.PublishedRepo = r.FullName;
         _project.Sources.Add(new ProjectSource { Kind = SourceKind.GitHub, Name = r.FullName, Repo = r.FullName, Url = r.HtmlUrl, Path = _project.Folder });
         Save();
         PushSources();
         PushGitBadges();
+        Post(new { t = "published" });
 
         MessageBox.Show(Window.GetWindow(this), string.Format(LocalizationService.T("L_PublishDone"), r.FullName),
             LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    private void WriteGitIgnore()
+    private async Task UpdateRepo()
+    {
+        var changes = await GitOps.ChangesAsync(_project.Folder).ConfigureAwait(true);
+        if (Views.PublishDialog.Show(Window.GetWindow(this), isUpdate: true, string.Empty, _project.PublishedRepo, changes) is not { } choice)
+        {
+            return;
+        }
+
+        ExportMetadata();
+        WriteGitIgnore(choice.ImportAll);
+
+        var cloneUrl = $"https://github.com/{_project.PublishedRepo}.git";
+        var error = await GitOps.PublishAsync(_project.Folder, cloneUrl, GitHubClient.CurrentToken(), choice.Message).ConfigureAwait(true);
+
+        MessageBox.Show(Window.GetWindow(this),
+            error ?? string.Format(LocalizationService.T("L_UpdateDone"), _project.PublishedRepo),
+            LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, error is null ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+        PushGitBadges();
+    }
+
+    /// <summary>
+    /// Writes the .gitignore that decides what the publish carries. With <paramref name="importAll"/>
+    /// everything ships except build output (bin/obj/.vs), the way Visual Studio publishes. Otherwise
+    /// only the project's own data goes out — its connections and description (in .redbloom), the
+    /// PROJECT.md notes, and the chats and rooms — and all source code is left behind.
+    /// </summary>
+    private void WriteGitIgnore(bool importAll)
     {
         try
         {
             var path = Path.Combine(_project.Folder, ".gitignore");
-            var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : [];
-            foreach (var entry in new[] { ".chats/", ".rooms/", "bin/", "obj/" })
-            {
-                if (!lines.Contains(entry))
+            var lines = importAll
+                ? new List<string>
                 {
-                    lines.Add(entry);
+                    "# RedBloom publish: everything except build output",
+                    "bin/", "obj/", ".vs/", "*.user",
                 }
-            }
+                : new List<string>
+                {
+                    "# RedBloom publish: project data only (connections, notes, chats, rooms)",
+                    "/*",
+                    "!/.gitignore",
+                    "!/.redbloom/",
+                    "!/PROJECT.md",
+                    "!/README.md",
+                    "!/.chats/",
+                    "!/.rooms/",
+                };
 
             File.WriteAllLines(path, lines);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Debug.WriteLine($"Could not write .gitignore: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Writes the project's connections and description into the folder as <c>.redbloom/project.json</c>,
+    /// so a publish carries them as real files — they otherwise live only in RedBloom's own store.
+    /// </summary>
+    private void ExportMetadata()
+    {
+        try
+        {
+            var dir = Path.Combine(_project.Folder, ".redbloom");
+            Directory.CreateDirectory(dir);
+
+            var data = new
+            {
+                name = _project.Name,
+                description = _project.Description,
+                updatedAt = DateTime.Now,
+                graph = _project.Graph,
+                sources = _project.Sources.Select(s => new { kind = s.Kind.ToString(), name = s.Name, repo = s.Repo, url = s.Url }).ToList(),
+            };
+
+            File.WriteAllText(
+                Path.Combine(dir, "project.json"),
+                JsonSerializer.Serialize(data, new JsonSerializerOptions(JsonOptions) { WriteIndented = true }));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Could not export project metadata: {ex.Message}");
         }
     }
 
