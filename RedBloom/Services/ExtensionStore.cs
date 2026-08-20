@@ -106,6 +106,86 @@ public static class ExtensionStore
         }
     }
 
+    // ---- extra folders an extension may reach ----
+
+    // Kept OUTSIDE the extension's own data folder on purpose: were this list stored inside the
+    // sandbox, a page could write to it through the file bridge and grant itself access to any
+    // path. Here the page's files cannot reach it, so only a folder the user picked in the native
+    // dialog is ever added.
+    private static string RootsFile(string id) => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RedBloom", "extensions-roots", id + ".json");
+
+    /// <summary>The extra folders the user has authorised this extension to read and write.</summary>
+    public static List<string> Roots(string id)
+    {
+        try
+        {
+            var file = RootsFile(id);
+            return File.Exists(file)
+                ? JsonSerializer.Deserialize<List<string>>(File.ReadAllText(file), Json) ?? []
+                : [];
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Adds a folder to an extension's authorised set (deduplicated). Returns the new set.</summary>
+    public static List<string> AddRoot(string id, string path)
+    {
+        var full = Normalize(path);
+        var roots = Roots(id);
+        if (full.Length > 0 && !roots.Any(r => string.Equals(Normalize(r), full, StringComparison.OrdinalIgnoreCase)))
+        {
+            roots.Add(full);
+            SaveRoots(id, roots);
+        }
+
+        return roots;
+    }
+
+    /// <summary>Removes a folder from an extension's authorised set. Returns the new set.</summary>
+    public static List<string> RemoveRoot(string id, string path)
+    {
+        var full = Normalize(path);
+        var roots = Roots(id);
+        roots.RemoveAll(r => string.Equals(Normalize(r), full, StringComparison.OrdinalIgnoreCase));
+        SaveRoots(id, roots);
+        return roots;
+    }
+
+    private static string Normalize(string path)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(path) ? string.Empty : Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void SaveRoots(string id, List<string> roots)
+    {
+        try
+        {
+            var file = RootsFile(id);
+            var dir = Path.GetDirectoryName(file);
+            if (dir is { Length: > 0 })
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllText(file, JsonSerializer.Serialize(roots, Json));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine($"Could not save extension roots: {ex.Message}");
+        }
+    }
+
     // ---- program resolution ----
 
     /// <summary>

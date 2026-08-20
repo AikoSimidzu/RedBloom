@@ -35,6 +35,14 @@
   button.warn:hover:not(:disabled) { border-color: #e0555f; color: #e0555f; }
   .ic { font-family: "Segoe MDL2 Assets"; font-size: 12px; margin-right: 5px; }
 
+  #roots { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
+  #roots:empty { display: none; }
+  #roots .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--raised); border: 1px solid var(--divider);
+                 border-radius: 20px; padding: 3px 5px 3px 10px; font-size: 11.5px; color: var(--muted); }
+  #roots .chip .g { font-family: "Segoe MDL2 Assets"; font-size: 11px; color: var(--faint); }
+  #roots .chip .x { cursor: pointer; color: var(--faint); border: 0; background: none; padding: 0 4px; font-size: 14px; line-height: 1; }
+  #roots .chip .x:hover { color: #e0555f; }
+
   #editorWrap { flex: 1; min-height: 120px; overflow: hidden; border-bottom: 1px solid var(--divider); position: relative; }
   .CodeMirror { height: 100%; font-family: var(--code-font); font-size: 13px; }
   #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--faint);
@@ -73,9 +81,12 @@
     <select id="sketch"><option value="">—</option></select>
     <button id="newSketch"><span class="ic"></span><span id="lNew">New</span></button>
     <button id="openFolder"><span class="ic"></span><span id="lFolder">Folder</span></button>
+    <button id="addRoot"><span class="ic"></span><span id="lAddRoot">Add folder</span></button>
     <span class="grow"></span>
     <span id="sketchPath" class="path" style="color:var(--faint);font-family:var(--code-font);font-size:11px"></span>
   </div>
+
+  <div id="roots"></div>
 
   <div id="editorWrap">
     <textarea id="code"></textarea>
@@ -107,21 +118,29 @@
   const post = (m) => window.chrome.webview.postMessage(JSON.stringify(m));
 
   let dataDir = "";           // absolute path of this extension's data folder
+  let sandboxSketches = "";   // dataDir + \sketches — the always-present sketch root
+  let extraRoots = [];        // extra folders the user authorised (absolute)
+  let sketches = [];          // { name, dir, ino, label } gathered from every root
+  let cur = null;             // the open sketch, or null
   let seq = 0;
   const calls = {};           // exec calls in flight
   const fsCalls = {};         // fs calls in flight
-  let current = "";           // open sketch name
   let monitorId = null;       // running serial monitor's call id
   let busy = false;
 
+  const baseName = (p) => { const s = p.replace(/[\\/]+$/, ""); const i = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/")); return i >= 0 ? s.slice(i + 1) : s; };
+  const allRoots = () => [{ path: sandboxSketches, label: T.builtin }, ...extraRoots.map((p) => ({ path: p, label: baseName(p) }))];
+
   const L = {
     en: { port:"Port", refresh:"Refresh", board:"Board (FQBN)", sketch:"Sketch", nw:"New", folder:"Folder",
+          addFolder:"Add folder", builtin:"Sandbox",
           save:"Save", compile:"Compile", upload:"Upload", monitor:"Serial monitor", stop:"Stop", console:"Output", clear:"Clear",
           empty:"Create a sketch or pick one to start writing firmware.", newName:"Sketch name:",
           noPort:"Pick a port first.", noSketch:"No sketch open.", saved:"Saved.",
           compiling:"Compiling…", compiled:"Compiled.", failed:"Failed.", uploading:"Uploading…", uploaded:"Uploaded.",
           monitoring:"Monitoring — press Stop to end.", cliMissing:"arduino-cli was not found. Install it (memory: C:\\Program Files\\Arduino CLI) or add it to PATH." },
     ru: { port:"Порт", refresh:"Обновить", board:"Плата (FQBN)", sketch:"Скетч", nw:"Новый", folder:"Папка",
+          addFolder:"Добавить папку", builtin:"Песочница",
           save:"Сохранить", compile:"Собрать", upload:"Залить", monitor:"Монитор порта", stop:"Стоп", console:"Вывод", clear:"Очистить",
           empty:"Создайте скетч или выберите существующий, чтобы писать прошивку.", newName:"Имя скетча:",
           noPort:"Сначала выберите порт.", noSketch:"Скетч не открыт.", saved:"Сохранено.",
@@ -168,9 +187,15 @@
     switch (m.t) {
       case "init":
         dataDir = m.dataDir || "";
+        sandboxSketches = dataDir + "\\sketches";
+        extraRoots = m.roots || [];
         T = m.lang === "ru" ? L.ru : L.en;
         applyLang();
+        renderRoots();
         boot();
+        break;
+      case "roots":
+        onRoots(m.roots);
         break;
       case "theme":
         if (m.vars) for (const [k, v] of Object.entries(m.vars)) document.documentElement.style.setProperty("--" + k, v);
@@ -205,35 +230,62 @@
   function writeSys(text) { const el = document.createElement("div"); el.className = "sys"; el.textContent = text; $("console").appendChild(el); $("console").scrollTop = $("console").scrollHeight; }
   function setStatus(text, cls) { const s = $("status"); s.className = cls || ""; s.innerHTML = (cls === "run" ? '<span class="sp"></span>' : "") + text; }
 
-  // ---------- sketches ----------
-  function sketchDir(name) { return "sketches/" + name; }               // relative to dataDir (host-confined)
-  function sketchAbs(name) { return dataDir + "\\sketches\\" + name; }   // absolute, for arduino-cli
-  function inoRel(name) { return "sketches/" + name + "/" + name + ".ino"; }
-
-  async function refreshSketches(select) {
-    const entries = await fs("fs.list", "sketches");
-    const names = entries.filter((e) => e.dir).map((e) => e.name).sort();
+  // ---------- sketches (gathered from the sandbox + every authorised folder) ----------
+  async function refreshSketches(selectDir) {
+    sketches = [];
+    const rootsList = allRoots();
+    const multi = rootsList.length > 1;
+    for (const r of rootsList) {
+      const entries = await fs("fs.list", r.path);
+      for (const e of entries) {
+        if (!e.dir) continue;
+        const dir = r.path + "\\" + e.name;
+        sketches.push({ name: e.name, dir, ino: dir + "\\" + e.name + ".ino", label: (multi ? r.label + " / " : "") + e.name });
+      }
+    }
     const sel = $("sketch");
-    sel.innerHTML = names.length ? "" : '<option value="">—</option>';
-    for (const n of names) { const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o); }
-    if (select && names.includes(select)) sel.value = select;
+    sel.innerHTML = sketches.length ? "" : '<option value="">—</option>';
+    sketches.forEach((s, i) => { const o = document.createElement("option"); o.value = String(i); o.textContent = s.label; sel.appendChild(o); });
+    const idx = selectDir != null ? sketches.findIndex((s) => s.dir === selectDir) : -1;
+    if (idx >= 0) sel.value = String(idx);
+    return idx;
   }
 
-  async function openSketch(name) {
-    if (!name) { current = ""; cm.setValue(""); $("empty").style.display = "flex"; $("sketchPath").textContent = ""; return; }
-    const r = await fs("fs.read", inoRel(name));
-    current = name;
+  async function openSketch(idx) {
+    if (idx == null || idx < 0 || !sketches[idx]) { cur = null; cm.setValue(""); $("empty").style.display = "flex"; $("sketchPath").textContent = ""; return; }
+    cur = sketches[idx];
+    const r = await fs("fs.read", cur.ino);
     cm.setValue(r && r.ok ? r.text : TEMPLATE);
     cm.clearHistory();
     $("empty").style.display = "none";
-    $("sketchPath").textContent = sketchAbs(name) + "\\" + name + ".ino";
-    $("sketch").value = name;
+    $("sketchPath").textContent = cur.ino;
+    $("sketch").value = String(idx);
   }
 
   async function saveCurrent() {
-    if (!current) { setStatus(T.noSketch, "err"); return false; }
-    const r = await fs("fs.write", inoRel(current), { text: cm.getValue() });
+    if (!cur) { setStatus(T.noSketch, "err"); return false; }
+    const r = await fs("fs.write", cur.ino, { text: cm.getValue() });
     return !!(r && r.ok);
+  }
+
+  function renderRoots() {
+    const el = $("roots");
+    el.innerHTML = "";
+    for (const p of extraRoots) {
+      const chip = document.createElement("span"); chip.className = "chip"; chip.title = p;
+      const g = document.createElement("span"); g.className = "g"; g.textContent = ""; chip.appendChild(g);
+      const nm = document.createElement("span"); nm.textContent = baseName(p); chip.appendChild(nm);
+      const x = document.createElement("button"); x.className = "x"; x.textContent = "×"; x.title = p;
+      x.onclick = () => post({ t: "removeRoot", path: p }); chip.appendChild(x);
+      el.appendChild(chip);
+    }
+  }
+
+  // A folder was added or removed by the host — it is the source of truth for what is allowed.
+  function onRoots(list) {
+    extraRoots = list || [];
+    renderRoots();
+    refreshSketches(cur ? cur.dir : null).then((idx) => { if (idx < 0 && !cur) openSketch(-1); });
   }
 
   // ---------- board ports ----------
@@ -264,10 +316,10 @@
   function setBusy(on) { busy = on; for (const id of ["compile", "upload", "save", "newSketch", "refresh"]) $(id).disabled = on; }
 
   async function compile() {
-    if (busy || !current) { if (!current) setStatus(T.noSketch, "err"); return; }
+    if (busy || !cur) { if (!cur) setStatus(T.noSketch, "err"); return; }
     if (!(await saveCurrent())) { setStatus(T.failed, "err"); return; }
-    setBusy(true); setStatus(T.compiling, "run"); writeSys("$ arduino-cli compile --fqbn " + $("fqbn").value + " " + current);
-    const { done } = run("arduino-cli", ["compile", "--fqbn", $("fqbn").value.trim(), sketchAbs(current)], { cwd: sketchDir(current) });
+    setBusy(true); setStatus(T.compiling, "run"); writeSys("$ arduino-cli compile --fqbn " + $("fqbn").value + " " + cur.name);
+    const { done } = run("arduino-cli", ["compile", "--fqbn", $("fqbn").value.trim(), cur.dir], { cwd: cur.dir });
     const r = await done;
     setBusy(false);
     setStatus(r.code === 0 ? T.compiled : T.failed, r.code === 0 ? "ok" : "err");
@@ -275,11 +327,11 @@
 
   async function upload() {
     const port = $("port").value;
-    if (busy || !current) { if (!current) setStatus(T.noSketch, "err"); return; }
+    if (busy || !cur) { if (!cur) setStatus(T.noSketch, "err"); return; }
     if (!port) { setStatus(T.noPort, "err"); return; }
     if (!(await saveCurrent())) { setStatus(T.failed, "err"); return; }
-    setBusy(true); setStatus(T.uploading, "run"); writeSys("$ arduino-cli upload -p " + port + " --fqbn " + $("fqbn").value + " " + current);
-    const { done } = run("arduino-cli", ["upload", "-p", port, "--fqbn", $("fqbn").value.trim(), sketchAbs(current)], { cwd: sketchDir(current) });
+    setBusy(true); setStatus(T.uploading, "run"); writeSys("$ arduino-cli upload -p " + port + " --fqbn " + $("fqbn").value + " " + cur.name);
+    const { done } = run("arduino-cli", ["upload", "-p", port, "--fqbn", $("fqbn").value.trim(), cur.dir], { cwd: cur.dir });
     const r = await done;
     setBusy(false);
     setStatus(r.code === 0 ? T.uploaded : T.failed, r.code === 0 ? "ok" : "err");
@@ -303,8 +355,9 @@
 
   // ---------- wire up ----------
   $("refresh").onclick = refreshPorts;
-  $("openFolder").onclick = () => post({ t: "openFolder", path: current ? sketchDir(current) : "sketches" });
-  $("sketch").onchange = () => openSketch($("sketch").value);
+  $("openFolder").onclick = () => post({ t: "openFolder", path: cur ? cur.dir : sandboxSketches });
+  $("addRoot").onclick = () => post({ t: "pickFolder" });
+  $("sketch").onchange = () => openSketch(parseInt($("sketch").value, 10));
   $("save").onclick = async () => { if (await saveCurrent()) setStatus(T.saved, "ok"); };
   $("compile").onclick = compile;
   $("upload").onclick = upload;
@@ -315,9 +368,11 @@
     if (!raw) return;
     const name = raw.trim().replace(/[^A-Za-z0-9_]/g, "_");
     if (!name) return;
-    await fs("fs.write", inoRel(name), { text: TEMPLATE.replace("115200", $("baud").value.trim() || "115200") });
-    await refreshSketches(name);
-    await openSketch(name);
+    // New sketches always go into the sandbox, the one root we know is writable.
+    const dir = sandboxSketches + "\\" + name;
+    await fs("fs.write", dir + "\\" + name + ".ino", { text: TEMPLATE.replace("115200", $("baud").value.trim() || "115200") });
+    const idx = await refreshSketches(dir);
+    await openSketch(idx);
     setStatus(T.saved, "ok");
   };
 
@@ -326,6 +381,7 @@
   function applyLang() {
     $("lPort").textContent = T.port; $("lRefresh").textContent = T.refresh; $("lBoard").textContent = T.board;
     $("lSketch").textContent = T.sketch; $("lNew").textContent = T.nw; $("lFolder").textContent = T.folder;
+    $("lAddRoot").textContent = T.addFolder;
     $("lSave").textContent = T.save; $("lCompile").textContent = T.compile; $("lUpload").textContent = T.upload;
     $("lConsole").textContent = T.console; $("lClear").textContent = T.clear; $("empty").textContent = T.empty;
     updateMonitorBtn();
@@ -334,8 +390,7 @@
   async function boot() {
     await fs("fs.mkdir", "sketches");
     await refreshSketches();
-    const first = $("sketch").value;
-    if (first) await openSketch(first); else { $("empty").style.display = "flex"; }
+    if (sketches.length) await openSketch(0); else $("empty").style.display = "flex";
     refreshPorts();
   }
 

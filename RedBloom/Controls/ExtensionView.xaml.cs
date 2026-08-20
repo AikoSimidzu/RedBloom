@@ -36,6 +36,7 @@ public partial class ExtensionView : UserControl, IDisposable
     private readonly ExtensionStore.Extension _ext;
     private readonly WebView2 _webView = new();
     private readonly Dictionary<string, Process> _running = new();
+    private List<string> _roots = [];
     private bool _ready;
     private bool _disposed;
 
@@ -79,6 +80,8 @@ public partial class ExtensionView : UserControl, IDisposable
         {
             Debug.WriteLine($"Could not create extension data folder: {ex.Message}");
         }
+
+        _roots = ExtensionStore.Roots(_ext.Id);
 
         _webView.DefaultBackgroundColor = System.Drawing.Color.Transparent;
 
@@ -152,7 +155,28 @@ public partial class ExtensionView : UserControl, IDisposable
             case "openFolder":
                 OpenFolder(Rel(root));
                 break;
+
+            case "pickFolder":
+                PickFolder();
+                break;
+
+            case "removeRoot":
+                _roots = ExtensionStore.RemoveRoot(_ext.Id, Rel(root));
+                Post(new { t = "roots", roots = _roots });
+                break;
         }
+    }
+
+    /// <summary>Lets the user authorise an extra folder for this extension through the native picker.</summary>
+    private void PickFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = LocalizationService.T("L_Extensions") };
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            _roots = ExtensionStore.AddRoot(_ext.Id, dialog.FolderName);
+        }
+
+        Post(new { t = "roots", roots = _roots });
     }
 
     private static string Rel(JsonElement root) =>
@@ -165,6 +189,7 @@ public partial class ExtensionView : UserControl, IDisposable
         t = "init",
         lang = LocalizationService.IsRussian ? "ru" : "en",
         dataDir = _ext.DataDir,
+        roots = _roots,
         extension = new { id = _ext.Id, name = _ext.Manifest.Name, version = _ext.Manifest.Version },
     });
 
@@ -284,15 +309,20 @@ public partial class ExtensionView : UserControl, IDisposable
 
     // ---- files (confined to the extension's data folder) ----
 
-    /// <summary>Resolves a relative path against the data folder, refusing anything that escapes it.</summary>
-    private string? Confine(string relative)
+    /// <summary>
+    /// Turns a requested path into a real one the extension is allowed to touch, or null. A relative
+    /// path resolves inside the sandbox data folder; an absolute path is allowed only when it sits in
+    /// the data folder or in one of the folders the user authorised through the picker.
+    /// </summary>
+    private string? Confine(string path)
     {
         try
         {
-            var root = Path.GetFullPath(_ext.DataDir);
-            var full = Path.GetFullPath(Path.Combine(root, relative));
-            var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
-            return full == root || full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
+            var full = Path.IsPathRooted(path)
+                ? Path.GetFullPath(path)
+                : Path.GetFullPath(Path.Combine(_ext.DataDir, path));
+
+            return AllowedRoots().Any(root => Within(full, root)) ? full : null;
         }
         catch (Exception ex) when (ex is ArgumentException or PathTooLongException)
         {
@@ -300,8 +330,32 @@ public partial class ExtensionView : UserControl, IDisposable
         }
     }
 
-    private string ConfineDir(string? relative) =>
-        Confine(relative ?? string.Empty) is { } dir && Directory.Exists(dir) ? dir : _ext.DataDir;
+    private IEnumerable<string> AllowedRoots()
+    {
+        yield return _ext.DataDir;
+        foreach (var root in _roots)
+        {
+            yield return root;
+        }
+    }
+
+    private static bool Within(string full, string root)
+    {
+        try
+        {
+            var r = Path.GetFullPath(root);
+            var rootWithSep = r.EndsWith(Path.DirectorySeparatorChar) ? r : r + Path.DirectorySeparatorChar;
+            return string.Equals(full, r, StringComparison.OrdinalIgnoreCase)
+                || full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private string ConfineDir(string? path) =>
+        Confine(path ?? string.Empty) is { } dir && Directory.Exists(dir) ? dir : _ext.DataDir;
 
     private void FsList(string id, string relative)
     {
