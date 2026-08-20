@@ -1,9 +1,27 @@
 <!doctype html>
 <html>
 <head>
+<script>
+window.chrome={webview:{
+ postMessage:function(m){var d=JSON.parse(m);var reply=function(o){setTimeout(function(){window.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(o)}))},15)};
+  if(d.t==='ready'){reply({t:'init',lang:'ru',dataDir:'C:\\demo',roots:['C:\\Users\\aikos\\Projects\\esp32']});}
+  else if(d.t==='fs.mkdir'){reply({t:'fs.mkdir.result',id:d.id,ok:true});}
+  else if(d.t==='fs.list'){var e=[];var p=d.path;
+    if(/sketches$/.test(p))e=[{name:'01-blink',dir:true},{name:'02-fade',dir:true}];
+    else if(/esp32$/i.test(p))e=[{name:'display-test',dir:true}];
+    else if(/(01-blink|02-fade|display-test)$/.test(p))e=[{name:(p.split('\\').pop())+'.ino',dir:false},{name:'bin',dir:true},{name:'readme.txt',dir:false}];
+    else if(/bin$/.test(p))e=[{name:'firmware.ino.bin',dir:false},{name:'firmware.ino.elf',dir:false}];
+    reply({t:'fs.list.result',id:d.id,entries:e});}
+  else if(d.t==='fs.read'){reply({t:'fs.read.result',id:d.id,ok:true,text:'void setup(){\n  Serial.begin(115200);\n}\n\nvoid loop(){\n}\n'});}
+  else if(d.t==='fs.write'){reply({t:'fs.write.result',id:d.id,ok:true});}
+  else if(d.t==='exec'){reply({t:'exec.done',id:d.id,code:0});}
+ },
+ addEventListener:function(t,f){window.addEventListener('message',function(e){f(e)})}
+}};
+</script>
 <meta charset="utf-8" />
-<link rel="stylesheet" href="https://redbloom.assets/vendor/codemirror/codemirror.min.css" />
-<link rel="stylesheet" href="https://redbloom.assets/vendor/codemirror/theme/material-darker.min.css" />
+<link rel="stylesheet" href="/vendor/codemirror/codemirror.min.css" />
+<link rel="stylesheet" href="/vendor/codemirror/theme/material-darker.min.css" />
 <style>
   :root {
     --surface: #16171b; --raised: #202127; --chrome: #1b1c22; --divider: #2c2e36;
@@ -149,10 +167,10 @@
     <div id="console"></div>
   </div>
 
-<script src="https://redbloom.assets/vendor/codemirror/codemirror.min.js"></script>
-<script src="https://redbloom.assets/vendor/codemirror/mode/clike.min.js"></script>
-<script src="https://redbloom.assets/vendor/codemirror/mode/closebrackets.min.js"></script>
-<script src="https://redbloom.assets/vendor/codemirror/mode/active-line.min.js"></script>
+<script src="/vendor/codemirror/codemirror.min.js"></script>
+<script src="/vendor/codemirror/mode/clike.min.js"></script>
+<script src="/vendor/codemirror/mode/closebrackets.min.js"></script>
+<script src="/vendor/codemirror/mode/active-line.min.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const post = (m) => window.chrome.webview.postMessage(JSON.stringify(m));
@@ -628,3 +646,4 @@
 </script>
 </body>
 </html>
+

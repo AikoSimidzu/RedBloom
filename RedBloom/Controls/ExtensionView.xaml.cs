@@ -36,7 +36,9 @@ public partial class ExtensionView : UserControl, IDisposable
     private readonly ExtensionStore.Extension _ext;
     private readonly WebView2 _webView = new();
     private readonly Dictionary<string, Process> _running = new();
+    private readonly List<FileSystemWatcher> _watchers = [];
     private List<string> _roots = [];
+    private System.Windows.Threading.DispatcherTimer? _watchTimer;
     private bool _ready;
     private bool _disposed;
 
@@ -154,6 +156,10 @@ public partial class ExtensionView : UserControl, IDisposable
 
             case "openFolder":
                 OpenFolder(Rel(root));
+                break;
+
+            case "watch" when root.TryGetProperty("paths", out var ps) && ps.ValueKind == JsonValueKind.Array:
+                Watch(ps.EnumerateArray().Select(a => a.GetString() ?? string.Empty));
                 break;
 
             case "pickFolder":
@@ -304,6 +310,54 @@ public partial class ExtensionView : UserControl, IDisposable
             {
                 // Already gone.
             }
+        }
+    }
+
+    // ---- folder watching (drives the extension's live lists) ----
+
+    /// <summary>
+    /// Watches the given folders (only ones the extension is allowed to reach) and tells the page
+    /// when anything in them changes, so its lists can refresh themselves. Replaces any earlier set.
+    /// </summary>
+    private void Watch(IEnumerable<string> paths)
+    {
+        foreach (var w in _watchers)
+        {
+            w.Dispose();
+        }
+
+        _watchers.Clear();
+
+        _watchTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _watchTimer.Tick -= OnWatchTick;
+        _watchTimer.Tick += OnWatchTick;
+
+        foreach (var path in paths.Select(Confine).Where(p => p is { Length: > 0 } && Directory.Exists(p)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var watcher = new FileSystemWatcher(path!) { IncludeSubdirectories = true, EnableRaisingEvents = true };
+                watcher.Created += OnFsChanged;
+                watcher.Deleted += OnFsChanged;
+                watcher.Renamed += OnFsChanged;
+                _watchers.Add(watcher);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or System.ComponentModel.Win32Exception)
+            {
+                // A folder we cannot watch is simply not watched.
+            }
+        }
+    }
+
+    private void OnFsChanged(object sender, FileSystemEventArgs e) =>
+        Dispatcher.BeginInvoke(() => { _watchTimer?.Stop(); _watchTimer?.Start(); });
+
+    private void OnWatchTick(object? sender, EventArgs e)
+    {
+        _watchTimer?.Stop();
+        if (_ready && !_disposed)
+        {
+            Post(new { t = "fsChanged" });
         }
     }
 
@@ -472,6 +526,14 @@ public partial class ExtensionView : UserControl, IDisposable
     public void Dispose()
     {
         _disposed = true;
+        _watchTimer?.Stop();
+
+        foreach (var watcher in _watchers)
+        {
+            watcher.Dispose();
+        }
+
+        _watchers.Clear();
 
         foreach (var process in _running.Values)
         {
