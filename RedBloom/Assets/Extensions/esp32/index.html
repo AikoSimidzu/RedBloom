@@ -457,7 +457,7 @@
       row.className = "frow" + (path === openPath ? " sel" : "");
       row.style.paddingLeft = (8 + depth * 12) + "px";
       const tw = document.createElement("span"); tw.className = "tw"; tw.textContent = e.dir ? (expanded.has(path) ? "▾" : "▸") : "";
-      const ic = document.createElement("span"); ic.className = "fic"; ic.textContent = e.dir ? "" : "";
+      const ic = document.createElement("span"); ic.className = "fic"; ic.textContent = e.dir ? "\uE8B7" : "\uE8A5";
       const nm = document.createElement("span"); nm.textContent = e.name;
       row.appendChild(tw); row.appendChild(ic); row.appendChild(nm);
       if (e.dir) row.onclick = () => { expanded.has(path) ? expanded.delete(path) : expanded.add(path); renderFiles(); };

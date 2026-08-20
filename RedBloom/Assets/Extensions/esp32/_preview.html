@@ -9,7 +9,7 @@ window.chrome={webview:{
   else if(d.t==='fs.list'){var e=[];var p=d.path;
     if(/sketches$/.test(p))e=[{name:'01-blink',dir:true},{name:'02-fade',dir:true}];
     else if(/esp32$/i.test(p))e=[{name:'display-test',dir:true}];
-    else if(/(01-blink|02-fade|display-test)$/.test(p))e=[{name:(p.split('\\').pop())+'.ino',dir:false},{name:'bin',dir:true},{name:'readme.txt',dir:false}];
+    else if(/(01-blink|02-fade|display-test)$/.test(p)){e=[{name:(p.split('\\').pop())+'.ino',dir:false},{name:'bin',dir:true}];for(var i=1;i<=25;i++)e.push({name:'module_'+i+'.h',dir:false});}
     else if(/bin$/.test(p))e=[{name:'firmware.ino.bin',dir:false},{name:'firmware.ino.elf',dir:false}];
     reply({t:'fs.list.result',id:d.id,entries:e});}
   else if(d.t==='fs.read'){reply({t:'fs.read.result',id:d.id,ok:true,text:'void setup(){\n  Serial.begin(115200);\n}\n\nvoid loop(){\n}\n'});}
