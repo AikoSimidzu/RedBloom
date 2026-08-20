@@ -142,6 +142,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // window is what owns the tab strip.
         AiSettingsPage.LaunchRequested += OpenAgentTab;
         LocalModelsPage.LaunchRequested += OpenAgentTab;
+        Views.ExtensionsPage.OpenRequested += OpenExtensionTab;
         void OpenIfExists(string path)
         {
             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
@@ -210,6 +211,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         // Static, so leaving it subscribed would keep this window alive past its close.
         AiSettingsPage.LaunchRequested -= OpenAgentTab;
+        LocalModelsPage.LaunchRequested -= OpenAgentTab;
+        Views.ExtensionsPage.OpenRequested -= OpenExtensionTab;
 
         _capture.FrameReady -= OnWallpaperFrame;
         _capture.Dispose();
@@ -1272,6 +1275,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         ShellPopup.IsOpen = false;
         OpenLocalModelsTab();
+    }
+
+    /// <summary>Segoe MDL2 "Puzzle", used for the extensions page and extension tabs.</summary>
+    private static readonly string ExtGlyph = ((char)0xEA86).ToString();
+
+    private void OpenExtensionsTab()
+    {
+        if (Tabs.FirstOrDefault(t => t.Content is Views.ExtensionsPage) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        AddTab(new Views.ExtensionsPage(), LocalizationService.T("L_Extensions"), ExtGlyph,
+            LocalizationService.T("L_Extensions"));
+    }
+
+    private void Extensions_Click(object sender, RoutedEventArgs e)
+    {
+        ShellPopup.IsOpen = false;
+        OpenExtensionsTab();
+    }
+
+    /// <summary>Opens an extension in its own tab, or brings the open one forward.</summary>
+    private void OpenExtensionTab(Services.ExtensionStore.Extension extension)
+    {
+        if (Tabs.FirstOrDefault(t => t.Content is Controls.ExtensionView v && v.ExtensionId == extension.Id) is { } existing)
+        {
+            SelectTab(existing);
+            return;
+        }
+
+        var glyph = extension.Manifest.Icon.Length > 0 ? extension.Manifest.Icon : ExtGlyph;
+        var title = extension.Manifest.Name.Length > 0 ? extension.Manifest.Name : extension.Id;
+        AddTab(new Controls.ExtensionView(extension), title, glyph, title);
     }
 
     private void AiSettings_Click(object sender, RoutedEventArgs e)

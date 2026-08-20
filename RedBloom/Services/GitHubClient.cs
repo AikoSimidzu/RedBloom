@@ -13,9 +13,10 @@ namespace RedBloom.Services;
 /// profile, never in plain text.
 /// </summary>
 /// <remarks>
-/// A personal access token rather than an OAuth sign-in flow: RedBloom is not a registered GitHub
-/// OAuth app, so there is no client id to run device flow with. A fine-grained token the user makes
-/// (with read access to repositories) is the direct, dependency-free path.
+/// Two ways in. The browser sign-in (OAuth device flow) is the normal one: the user gets a short
+/// code, authorises it on github.com, and never handles a token — it needs only a public client id
+/// (see <see cref="ClientId"/>), no secret. Pasting a personal access token still works as a
+/// fallback. Either way the resulting token is kept DPAPI-encrypted, never in plain text.
 /// </remarks>
 public static class GitHubClient
 {
@@ -24,11 +25,46 @@ public static class GitHubClient
     private static readonly string TokenFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RedBloom", "github.token");
 
+    private static readonly string ClientIdFile = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RedBloom", "github.clientid");
+
+    // The OAuth App's client id, used for the browser (device-flow) sign-in. It is public — not a
+    // secret — so embedding it is fine; device flow never needs a client secret. A github.clientid
+    // file beside the token overrides it, so the id can be changed without a rebuild.
+    private const string EmbeddedClientId = "Ov23lioXxIJGCsTdwepE";
+
+    /// <summary>The scopes the browser sign-in asks for: read the account, and read/write repositories.</summary>
+    private const string Scopes = "repo read:user";
+
     /// <summary>The signed-in account's login, once connected.</summary>
     public static string Login { get; private set; } = string.Empty;
 
     /// <summary>Whether a token is stored and a login is known.</summary>
     public static bool IsConnected => Token().Length > 0;
+
+    /// <summary>The OAuth App client id for the browser sign-in — from the override file, or embedded.</summary>
+    public static string ClientId
+    {
+        get
+        {
+            try
+            {
+                if (File.Exists(ClientIdFile) && File.ReadAllText(ClientIdFile).Trim() is { Length: > 0 } fromFile)
+                {
+                    return fromFile;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Fall back to the embedded id.
+            }
+
+            return EmbeddedClientId;
+        }
+    }
+
+    /// <summary>Whether the browser sign-in is available (an OAuth App client id is set).</summary>
+    public static bool CanSignIn => ClientId.Length > 0;
 
     /// <summary>A repository the account can see.</summary>
     public readonly record struct Repo(string FullName, string Name, string Owner, string Url, string CloneUrl, bool Private, string Description, int Stars);
@@ -68,6 +104,116 @@ public static class GitHubClient
         {
             return $"Could not reach GitHub: {ex.Message}";
         }
+    }
+
+    /// <summary>A started browser sign-in: the code to type, where to type it, and how to poll.</summary>
+    public readonly record struct DeviceCode(string UserCode, string VerificationUri, string Device, int Interval, int ExpiresIn);
+
+    /// <summary>
+    /// Begins the browser sign-in (OAuth device flow): asks GitHub for a short code the user types
+    /// into the verification page. Returns the code, or a message on failure.
+    /// </summary>
+    public static async Task<(DeviceCode? Code, string? Error)> StartDeviceAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanSignIn)
+        {
+            return (null, "Browser sign-in is not configured yet (no OAuth App client id).");
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://github.com/login/device/code");
+            request.Headers.Accept.ParseAdd("application/json");
+            request.Headers.UserAgent.ParseAdd("RedBloom");
+            request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"] = ClientId,
+                ["scope"] = Scopes,
+            });
+
+            using var response = await Http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("error", out var err))
+            {
+                return (null, root.TryGetProperty("error_description", out var d) ? d.GetString() : err.GetString());
+            }
+
+            var code = new DeviceCode(
+                Str(root, "user_code"),
+                Str(root, "verification_uri"),
+                Str(root, "device_code"),
+                root.TryGetProperty("interval", out var iv) && iv.TryGetInt32(out var i) ? i : 5,
+                root.TryGetProperty("expires_in", out var ev) && ev.TryGetInt32(out var x) ? x : 900);
+
+            return (code, null);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return (null, $"Could not reach GitHub: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Polls until the user finishes signing in in the browser (or it fails). On success the token
+    /// is stored exactly as a pasted one would be. Returns null on success, or a message.
+    /// </summary>
+    public static async Task<string?> PollDeviceAsync(DeviceCode code, CancellationToken cancellationToken = default)
+    {
+        var interval = Math.Max(1, code.Interval);
+        var deadline = DateTime.UtcNow.AddSeconds(code.ExpiresIn > 0 ? code.ExpiresIn : 900);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(interval), cancellationToken).ConfigureAwait(false);
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://github.com/login/oauth/access_token");
+                request.Headers.Accept.ParseAdd("application/json");
+                request.Headers.UserAgent.ParseAdd("RedBloom");
+                request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["client_id"] = ClientId,
+                    ["device_code"] = code.Device,
+                    ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code",
+                });
+
+                using var response = await Http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                // Got it — hand the token to the same path a pasted one takes (verifies /user, stores it).
+                if (root.TryGetProperty("access_token", out var at) && at.GetString() is { Length: > 0 } token)
+                {
+                    return await ConnectAsync(token, cancellationToken).ConfigureAwait(false);
+                }
+
+                switch (root.TryGetProperty("error", out var err) ? err.GetString() : null)
+                {
+                    case "authorization_pending":
+                        break;                       // the user has not finished yet — keep waiting
+                    case "slow_down":
+                        interval += 5;               // GitHub asks us to poll less often
+                        break;
+                    case "expired_token":
+                        return "The code expired. Start the sign-in again.";
+                    case "access_denied":
+                        return "Sign-in was cancelled on GitHub.";
+                    case { Length: > 0 } other:
+                        return other;
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                // A transient hiccup — keep polling until the deadline.
+            }
+        }
+
+        return "Timed out waiting for the sign-in to finish.";
     }
 
     /// <summary>Forgets the stored token.</summary>

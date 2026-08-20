@@ -51,6 +51,22 @@ public partial class SettingsPage : UserControl
         GhConnectedPanel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         GhAuthPanel.Visibility = connected ? Visibility.Collapsed : Visibility.Visible;
         GhLoginText.Text = GitHubClient.Login.Length > 0 ? "@" + GitHubClient.Login : GitHubClient.Login;
+
+        // The browser sign-in appears once an OAuth App client id is set; otherwise only the token
+        // fallback shows, and the "or by token" divider is pointless.
+        var canSignIn = GitHubClient.CanSignIn;
+        GhBrowserPanel.Visibility = canSignIn ? Visibility.Visible : Visibility.Collapsed;
+        GhOrToken.Visibility = canSignIn ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void GhSignIn_Click(object sender, RoutedEventArgs e)
+    {
+        GhErrorText.Visibility = Visibility.Collapsed;
+
+        if (GitHubSignInDialog.Show(Window.GetWindow(this)))
+        {
+            RefreshGitHub();
+        }
     }
 
     private async void GhConnect_Click(object sender, RoutedEventArgs e)

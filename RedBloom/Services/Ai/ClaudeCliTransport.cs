@@ -99,6 +99,13 @@ public sealed class ClaudeCliTransport : IAgentTransport
 
         using (process)
         {
+            // Drain stderr on its own task, started before the answer is read. The tool is run with
+            // --verbose and prints diagnostics there; left unread, that pipe's buffer fills, the tool
+            // blocks trying to write more, and — because it then stops writing stdout too — the read
+            // below waits forever. That is the hang where the answer never ends. Reading both pipes
+            // at once is the only thing that keeps a chatty stderr from wedging the whole turn.
+            var complaintTask = process.StandardError.ReadToEndAsync(cancellationToken);
+
             await using (process.StandardInput)
             {
                 await process.StandardInput.WriteAsync(prompt.AsMemory(), cancellationToken).ConfigureAwait(false);
@@ -116,7 +123,7 @@ public sealed class ClaudeCliTransport : IAgentTransport
                 yield return item;
             }
 
-            var complaint = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            var complaint = await complaintTask.ConfigureAwait(false);
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
             if (!said)

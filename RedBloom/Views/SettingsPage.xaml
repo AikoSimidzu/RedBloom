@@ -123,6 +123,18 @@
                 </StackPanel>
 
                 <StackPanel x:Name="GhAuthPanel" Margin="0,0,0,20">
+                    <!-- browser sign-in (OAuth device flow) -->
+                    <StackPanel x:Name="GhBrowserPanel" Margin="0,0,0,16" Visibility="Collapsed">
+                        <Button Content="{DynamicResource L_GhSignIn}" Style="{StaticResource AccentButton}"
+                                Padding="16,8" HorizontalAlignment="Left" Click="GhSignIn_Click" />
+                        <TextBlock Text="{DynamicResource L_GhSignInHint}" Foreground="{DynamicResource TextFaint}"
+                                   FontFamily="{DynamicResource UiFont}" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,0" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="GhOrToken" Text="{DynamicResource L_GhOrToken}" Foreground="{DynamicResource TextFaint}"
+                               FontFamily="{DynamicResource UiFont}" FontSize="10.5" FontWeight="SemiBold"
+                               Margin="0,0,0,8" Visibility="Collapsed" />
+
                     <Grid ColumnDefinitions="150,240,8,Auto">
                         <TextBlock Grid.Column="0" Text="{DynamicResource L_GhTokenLabel}" Style="{StaticResource RowLabel}" />
                         <PasswordBox x:Name="GhTokenBox" Grid.Column="1" Padding="7,4" />

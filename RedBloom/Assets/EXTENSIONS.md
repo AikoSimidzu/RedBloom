@@ -1,0 +1,132 @@
+# Расширения RedBloom
+
+Расширение — это **папка с HTML-страницей и манифестом**. RedBloom открывает страницу в WebView2
+(отдельная вкладка) и даёт ей небольшой, заранее объявленный набор возможностей хоста: запускать
+разрешённые программы и читать/писать файлы в своей песочнице. Модель та же, что у встроенных
+страниц RedBloom (дерево проекта, редактор) — обычный HTML/CSS/JS, без сборки.
+
+## Где лежат расширения
+
+| Тип | Папка | По умолчанию |
+|-----|-------|--------------|
+| Встроенные | `Assets/Extensions/<id>/` (рядом с приложением) | включены |
+| Пользовательские | `%APPDATA%\RedBloom\extensions\<id>\` | **выключены**, пока не включишь вручную |
+
+Пользовательское расширение по умолчанию выключено — просто положив папку, ты не запускаешь код;
+включение — осознанное действие в разделе **Расширения** (меню-«шестерёнка» рядом с «Параметрами»).
+
+Данные каждого расширения (файлы, которые оно создаёт) лежат отдельно от кода, в
+`%APPDATA%\RedBloom\extensions-data\<id>\` — это и есть его песочница для файловых операций.
+
+## manifest.json
+
+```json
+{
+  "id": "esp32",                     // стабильный id = имя папки
+  "name": "ESP32 Firmware",          // заголовок вкладки и карточки
+  "version": "1.0.0",
+  "description": "Короткое описание в списке.",
+  "icon": "",                       // один глиф Segoe MDL2
+  "entry": "index.html",             // стартовая страница (относительно папки)
+  "programs": ["arduino-cli"]        // белый список программ, которые можно запускать
+}
+```
+
+`programs` — это единственные внешние программы, которые расширению разрешено запускать. Хост
+**отклонит** любой `exec` с программой не из списка, поэтому страница не может выполнить
+произвольную команду.
+
+## Мост хост ↔ страница
+
+Обмен идёт через `window.chrome.webview.postMessage` (страница → хост) и событие `message`
+(хост → страница). Все сообщения — JSON с полем `t` (тип).
+
+### Страница → хост
+
+| Сообщение | Что делает |
+|-----------|-----------|
+| `{t:"ready"}` | страница загрузилась; в ответ придёт `init` и `theme` |
+| `{t:"exec", id, program, args:[…], cwd}` | запустить программу из `programs`; вывод стримится |
+| `{t:"exec.cancel", id}` | остановить запущенный процесс (напр. монитор порта) |
+| `{t:"fs.list", id, path}` | список файлов/папок (`path` — относительно песочницы) |
+| `{t:"fs.read", id, path}` | прочитать файл |
+| `{t:"fs.write", id, path, text}` | записать файл (папки создаются автоматически) |
+| `{t:"fs.mkdir", id, path}` | создать папку |
+| `{t:"openFolder", path}` | открыть папку в проводнике |
+
+`id` — любая строка, которую ты придумываешь, чтобы связать ответ с запросом.
+`cwd` в `exec` — рабочая папка процесса, относительно песочницы. Пути в `args` не проверяются
+(это аргументы программе), но `cwd` и все `fs.*`-пути **ограничены песочницей** — выйти из неё
+через `..` нельзя.
+
+### Хост → страница
+
+| Сообщение | Поля |
+|-----------|------|
+| `{t:"init"}` | `lang` (`"ru"`/`"en"`), `dataDir` (абсолютный путь песочницы), `extension:{id,name,version}` |
+| `{t:"theme"}` | `vars` — словарь CSS-переменных темы (см. ниже) |
+| `{t:"exec.out"}` | `id`, `stream` (`"stdout"`/`"stderr"`), `text` (одна строка) |
+| `{t:"exec.done"}` | `id`, `code` (код возврата), `error` (если не удалось запустить) |
+| `{t:"fs.list.result"}` | `id`, `entries:[{name,dir}]` |
+| `{t:"fs.read.result"}` | `id`, `text`, `ok` |
+| `{t:"fs.write.result"}` / `{t:"fs.mkdir.result"}` | `id`, `ok` |
+
+### Тема
+
+По `{t:"theme"}` применяй `vars` к `:root` как CSS-переменные — тогда расширение будет следовать
+теме приложения и менять цвета «на лету»:
+
+```js
+if (m.t === "theme" && m.vars)
+  for (const [k, v] of Object.entries(m.vars))
+    document.documentElement.style.setProperty("--" + k, v);
+```
+
+Приходят: `surface`, `raised`, `chrome`, `divider`, `text`, `muted`, `faint`, `accent`,
+`accent-dim`, `ui-font`, `code-font`.
+
+## Подключение библиотек
+
+Страница расширения обслуживается с виртуального хоста `redbloom.ext` (её собственные файлы —
+относительными путями). Общие библиотеки, встроенные в RedBloom, доступны по абсолютному адресу
+`https://redbloom.assets/…`. Например, редактор CodeMirror:
+
+```html
+<link rel="stylesheet" href="https://redbloom.assets/vendor/codemirror/codemirror.min.css" />
+<script src="https://redbloom.assets/vendor/codemirror/codemirror.min.js"></script>
+<script src="https://redbloom.assets/vendor/codemirror/mode/clike.min.js"></script>
+```
+
+## Минимальный пример
+
+`manifest.json`:
+```json
+{ "id": "hello", "name": "Hello", "version": "1.0.0", "icon": "", "entry": "index.html", "programs": [] }
+```
+
+`index.html`:
+```html
+<!doctype html><meta charset="utf-8">
+<body style="font-family:sans-serif;padding:16px">
+  <button id="save">Сохранить время</button>
+  <script>
+    const post = (m) => window.chrome.webview.postMessage(JSON.stringify(m));
+    window.chrome.webview.addEventListener("message", (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.t === "init") console.log("Песочница:", m.dataDir);
+    });
+    document.getElementById("save").onclick = () =>
+      post({ t: "fs.write", id: "1", path: "log.txt", text: new Date().toISOString() });
+    post({ t: "ready" });
+  </script>
+</body>
+```
+
+Положи папку `hello` в `%APPDATA%\RedBloom\extensions\`, открой раздел **Расширения**, включи
+её и нажми «Открыть».
+
+## Пример для справки
+
+Встроенное расширение **ESP32 Firmware** (`Assets/Extensions/esp32/`) — рабочий образец: редактор
+кода, стриминг вывода `arduino-cli` (сборка/заливка), монитор порта через `exec` + `exec.cancel`,
+и файлы скетчей в песочнице. Смотри его `index.html` как референс.

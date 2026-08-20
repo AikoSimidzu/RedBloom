@@ -1,0 +1,9 @@
+{
+  "id": "esp32",
+  "name": "ESP32 Firmware",
+  "version": "1.0.0",
+  "description": "Пишите, компилируйте и заливайте прошивки ESP32 через arduino-cli — редактор, сборка, загрузка и монитор порта в одной вкладке.",
+  "icon": "",
+  "entry": "index.html",
+  "programs": ["arduino-cli"]
+}

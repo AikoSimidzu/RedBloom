@@ -1,0 +1,345 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="https://redbloom.assets/vendor/codemirror/codemirror.min.css" />
+<link rel="stylesheet" href="https://redbloom.assets/vendor/codemirror/theme/material-darker.min.css" />
+<style>
+  :root {
+    --surface: #16171b; --raised: #202127; --chrome: #1b1c22; --divider: #2c2e36;
+    --text: #e6e7ea; --muted: #a8abb4; --faint: #6f727b; --accent: #7a6ff0; --accent-dim: #33305a;
+    --ui-font: "Segoe UI", sans-serif; --code-font: "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--surface); color: var(--text); font-family: var(--ui-font); font-size: 13px;
+         display: flex; flex-direction: column; overflow: hidden; }
+
+  .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--divider); }
+  .bar .grow { flex: 1; }
+  label.f { color: var(--faint); font-size: 11px; margin-right: 2px; }
+  select, input {
+    background: var(--raised); border: 1px solid var(--divider); border-radius: 6px; color: var(--text);
+    font: 12.5px var(--ui-font); padding: 5px 8px;
+  }
+  input.mono { font-family: var(--code-font); }
+  #fqbn { width: 170px; } #baud { width: 82px; } #port { min-width: 150px; } #sketch { min-width: 180px; }
+
+  button {
+    background: var(--chrome); border: 1px solid var(--divider); border-radius: 6px; color: var(--muted);
+    font: 12px var(--ui-font); padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.accent { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+  button.warn:hover:not(:disabled) { border-color: #e0555f; color: #e0555f; }
+  .ic { font-family: "Segoe MDL2 Assets"; font-size: 12px; margin-right: 5px; }
+
+  #editorWrap { flex: 1; min-height: 120px; overflow: hidden; border-bottom: 1px solid var(--divider); position: relative; }
+  .CodeMirror { height: 100%; font-family: var(--code-font); font-size: 13px; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--faint);
+           text-align: center; padding: 20px; pointer-events: none; }
+
+  #actions { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--divider); }
+  #status { color: var(--faint); font-size: 12px; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status.ok { color: #5bb85b; } #status.err { color: #e0555f; } #status.run { color: var(--accent); }
+
+  #consoleWrap { height: 210px; display: flex; flex-direction: column; }
+  #consoleHead { display: flex; align-items: center; gap: 8px; padding: 6px 14px; }
+  #consoleHead .t { color: var(--faint); font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; flex: 1; }
+  #console { flex: 1; overflow: auto; margin: 0; padding: 6px 14px 12px; font-family: var(--code-font); font-size: 12px;
+             line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+  #console .e { color: #d99; } #console .sys { color: var(--accent); }
+  #console .path { color: var(--faint); }
+  .sp { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--faint); border-top-color: var(--accent);
+        border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -1px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <label class="f" id="lPort">Port</label>
+    <select id="port"><option value="">—</option></select>
+    <button id="refresh" title="Refresh"><span class="ic"></span><span id="lRefresh">Refresh</span></button>
+    <span class="grow"></span>
+    <label class="f" id="lBoard">Board (FQBN)</label>
+    <input id="fqbn" class="mono" value="esp32:esp32:esp32" spellcheck="false" />
+    <label class="f">Baud</label>
+    <input id="baud" class="mono" value="115200" spellcheck="false" />
+  </div>
+
+  <div class="bar">
+    <label class="f" id="lSketch">Sketch</label>
+    <select id="sketch"><option value="">—</option></select>
+    <button id="newSketch"><span class="ic"></span><span id="lNew">New</span></button>
+    <button id="openFolder"><span class="ic"></span><span id="lFolder">Folder</span></button>
+    <span class="grow"></span>
+    <span id="sketchPath" class="path" style="color:var(--faint);font-family:var(--code-font);font-size:11px"></span>
+  </div>
+
+  <div id="editorWrap">
+    <textarea id="code"></textarea>
+    <div id="empty" style="display:none"></div>
+  </div>
+
+  <div id="actions">
+    <button id="save"><span class="ic"></span><span id="lSave">Save</span></button>
+    <button id="compile" class="accent"><span class="ic"></span><span id="lCompile">Compile</span></button>
+    <button id="upload"><span class="ic"></span><span id="lUpload">Upload</span></button>
+    <button id="monitor"><span class="ic"></span><span id="lMonitor">Serial monitor</span></button>
+    <span id="status"></span>
+  </div>
+
+  <div id="consoleWrap">
+    <div id="consoleHead">
+      <span class="t" id="lConsole">Output</span>
+      <button id="clear" style="padding:3px 9px"><span id="lClear">Clear</span></button>
+    </div>
+    <div id="console"></div>
+  </div>
+
+<script src="https://redbloom.assets/vendor/codemirror/codemirror.min.js"></script>
+<script src="https://redbloom.assets/vendor/codemirror/mode/clike.min.js"></script>
+<script src="https://redbloom.assets/vendor/codemirror/mode/closebrackets.min.js"></script>
+<script src="https://redbloom.assets/vendor/codemirror/mode/active-line.min.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const post = (m) => window.chrome.webview.postMessage(JSON.stringify(m));
+
+  let dataDir = "";           // absolute path of this extension's data folder
+  let seq = 0;
+  const calls = {};           // exec calls in flight
+  const fsCalls = {};         // fs calls in flight
+  let current = "";           // open sketch name
+  let monitorId = null;       // running serial monitor's call id
+  let busy = false;
+
+  const L = {
+    en: { port:"Port", refresh:"Refresh", board:"Board (FQBN)", sketch:"Sketch", nw:"New", folder:"Folder",
+          save:"Save", compile:"Compile", upload:"Upload", monitor:"Serial monitor", stop:"Stop", console:"Output", clear:"Clear",
+          empty:"Create a sketch or pick one to start writing firmware.", newName:"Sketch name:",
+          noPort:"Pick a port first.", noSketch:"No sketch open.", saved:"Saved.",
+          compiling:"Compiling…", compiled:"Compiled.", failed:"Failed.", uploading:"Uploading…", uploaded:"Uploaded.",
+          monitoring:"Monitoring — press Stop to end.", cliMissing:"arduino-cli was not found. Install it (memory: C:\\Program Files\\Arduino CLI) or add it to PATH." },
+    ru: { port:"Порт", refresh:"Обновить", board:"Плата (FQBN)", sketch:"Скетч", nw:"Новый", folder:"Папка",
+          save:"Сохранить", compile:"Собрать", upload:"Залить", monitor:"Монитор порта", stop:"Стоп", console:"Вывод", clear:"Очистить",
+          empty:"Создайте скетч или выберите существующий, чтобы писать прошивку.", newName:"Имя скетча:",
+          noPort:"Сначала выберите порт.", noSketch:"Скетч не открыт.", saved:"Сохранено.",
+          compiling:"Сборка…", compiled:"Собрано.", failed:"Ошибка.", uploading:"Заливка…", uploaded:"Залито.",
+          monitoring:"Монитор запущен — нажмите «Стоп», чтобы остановить.", cliMissing:"arduino-cli не найден. Установите его (заметка: C:\\Program Files\\Arduino CLI) или добавьте в PATH." },
+  };
+  let T = L.en;
+
+  const TEMPLATE =
+    "void setup() {\n" +
+    "  Serial.begin(115200);\n" +
+    "  pinMode(LED_BUILTIN, OUTPUT);\n" +
+    "}\n\n" +
+    "void loop() {\n" +
+    "  digitalWrite(LED_BUILTIN, HIGH);\n" +
+    "  delay(500);\n" +
+    "  digitalWrite(LED_BUILTIN, LOW);\n" +
+    "  delay(500);\n" +
+    "}\n";
+
+  const cm = CodeMirror.fromTextArea($("code"), {
+    mode: "text/x-c++src", lineNumbers: true, theme: "material-darker",
+    autoCloseBrackets: true, styleActiveLine: true, indentUnit: 2, tabSize: 2,
+  });
+  cm.setSize("100%", "100%");
+
+  // ---------- host bridge ----------
+  function run(program, args, opts) {
+    opts = opts || {};
+    const id = "c" + (++seq);
+    const done = new Promise((resolve) => { calls[id] = { out: [], err: [], onLine: opts.onLine, quiet: !!opts.quiet, resolve }; });
+    post({ t: "exec", id, program, args, cwd: opts.cwd || "" });
+    return { id, done };
+  }
+  function fs(t, path, extra) {
+    const id = "f" + (++seq);
+    const p = new Promise((resolve) => { fsCalls[id] = resolve; });
+    post(Object.assign({ t, id, path }, extra || {}));
+    return p;
+  }
+
+  window.chrome.webview.addEventListener("message", (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    switch (m.t) {
+      case "init":
+        dataDir = m.dataDir || "";
+        T = m.lang === "ru" ? L.ru : L.en;
+        applyLang();
+        boot();
+        break;
+      case "theme":
+        if (m.vars) for (const [k, v] of Object.entries(m.vars)) document.documentElement.style.setProperty("--" + k, v);
+        break;
+      case "exec.out": {
+        const c = calls[m.id]; if (!c) break;
+        (m.stream === "stderr" ? c.err : c.out).push(m.text);
+        if (!c.quiet) writeLine(m.text, m.stream === "stderr");
+        if (c.onLine) c.onLine(m.text, m.stream);
+        break;
+      }
+      case "exec.done": {
+        const c = calls[m.id]; if (!c) break; delete calls[m.id];
+        c.resolve({ code: m.code, out: c.out.join("\n"), err: c.err.join("\n"), error: m.error });
+        break;
+      }
+      case "fs.list.result": { const r = fsCalls[m.id]; if (r) { delete fsCalls[m.id]; r(m.entries || []); } break; }
+      case "fs.read.result": { const r = fsCalls[m.id]; if (r) { delete fsCalls[m.id]; r(m); } break; }
+      case "fs.write.result":
+      case "fs.mkdir.result": { const r = fsCalls[m.id]; if (r) { delete fsCalls[m.id]; r(m); } break; }
+    }
+  });
+
+  // ---------- console ----------
+  function writeLine(text, isErr) {
+    const el = document.createElement("div");
+    if (isErr) el.className = "e";
+    el.textContent = text;
+    $("console").appendChild(el);
+    $("console").scrollTop = $("console").scrollHeight;
+  }
+  function writeSys(text) { const el = document.createElement("div"); el.className = "sys"; el.textContent = text; $("console").appendChild(el); $("console").scrollTop = $("console").scrollHeight; }
+  function setStatus(text, cls) { const s = $("status"); s.className = cls || ""; s.innerHTML = (cls === "run" ? '<span class="sp"></span>' : "") + text; }
+
+  // ---------- sketches ----------
+  function sketchDir(name) { return "sketches/" + name; }               // relative to dataDir (host-confined)
+  function sketchAbs(name) { return dataDir + "\\sketches\\" + name; }   // absolute, for arduino-cli
+  function inoRel(name) { return "sketches/" + name + "/" + name + ".ino"; }
+
+  async function refreshSketches(select) {
+    const entries = await fs("fs.list", "sketches");
+    const names = entries.filter((e) => e.dir).map((e) => e.name).sort();
+    const sel = $("sketch");
+    sel.innerHTML = names.length ? "" : '<option value="">—</option>';
+    for (const n of names) { const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o); }
+    if (select && names.includes(select)) sel.value = select;
+  }
+
+  async function openSketch(name) {
+    if (!name) { current = ""; cm.setValue(""); $("empty").style.display = "flex"; $("sketchPath").textContent = ""; return; }
+    const r = await fs("fs.read", inoRel(name));
+    current = name;
+    cm.setValue(r && r.ok ? r.text : TEMPLATE);
+    cm.clearHistory();
+    $("empty").style.display = "none";
+    $("sketchPath").textContent = sketchAbs(name) + "\\" + name + ".ino";
+    $("sketch").value = name;
+  }
+
+  async function saveCurrent() {
+    if (!current) { setStatus(T.noSketch, "err"); return false; }
+    const r = await fs("fs.write", inoRel(current), { text: cm.getValue() });
+    return !!(r && r.ok);
+  }
+
+  // ---------- board ports ----------
+  async function refreshPorts() {
+    setStatus("", "");
+    const { done } = run("arduino-cli", ["board", "list", "--format", "json"], { quiet: true });
+    const r = await done;
+    if (r.error) { setStatus(T.cliMissing, "err"); writeSys(T.cliMissing); return; }
+    let ports = [];
+    try {
+      const j = JSON.parse(r.out || "[]");
+      const list = Array.isArray(j) ? j : (j.detected_ports || j.ports || []);
+      for (const item of list) {
+        const p = item.port || item;
+        if (p && p.address && (!p.protocol || p.protocol === "serial")) {
+          const boards = item.matching_boards || item.boards || [];
+          ports.push({ address: p.address, label: p.address + (boards[0] ? " · " + boards[0].name : ""), fqbn: boards[0] && boards[0].fqbn });
+        }
+      }
+    } catch { /* leave ports empty */ }
+    const sel = $("port"), keep = sel.value;
+    sel.innerHTML = ports.length ? "" : '<option value="">—</option>';
+    for (const p of ports) { const o = document.createElement("option"); o.value = p.address; o.textContent = p.label; sel.appendChild(o); if (p.fqbn) $("fqbn").value = p.fqbn; }
+    if (ports.some((p) => p.address === keep)) sel.value = keep;
+  }
+
+  // ---------- actions ----------
+  function setBusy(on) { busy = on; for (const id of ["compile", "upload", "save", "newSketch", "refresh"]) $(id).disabled = on; }
+
+  async function compile() {
+    if (busy || !current) { if (!current) setStatus(T.noSketch, "err"); return; }
+    if (!(await saveCurrent())) { setStatus(T.failed, "err"); return; }
+    setBusy(true); setStatus(T.compiling, "run"); writeSys("$ arduino-cli compile --fqbn " + $("fqbn").value + " " + current);
+    const { done } = run("arduino-cli", ["compile", "--fqbn", $("fqbn").value.trim(), sketchAbs(current)], { cwd: sketchDir(current) });
+    const r = await done;
+    setBusy(false);
+    setStatus(r.code === 0 ? T.compiled : T.failed, r.code === 0 ? "ok" : "err");
+  }
+
+  async function upload() {
+    const port = $("port").value;
+    if (busy || !current) { if (!current) setStatus(T.noSketch, "err"); return; }
+    if (!port) { setStatus(T.noPort, "err"); return; }
+    if (!(await saveCurrent())) { setStatus(T.failed, "err"); return; }
+    setBusy(true); setStatus(T.uploading, "run"); writeSys("$ arduino-cli upload -p " + port + " --fqbn " + $("fqbn").value + " " + current);
+    const { done } = run("arduino-cli", ["upload", "-p", port, "--fqbn", $("fqbn").value.trim(), sketchAbs(current)], { cwd: sketchDir(current) });
+    const r = await done;
+    setBusy(false);
+    setStatus(r.code === 0 ? T.uploaded : T.failed, r.code === 0 ? "ok" : "err");
+  }
+
+  function toggleMonitor() {
+    if (monitorId) { post({ t: "exec.cancel", id: monitorId }); monitorId = null; updateMonitorBtn(); setStatus("", ""); return; }
+    const port = $("port").value;
+    if (!port) { setStatus(T.noPort, "err"); return; }
+    writeSys("$ arduino-cli monitor -p " + port + " -c baudrate=" + $("baud").value);
+    const { id, done } = run("arduino-cli", ["monitor", "-p", port, "-c", "baudrate=" + $("baud").value.trim()]);
+    monitorId = id; updateMonitorBtn(); setStatus(T.monitoring, "run");
+    done.then(() => { const wasRunning = monitorId === id; monitorId = null; updateMonitorBtn(); if (wasRunning && !busy) setStatus("", ""); });
+  }
+  function updateMonitorBtn() {
+    const b = $("monitor");
+    b.classList.toggle("warn", !!monitorId);
+    b.querySelector("span:last-child").textContent = monitorId ? T.stop : T.monitor;
+    b.querySelector(".ic").textContent = monitorId ? "" : "";
+  }
+
+  // ---------- wire up ----------
+  $("refresh").onclick = refreshPorts;
+  $("openFolder").onclick = () => post({ t: "openFolder", path: current ? sketchDir(current) : "sketches" });
+  $("sketch").onchange = () => openSketch($("sketch").value);
+  $("save").onclick = async () => { if (await saveCurrent()) setStatus(T.saved, "ok"); };
+  $("compile").onclick = compile;
+  $("upload").onclick = upload;
+  $("monitor").onclick = toggleMonitor;
+  $("clear").onclick = () => { $("console").innerHTML = ""; };
+  $("newSketch").onclick = async () => {
+    const raw = window.prompt(T.newName, "sketch_" + new Date().toISOString().slice(0, 10).replace(/-/g, ""));
+    if (!raw) return;
+    const name = raw.trim().replace(/[^A-Za-z0-9_]/g, "_");
+    if (!name) return;
+    await fs("fs.write", inoRel(name), { text: TEMPLATE.replace("115200", $("baud").value.trim() || "115200") });
+    await refreshSketches(name);
+    await openSketch(name);
+    setStatus(T.saved, "ok");
+  };
+
+  cm.on("keydown", (_, e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); $("save").click(); } });
+
+  function applyLang() {
+    $("lPort").textContent = T.port; $("lRefresh").textContent = T.refresh; $("lBoard").textContent = T.board;
+    $("lSketch").textContent = T.sketch; $("lNew").textContent = T.nw; $("lFolder").textContent = T.folder;
+    $("lSave").textContent = T.save; $("lCompile").textContent = T.compile; $("lUpload").textContent = T.upload;
+    $("lConsole").textContent = T.console; $("lClear").textContent = T.clear; $("empty").textContent = T.empty;
+    updateMonitorBtn();
+  }
+
+  async function boot() {
+    await fs("fs.mkdir", "sketches");
+    await refreshSketches();
+    const first = $("sketch").value;
+    if (first) await openSketch(first); else { $("empty").style.display = "flex"; }
+    refreshPorts();
+  }
+
+  post({ t: "ready" });
+</script>
+</body>
+</html>
