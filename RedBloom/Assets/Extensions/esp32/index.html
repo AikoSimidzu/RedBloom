@@ -414,7 +414,7 @@
     if (idx == null || idx < 0 || !sketches[idx]) { cur = null; openPath = ""; cm.setValue(""); $("empty").style.display = "flex"; $("sketchPath").textContent = ""; renderFiles(); return; }
     cur = sketches[idx];
     $("sketch").value = String(idx);
-    expanded.clear(); expanded.add(cur.dir);
+    expanded.add(cur.dir);   // reveal the open sketch's files; keep the rest of the tree as it was
     await loadFile(cur.ino, true);          // the sketch's own .ino; template if it is missing
   }
 
@@ -442,29 +442,42 @@
   }
 
   // ---------- file browser (right side, like a solution explorer) ----------
-  async function renderFiles() {
-    const el = $("filesTree");
-    if (!cur) { el.innerHTML = '<div class="fempty">' + T.filesEmpty + "</div>"; return; }
-    el.innerHTML = "";
-    expanded.add(cur.dir);
-    await renderInto(el, cur.dir, 0);
+  // The whole tree: every root (sandbox + added folders) → its sketches → their files.
+  let renderGen = 0;   // guards against overlapping async renders racing on the same panel
+  function fileRow(path, name, isDir, depth) {
+    const row = document.createElement("div");
+    row.className = "frow" + (path === openPath ? " sel" : "");
+    row.style.paddingLeft = (8 + depth * 12) + "px";
+    const tw = document.createElement("span"); tw.className = "tw"; tw.textContent = isDir ? (expanded.has(path) ? "▾" : "▸") : "";
+    const ic = document.createElement("span"); ic.className = "fic"; ic.textContent = isDir ? "\uE8B7" : "\uE8A5";
+    const nm = document.createElement("span"); nm.textContent = name;
+    row.appendChild(tw); row.appendChild(ic); row.appendChild(nm);
+    if (isDir) row.onclick = () => { expanded.has(path) ? expanded.delete(path) : expanded.add(path); renderFiles(); };
+    else row.onclick = () => loadFile(path);
+    return row;
   }
-  async function renderInto(container, dir, depth) {
+  async function renderInto(container, dir, depth, gen) {
     const entries = await fs("fs.list", dir);
+    if (gen !== renderGen) return false;
     for (const e of entries) {
       const path = dir + "\\" + e.name;
-      const row = document.createElement("div");
-      row.className = "frow" + (path === openPath ? " sel" : "");
-      row.style.paddingLeft = (8 + depth * 12) + "px";
-      const tw = document.createElement("span"); tw.className = "tw"; tw.textContent = e.dir ? (expanded.has(path) ? "▾" : "▸") : "";
-      const ic = document.createElement("span"); ic.className = "fic"; ic.textContent = e.dir ? "\uE8B7" : "\uE8A5";
-      const nm = document.createElement("span"); nm.textContent = e.name;
-      row.appendChild(tw); row.appendChild(ic); row.appendChild(nm);
-      if (e.dir) row.onclick = () => { expanded.has(path) ? expanded.delete(path) : expanded.add(path); renderFiles(); };
-      else row.onclick = () => loadFile(path);
-      container.appendChild(row);
-      if (e.dir && expanded.has(path)) await renderInto(container, path, depth + 1);
+      container.appendChild(fileRow(path, e.name, e.dir, depth));
+      if (e.dir && expanded.has(path)) { if (!await renderInto(container, path, depth + 1, gen)) return false; }
     }
+    return true;
+  }
+  async function renderFiles() {
+    const gen = ++renderGen;
+    const roots = allRoots();
+    if (!roots.length) { $("filesTree").innerHTML = '<div class="fempty">' + T.filesEmpty + "</div>"; return; }
+    const frag = document.createDocumentFragment();
+    for (const r of roots) {
+      expanded.add(r.path);
+      frag.appendChild(fileRow(r.path, r.label, true, 0));
+      if (!await renderInto(frag, r.path, 1, gen)) return;
+    }
+    if (gen !== renderGen) return;
+    const el = $("filesTree"); el.innerHTML = ""; el.appendChild(frag);
   }
 
   function renderRoots() {
