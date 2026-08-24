@@ -104,7 +104,10 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
     {
         _agent = agent;
         _chat = chat;
-        _cwd = Workspace.ForChat(chat);
+
+        // A chat filed under a project works out of the project folder, so its tools default to the
+        // project's files; a loose chat gets its own private workspace.
+        _cwd = ProjectContext.WorkingDirectory(chat) ?? Workspace.ForChat(chat);
 
         // A chat that was switched to another model keeps it. Only the name is overridden; the
         // endpoint, key and permissions stay the agent's.
@@ -559,6 +562,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext", "L_ChatEarlier", "L_ChatEditing", "L_ChatCancelEdit", "L_ChatCompacting",
             "L_ChatCmdCompact", "L_ChatCmdCompactHint", "L_ChatCmdRetry", "L_ChatCmdRetryHint",
+            "L_ChatCmdExport", "L_ChatCmdExportHint",
             "L_ChatCtxCopy", "L_ChatCtxImage", "L_ChatCtxGoToFile", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
             "L_ChatRpAct", "L_ChatRpState", "L_ChatRpStatus", "L_ChatRpAttempt",
             "L_ChatRpMe", "L_ChatRpAgent", "L_ChatRpActPrompt",
@@ -678,7 +682,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         // The slash commands this chat answers to. A room reuses the same page but offers none of
         // these, so the set is declared per surface rather than baked into the page.
-        Post(new { t = "commands", names = new[] { "compact", "retry" } });
+        Post(new { t = "commands", names = new[] { "compact", "retry", "export" } });
 
         // The roleplay quick actions are for a character, not an assistant, so they show only
         // when this agent is one.
@@ -886,7 +890,116 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             case "regenerate":
                 Regenerate();
                 break;
+
+            case "export":
+                ExportMarkdown();
+                break;
         }
+    }
+
+    /// <summary>Writes the conversation out as a Markdown file the user picks — defaulting to the
+    /// project's folder for a project chat, so exporting there shares it into the project.</summary>
+    private void ExportMarkdown()
+    {
+        if (_history.Count == 0)
+        {
+            Post(new { t = "note", html = Markdown.Escape(LocalizationService.T("L_ChatExportEmpty")) });
+            return;
+        }
+
+        var name = _chat.BotName.Length > 0 ? _chat.BotName : _agent.Name;
+        var title = _chat.Title.Length > 0 ? _chat.Title : name;
+        var safe = SafeFileName(title);
+
+        var project = _chat.ProjectId.Length > 0
+            ? ProjectStore.Projects.FirstOrDefault(p => p.Id == _chat.ProjectId)
+            : null;
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = LocalizationService.T("L_ChatExportTitle"),
+            Filter = "Markdown (*.md)|*.md",
+            FileName = safe + ".md",
+            DefaultExt = ".md",
+        };
+
+        if (project is { Folder.Length: > 0 } && Directory.Exists(project.Folder))
+        {
+            dialog.InitialDirectory = project.Folder;
+        }
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, BuildMarkdown(name, title));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Post(new { t = "note", html = Markdown.Escape(string.Format(LocalizationService.T("L_ChatExportFailed"), ex.Message)) });
+            return;
+        }
+
+        var inProject = project is { Folder.Length: > 0 }
+            && dialog.FileName.StartsWith(project.Folder, StringComparison.OrdinalIgnoreCase);
+
+        Post(new
+        {
+            t = "note",
+            html = Markdown.Escape(string.Format(
+                LocalizationService.T(inProject ? "L_ChatExportedProject" : "L_ChatExported"),
+                Path.GetFileName(dialog.FileName))),
+        });
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dialog.FileName) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            System.Diagnostics.Debug.WriteLine($"Could not open export: {ex.Message}");
+        }
+    }
+
+    private string BuildMarkdown(string agentName, string title)
+    {
+        var sb = new StringBuilder();
+        sb.Append("# ").AppendLine(title);
+        sb.AppendLine().Append('*').Append(agentName).Append(" · ").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm")).AppendLine("*").AppendLine();
+
+        foreach (var turn in _history)
+        {
+            switch (turn.Role)
+            {
+                case "user":
+                    sb.AppendLine("## " + LocalizationService.T("L_ChatExportYou")).AppendLine().AppendLine(turn.Text.Trim()).AppendLine();
+                    break;
+                case "assistant":
+                    sb.AppendLine("## " + agentName).AppendLine().AppendLine(turn.Text.Trim()).AppendLine();
+                    break;
+                case "command":
+                    sb.AppendLine("```").Append("$ ").AppendLine(turn.Command.Trim());
+                    if (turn.Output.Trim().Length > 0)
+                    {
+                        sb.AppendLine(turn.Output.Trim());
+                    }
+
+                    sb.AppendLine("```").AppendLine();
+                    break;
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static string SafeFileName(string name)
+    {
+        var cleaned = new string(name.Trim().Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '-' : c).ToArray()).Trim();
+        cleaned = cleaned.Length > 60 ? cleaned[..60].TrimEnd() : cleaned;
+        return cleaned.Length > 0 ? cleaned : "chat";
     }
 
     /// <summary>
@@ -1116,6 +1229,135 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
 
         _chat.Touch();
         ChatStore.Save(_chat);
+
+        MaybeAutoTitle();
+    }
+
+    private bool _autoTitleTried;
+
+    /// <summary>
+    /// Once the first exchange exists, replaces the title we derived from the first message with a
+    /// short model-written one — a real summary of what the chat is about — unless the user has
+    /// already named it themselves. Runs once, in the background, and quietly keeps the derived
+    /// title if the model or network is unavailable.
+    /// </summary>
+    private async void MaybeAutoTitle()
+    {
+        if (_autoTitleTried)
+        {
+            return;
+        }
+
+        // An image agent's transport draws rather than writes, so a title request would return a
+        // picture — leave those on the derived title.
+        if (_agent.Provider == AiProvider.ImageGen)
+        {
+            return;
+        }
+
+        var user = _history.FirstOrDefault(t => t.Role == "user");
+        var assistant = _history.FirstOrDefault(t => t.Role == "assistant");
+
+        if (user is null || assistant is null || user.Text.Trim().Length == 0)
+        {
+            return;
+        }
+
+        _autoTitleTried = true;
+
+        // Only replace a title we derived ourselves — never one the user set by hand.
+        var derived = ChatSession.TitleFrom(user.Text);
+        if (_chat.Title.Length > 0 && _chat.Title != derived)
+        {
+            return;
+        }
+
+        var title = await GenerateTitleAsync(user.Text, assistant.Text).ConfigureAwait(true);
+
+        // Skip if it produced nothing, or the user renamed the chat while it was thinking.
+        if (title.Length == 0 || _disposed || (_chat.Title.Length > 0 && _chat.Title != derived))
+        {
+            return;
+        }
+
+        _chat.Title = title;
+        _chat.Touch();
+        ChatStore.Save(_chat);
+    }
+
+    private async Task<string> GenerateTitleAsync(string question, string answer)
+    {
+        try
+        {
+            // A bare clone: no system prompt, no roleplay card, no preamble or lessons — so the reply
+            // is a title and nothing else. Tools are off; this only wants a few words back.
+            var titler = _agent.Clone();
+            titler.SystemPrompt = string.Empty;
+            titler.EnvironmentPreamble = string.Empty;
+            titler.IsRoleplay = false;
+            titler.Lessons.Clear();
+            titler.MaxTokens = 40;
+            titler.Thinking = false;
+
+            using var transport = AgentTransports.For(titler, tools: null);
+
+            var prompt =
+                "Write a very short title (3–6 words) for this chat: no quotes, no trailing period, "
+                + "in the same language as the conversation. Reply with only the title.\n\n"
+                + "User: " + Shorten(question, 800) + "\n\nAssistant: " + Shorten(answer, 800);
+
+            var text = new StringBuilder();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+
+            await foreach (var item in transport.SendAsync([new AgentMessage(AgentRole.User, prompt)], timeout.Token).ConfigureAwait(true))
+            {
+                if (item.Kind == AgentEventKind.Text)
+                {
+                    text.Append(item.Text);
+                }
+                else if (item.Kind == AgentEventKind.Failed)
+                {
+                    return string.Empty;
+                }
+            }
+
+            return CleanTitle(text.ToString());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            System.Diagnostics.Debug.WriteLine($"Auto-title failed: {ex.Message}");
+            return string.Empty;
+        }
+        catch (OperationCanceledException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string Shorten(string text, int max)
+    {
+        text = text.Trim();
+        return text.Length > max ? text[..max] + "…" : text;
+    }
+
+    private static string CleanTitle(string raw)
+    {
+        var title = raw.Trim().ReplaceLineEndings(" ").Trim();
+
+        // Models sometimes wrap the title in quotes or lead with "Title:"; strip that.
+        if (title.StartsWith("Title:", StringComparison.OrdinalIgnoreCase))
+        {
+            title = title["Title:".Length..].Trim();
+        }
+
+        title = title.Trim('"', '\'', '«', '»', '“', '”', ' ', '.', ':', '—', '-');
+
+        while (title.Contains("  "))
+        {
+            title = title.Replace("  ", " ");
+        }
+
+        return title.Length > 70 ? title[..70].TrimEnd() + "…" : title;
     }
 
     // ---- a turn ----
@@ -1478,9 +1720,15 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             // The environment preamble is rebuilt here so it carries the working directory as it
             // stands now — a `cd` from the last turn is reflected before this one is sent. Over an
             // attached connection it describes the remote machine the tools now act on.
-            _agent.EnvironmentPreamble = _remote is not null
+            var preamble = _remote is not null
                 ? SystemInfo.RemotePreamble(_remote.Host, _remote.User, _remote.Cwd)
                 : SystemInfo.Preamble(_cwd);
+
+            // A project chat carries its project's orientation in the preamble, so the agent knows
+            // the description, notes, sources and layout without the user re-explaining each time.
+            _agent.EnvironmentPreamble = ProjectContext.Build(_chat) is { } project
+                ? preamble + "\n\n" + project
+                : preamble;
 
             await foreach (var item in _transport.SendAsync(Conversation(), turn.Token).ConfigureAwait(true))
             {

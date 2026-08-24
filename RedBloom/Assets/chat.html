@@ -1430,6 +1430,8 @@
     CmdCompactHint: "Summarise the earlier part of the chat to free the context",
     CmdRetry: "retry",
     CmdRetryHint: "Drop the last answer and ask for another",
+    CmdExport: "export",
+    CmdExportHint: "Save this chat as a Markdown file",
     CtxCopy: "Copy",
     CtxImage: "Copy as image",
     CtxGoToFile: "Go to file",
@@ -2813,6 +2815,7 @@
     const all = [
       { id: "compact", name: S.CmdCompact, hint: S.CmdCompactHint, run: () => post({ t: "command", name: "compact" }) },
       { id: "retry", name: S.CmdRetry, hint: S.CmdRetryHint, run: () => post({ t: "regenerate" }) },
+      { id: "export", name: S.CmdExport, hint: S.CmdExportHint, run: () => post({ t: "command", name: "export" }) },
     ];
     slashCmds = all.filter(c => slashEnabled.includes(c.id));
   }
