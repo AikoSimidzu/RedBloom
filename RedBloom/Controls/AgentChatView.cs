@@ -317,6 +317,11 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
                 Submit(text.GetString() ?? string.Empty, TaskPanel.ParseShared(message));
                 break;
 
+            case "askAnswer" when message.TryGetProperty("id", out var askId):
+                ResolveAsk(askId.GetString() ?? string.Empty,
+                    message.TryGetProperty("answer", out var ans) ? ans.GetString() ?? string.Empty : string.Empty);
+                break;
+
             case "regenerate":
                 Regenerate();
                 break;
@@ -550,6 +555,7 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             "L_ChatReasoning", "L_ChatStop",
             "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatLike", "L_ChatDislike",
             "L_ChatRegenerate", "L_ChatDislikeAsk", "L_ChatDislikeSend", "L_ChatThink",
+            "L_ChatAskPlaceholder", "L_ChatAskSend",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext", "L_ChatEarlier", "L_ChatEditing", "L_ChatCancelEdit", "L_ChatCompacting",
             "L_ChatCmdCompact", "L_ChatCmdCompactHint", "L_ChatCmdRetry", "L_ChatCmdRetryHint",
@@ -2014,6 +2020,14 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
             return await _remote.RunAsync(command, cancellationToken).ConfigureAwait(true);
         }
 
+        // Not attached and the model reached for ssh/plink locally: those run without a TTY here, so
+        // a password login hangs and the password would sit on the command line. Route the intent
+        // through RedBloom's own SSH client instead, connecting with the saved session's credentials.
+        if (!elevated && AgentSsh.Looks(command))
+        {
+            return await RouteSshAsync(command, cancellationToken).ConfigureAwait(true);
+        }
+
         // The repository state before the command, so its edits can be told apart from what was
         // already uncommitted. Cheap when there is no repo — git simply reports nothing.
         var snapshot = GitDiff.Before(command);
@@ -2042,12 +2056,142 @@ public sealed class AgentChatView : UserControl, IAgentToolHost, IDisposable
         return output;
     }
 
+    /// <summary>
+    /// Runs what an <c>ssh</c>/<c>plink</c> command intended over RedBloom's built-in SSH client
+    /// (SSH.NET) instead of spawning an external one: it matches the target to a saved session,
+    /// attaches it so this and later commands run there, and executes any remote command. When no
+    /// saved session matches, it asks for the session to be added rather than falling back to an
+    /// external ssh — so a password never lands on the command line or reaches the model.
+    /// </summary>
+    private async Task<string> RouteSshAsync(string command, CancellationToken cancellationToken)
+    {
+        if (AgentSsh.Parse(command) is not { } target)
+        {
+            return "RedBloom runs SSH through its own client, not an external ssh. Attach the session for that host (or add it in the sidebar) and I'll run commands over it.";
+        }
+
+        if (target.FileTransfer)
+        {
+            return "External scp/sftp is disabled. Attach the session for that host, then use the file tools (read_file / write_file) to move files over the built-in SSH.";
+        }
+
+        if (AgentSsh.Match(target) is not { } session)
+        {
+            var who = (target.User.Length > 0 ? target.User + "@" : string.Empty) + target.Host + (target.Port != 22 ? ":" + target.Port : string.Empty);
+            return $"External ssh/plink is disabled — I use RedBloom's built-in SSH (SSH.NET). No saved session matches {who}. Add it in the sidebar (with its password or key) or attach it, and I'll connect over the built-in client; the password then never goes on the command line or to me.";
+        }
+
+        if (_remoteSession != session.Id)
+        {
+            _remote?.Dispose();
+            _remote = new RemoteShell(session);
+            _remoteSession = session.Id;
+        }
+
+        Post(new
+        {
+            t = "note",
+            html = Markdown.Escape($"Using the built-in SSH for {session.Username}@{session.Host} — external ssh/plink is not used."),
+        });
+
+        if (target.RemoteCommand.Length == 0)
+        {
+            return $"Connected to {session.Username}@{session.Host} over the built-in SSH. run_command and the file tools now act on this host — run commands directly, without an ssh prefix.";
+        }
+
+        return await _remote!.RunAsync(target.RemoteCommand, cancellationToken).ConfigureAwait(true);
+    }
+
     /// <inheritdoc />
     /// <remarks>
     /// Nothing is copied or uploaded: the file is on the user's own machine and stays there. What
     /// the chat gains is a pin they can open or find in Explorer, which is the difference between
     /// a result they can use and a path they have to retype.
     /// </remarks>
+    // ---- ask the user ----
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<string>> _pendingAsks = new();
+
+    /// <summary>
+    /// Puts the model's question to the user in the chat and waits for their answer. Preset options
+    /// are shown as buttons; the user may always type their own answer instead.
+    /// </summary>
+    public Task<string> AskUserAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var question = string.Empty;
+        var options = new List<string>();
+
+        try
+        {
+            var root = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson).RootElement;
+            if (root.TryGetProperty(AgentTransports.AskUser.Question, out var q) && q.ValueKind == JsonValueKind.String)
+            {
+                question = q.GetString() ?? string.Empty;
+            }
+
+            if (root.TryGetProperty(AgentTransports.AskUser.Options, out var o) && o.ValueKind == JsonValueKind.Array)
+            {
+                options = o.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.String)
+                    .Select(x => (x.GetString() ?? string.Empty).Trim())
+                    .Where(s => s.Length > 0)
+                    .Take(6)
+                    .ToList();
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through with whatever parsed.
+        }
+
+        question = question.Trim();
+        if (question.Length == 0)
+        {
+            return Task.FromResult("(no question was provided to ask)");
+        }
+
+        var id = Guid.NewGuid().ToString("N");
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingAsks[id] = tcs;
+
+        // If the turn is cancelled while waiting, let the model move on instead of hanging forever.
+        var registration = cancellationToken.Register(() =>
+        {
+            if (_pendingAsks.TryRemove(id, out var pending))
+            {
+                pending.TrySetResult("(the user did not answer — the request was cancelled)");
+                Post(new { t = "askDone", id });
+            }
+        });
+
+        Post(new { t = "ask", id, question, options });
+
+        return Finish();
+
+        async Task<string> Finish()
+        {
+            try
+            {
+                return await tcs.Task.ConfigureAwait(false);
+            }
+            finally
+            {
+                registration.Dispose();
+                _pendingAsks.TryRemove(id, out _);
+            }
+        }
+    }
+
+    /// <summary>The user answered a question the model asked; hand the text back to the waiting call.</summary>
+    private void ResolveAsk(string id, string answer)
+    {
+        if (id.Length > 0 && _pendingAsks.TryRemove(id, out var tcs))
+        {
+            answer = answer.Trim();
+            tcs.TrySetResult(answer.Length > 0 ? answer : "(the user gave an empty answer)");
+        }
+    }
+
     public Task<string> ShareAsync(string path, string note, CancellationToken cancellationToken)
     {
         path = path.Trim().Trim('"');

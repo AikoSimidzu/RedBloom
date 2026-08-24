@@ -545,6 +545,15 @@ public partial class ProjectHomeView : UserControl, IDisposable
             return;
         }
 
+        var wasConnected = GitHubClient.IsConnected;
+        if (!wasConnected || !await GitHubClient.EnsureValidAsync())
+        {
+            MessageBox.Show(Window.GetWindow(this),
+                LocalizationService.T(wasConnected ? "L_GhReauth" : "L_GhNotConnected"),
+                "GitHub", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
         var token = GitHubClient.CurrentToken();
         var cloneUrl = source.Repo.Length > 0 ? $"https://github.com/{source.Repo}.git" : source.Url;
         var target = Path.Combine(_project.Folder, SafeName(source.Name));
@@ -570,9 +579,12 @@ public partial class ProjectHomeView : UserControl, IDisposable
     /// </summary>
     private async void PublishProject()
     {
-        if (!GitHubClient.IsConnected)
+        var wasConnected = GitHubClient.IsConnected;
+        if (!wasConnected || !await GitHubClient.EnsureValidAsync())
         {
-            MessageBox.Show(Window.GetWindow(this), LocalizationService.T("L_GhNotConnected"), "GitHub", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(Window.GetWindow(this),
+                LocalizationService.T(wasConnected ? "L_GhReauth" : "L_GhNotConnected"),
+                "GitHub", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 

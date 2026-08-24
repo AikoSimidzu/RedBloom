@@ -225,6 +225,11 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
                     message.TryGetProperty("editIndex", out var ei) && ei.TryGetInt32(out var eiv) ? eiv : -1);
                 break;
 
+            case "askAnswer" when message.TryGetProperty("id", out var askId):
+                ResolveAsk(askId.GetString() ?? string.Empty,
+                    message.TryGetProperty("answer", out var ans) ? ans.GetString() ?? string.Empty : string.Empty);
+                break;
+
             case "stop":
                 StopTurn();
                 break;
@@ -1292,6 +1297,7 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
         [
             "L_ChatAsk", "L_ChatSend", "L_ChatStop", "L_ChatCopied", "L_ChatReasoning", "L_ChatDropFiles", "L_ChatRevert", "L_ChatReverted",
             "L_ChatCopy", "L_ChatRepeat", "L_ChatEdit", "L_ChatThink",
+            "L_ChatAskPlaceholder", "L_ChatAskSend",
             "L_ChatDownload", "L_ChatCopyImage", "L_ChatOpenExternal", "L_ChatClose",
             "L_ChatPrev", "L_ChatNext",
             "L_ChatCtxCopy", "L_ChatCtxImage", "L_ChatCtxGoToFile", "L_ChatCtxWeb", "L_ChatCtxAsk", "L_ChatCtxAskOther",
@@ -1718,6 +1724,13 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
             return await _remote.RunAsync(command, cancellationToken).ConfigureAwait(true);
         }
 
+        // Reach for the built-in SSH client rather than an external ssh/plink (which hangs on a
+        // password login without a TTY and would put the password on the command line).
+        if (!elevated && AgentSsh.Looks(command))
+        {
+            return await RouteSshAsync(command, cancellationToken).ConfigureAwait(true);
+        }
+
         var snapshot = GitDiff.Before(command);
 
         string output;
@@ -1740,6 +1753,126 @@ public sealed class RoomChatView : UserControl, IDisposable, IAgentToolHost
 
         _pendingDiff = GitDiff.After(snapshot);
         return output;
+    }
+
+    /// <summary>Runs an ssh/plink command's intent over the built-in SSH client; see AgentChatView for the rationale.</summary>
+    private async Task<string> RouteSshAsync(string command, CancellationToken cancellationToken)
+    {
+        if (AgentSsh.Parse(command) is not { } target)
+        {
+            return "RedBloom runs SSH through its own client, not an external ssh. Attach the session for that host (or add it in the sidebar) and I'll run commands over it.";
+        }
+
+        if (target.FileTransfer)
+        {
+            return "External scp/sftp is disabled. Attach the session for that host, then use the file tools (read_file / write_file) to move files over the built-in SSH.";
+        }
+
+        if (AgentSsh.Match(target) is not { } session)
+        {
+            var who = (target.User.Length > 0 ? target.User + "@" : string.Empty) + target.Host + (target.Port != 22 ? ":" + target.Port : string.Empty);
+            return $"External ssh/plink is disabled — I use RedBloom's built-in SSH (SSH.NET). No saved session matches {who}. Add it in the sidebar (with its password or key) or attach it, and I'll connect over the built-in client.";
+        }
+
+        if (_remoteSession != session.Id)
+        {
+            _remote?.Dispose();
+            _remote = new RemoteShell(session);
+            _remoteSession = session.Id;
+        }
+
+        Post(new
+        {
+            t = "note",
+            html = Markdown.Escape($"Using the built-in SSH for {session.Username}@{session.Host} — external ssh/plink is not used."),
+        });
+
+        if (target.RemoteCommand.Length == 0)
+        {
+            return $"Connected to {session.Username}@{session.Host} over the built-in SSH. run_command and the file tools now act on this host — run commands directly, without an ssh prefix.";
+        }
+
+        return await _remote!.RunAsync(target.RemoteCommand, cancellationToken).ConfigureAwait(true);
+    }
+
+    // ---- ask the user ----
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<string>> _pendingAsks = new();
+
+    /// <summary>Puts the model's question to the user in the room and waits for their answer.</summary>
+    public Task<string> AskUserAsync(string argumentsJson, CancellationToken cancellationToken)
+    {
+        var question = string.Empty;
+        var options = new List<string>();
+
+        try
+        {
+            var root = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson).RootElement;
+            if (root.TryGetProperty(AgentTransports.AskUser.Question, out var q) && q.ValueKind == JsonValueKind.String)
+            {
+                question = q.GetString() ?? string.Empty;
+            }
+
+            if (root.TryGetProperty(AgentTransports.AskUser.Options, out var o) && o.ValueKind == JsonValueKind.Array)
+            {
+                options = o.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.String)
+                    .Select(x => (x.GetString() ?? string.Empty).Trim())
+                    .Where(s => s.Length > 0)
+                    .Take(6)
+                    .ToList();
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through with whatever parsed.
+        }
+
+        question = question.Trim();
+        if (question.Length == 0)
+        {
+            return Task.FromResult("(no question was provided to ask)");
+        }
+
+        var id = Guid.NewGuid().ToString("N");
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingAsks[id] = tcs;
+
+        var registration = cancellationToken.Register(() =>
+        {
+            if (_pendingAsks.TryRemove(id, out var pending))
+            {
+                pending.TrySetResult("(the user did not answer — the request was cancelled)");
+                Post(new { t = "askDone", id });
+            }
+        });
+
+        Post(new { t = "ask", id, question, options });
+
+        return Finish();
+
+        async Task<string> Finish()
+        {
+            try
+            {
+                return await tcs.Task.ConfigureAwait(false);
+            }
+            finally
+            {
+                registration.Dispose();
+                _pendingAsks.TryRemove(id, out _);
+            }
+        }
+    }
+
+    /// <summary>The user answered a question the model asked; hand the text back to the waiting call.</summary>
+    private void ResolveAsk(string id, string answer)
+    {
+        if (id.Length > 0 && _pendingAsks.TryRemove(id, out var tcs))
+        {
+            answer = answer.Trim();
+            tcs.TrySetResult(answer.Length > 0 ? answer : "(the user gave an empty answer)");
+        }
     }
 
     /// <inheritdoc />

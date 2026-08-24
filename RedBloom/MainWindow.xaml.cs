@@ -559,14 +559,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     /// </summary>
     private void NewChatInProject(Project project)
     {
-        if (SelectedAgent is not { } agent)
+        // A chat in a project starts from a model choice. The list is taken from the configured
+        // agents (not the sidebar picker, which may be empty in the Projects view), so it works
+        // whichever panel is open.
+        var agents = AvailableAgents();
+
+        if (agents.Count == 0)
         {
             MessageBox.Show(this, LocalizationService.T("L_ProjectNeedAgent"),
                 LocalizationService.T("L_ProjectsTab"), MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        OpenChatTab(agent.Clone(), new ChatSession { AgentId = agent.Id, ProjectId = project.Id });
+        if (Views.AgentPickerDialog.Pick(this, agents) is not { } agent)
+        {
+            return;
+        }
+
+        var chat = new ChatSession { AgentId = agent.Id, ProjectId = project.Id };
+
+        // Register it now so it shows under the project immediately, the way a new room does —
+        // ChatStore.Save would skip it while it is still empty. Writing to disk still waits for the
+        // first message.
+        if (!ChatStore.Chats.Contains(chat))
+        {
+            ChatStore.Chats.Insert(0, chat);
+        }
+
+        OpenChatTab(agent.Clone(), chat);
+        RefreshProjects();
+    }
+
+    /// <summary>The agents a new chat can use: the configured ones, the Claude CLI when present, and local model files.</summary>
+    private static List<AiAgent> AvailableAgents()
+    {
+        var saved = ThemeService.Settings.Agents;
+        var savedIds = saved.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+
+        List<AiAgent> stock = Services.Ai.ClaudeCli.IsInstalled
+            || ChatStore.Chats.Any(c => c.AgentId == Services.Ai.ClaudeCli.AgentId)
+                ? [Services.Ai.ClaudeCli.Agent]
+                : [];
+
+        var local = Services.Ai.LocalAgents.FromFiles().Where(a => !savedIds.Contains(a.Id));
+
+        return [.. saved, .. stock, .. local];
     }
 
     /// <summary>Opens a project's relationship tree as its own tab.</summary>

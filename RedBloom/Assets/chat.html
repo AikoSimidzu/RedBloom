@@ -445,6 +445,27 @@
     font-size: 12.5px;
     color: var(--muted);
   }
+
+  /* a question the agent asked, with preset answers and a free-text box */
+  .askcard { margin: 10px 0; padding: 13px 15px; border: 1px solid var(--accent-dim, var(--divider));
+             border-left: 3px solid var(--accent); border-radius: 10px; background: var(--surface-raised, rgba(127,127,127,.06)); }
+  .askcard .askq { color: var(--text); font-size: 13.5px; font-weight: 600; line-height: 1.45; margin-bottom: 10px; white-space: pre-wrap; }
+  .askcard .askopts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 9px; }
+  .askcard .askopts:empty { display: none; }
+  .askcard .askopt { text-align: left; padding: 8px 11px; border: 1px solid var(--divider); border-radius: 7px;
+                     background: var(--chrome, transparent); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
+  .askcard .askopt:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-dim, rgba(127,127,127,.12)); }
+  .askcard .askrow { display: flex; gap: 7px; }
+  .askcard .askinput { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--divider); border-radius: 7px;
+                       background: var(--chrome, transparent); color: var(--text); font: inherit; font-size: 12.5px; }
+  .askcard .askinput:focus { outline: none; border-color: var(--accent); }
+  .askcard .asksend { padding: 8px 14px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent-dim, transparent);
+                      color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+  .askcard button:disabled, .askcard input:disabled { opacity: .5; cursor: default; }
+  .askcard.answered { border-left-color: var(--faint); }
+  .askcard .askchosen { margin-top: 9px; color: var(--muted); font-size: 12px; }
+  .askcard .askchosen::before { content: "→ "; color: var(--accent); }
+  .askcard.cancelled .askchosen::before { content: ""; }
   .act .acthead { display: flex; align-items: center; gap: 8px; }
 
   .act .mark { color: var(--accent); flex: 0 0 auto; }
@@ -2404,7 +2425,66 @@
       log.appendChild(el("div", "act done", "<span class=\"mark\">·</span><span>" + m.html + "</span>"));
       follow();
     },
+
+    ask(m) {
+      openTurn = null;
+      const card = el("div", "askcard");
+      card.dataset.id = m.id;
+
+      const q = el("div", "askq");
+      q.textContent = m.question;               // model text — set as text, never HTML
+      card.appendChild(q);
+
+      const opts = el("div", "askopts");
+      for (const text of (m.options || [])) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "askopt"; b.textContent = text;
+        b.onclick = () => answerAsk(card, text);
+        opts.appendChild(b);
+      }
+      card.appendChild(opts);
+
+      const row = el("div", "askrow");
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.className = "askinput";
+      inp.placeholder = S.AskPlaceholder || "Type your own answer…";
+      inp.onkeydown = (ev) => {
+        if (ev.key === "Enter") { ev.preventDefault(); const v = inp.value.trim(); if (v) answerAsk(card, v); }
+      };
+      const send = document.createElement("button");
+      send.type = "button"; send.className = "asksend"; send.textContent = S.AskSend || "Send";
+      send.onclick = () => { const v = inp.value.trim(); if (v) answerAsk(card, v); };
+      row.appendChild(inp); row.appendChild(send);
+      card.appendChild(row);
+
+      log.appendChild(card);
+      follow();
+      setTimeout(() => inp.focus(), 40);
+    },
+
+    askDone(m) {
+      const card = log.querySelector('.askcard[data-id="' + (window.CSS && CSS.escape ? CSS.escape(m.id) : m.id) + '"]');
+      if (card && !card.classList.contains("answered")) {
+        card.classList.add("answered", "cancelled");
+        disableAsk(card);
+      }
+    },
   };
+
+  function disableAsk(card) {
+    for (const x of card.querySelectorAll("button, input")) x.disabled = true;
+  }
+
+  function answerAsk(card, answer) {
+    if (card.classList.contains("answered")) return;
+    card.classList.add("answered");
+    disableAsk(card);
+    const chosen = el("div", "askchosen");
+    chosen.textContent = answer;
+    card.appendChild(chosen);
+    post({ t: "askAnswer", id: card.dataset.id, answer });
+    follow();
+  }
 
   window.chrome.webview.addEventListener("message", (e) => {
     let message;

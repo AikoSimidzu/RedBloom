@@ -57,6 +57,22 @@ public partial class SettingsPage : UserControl
         var canSignIn = GitHubClient.CanSignIn;
         GhBrowserPanel.Visibility = canSignIn ? Visibility.Visible : Visibility.Collapsed;
         GhOrToken.Visibility = canSignIn ? Visibility.Visible : Visibility.Collapsed;
+
+        // If the stored token has quietly gone dead (e.g. an OAuth App that expires tokens), clear it
+        // and switch back to the sign-in view — so the page never shows "connected" with a token that
+        // no longer works.
+        if (connected)
+        {
+            _ = ValidateGitHubAsync();
+        }
+    }
+
+    private async Task ValidateGitHubAsync()
+    {
+        if (!await GitHubClient.EnsureValidAsync().ConfigureAwait(true) && !GitHubClient.IsConnected)
+        {
+            RefreshGitHub();
+        }
     }
 
     private void GhSignIn_Click(object sender, RoutedEventArgs e)

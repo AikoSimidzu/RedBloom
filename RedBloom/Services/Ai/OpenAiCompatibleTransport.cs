@@ -236,6 +236,22 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                     continue;
                 }
 
+                // Asking the user a question waits for their answer; it changes nothing, so no approval.
+                if (call.Name == AgentTransports.AskUser.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Asking);
+
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = id,
+                        content = await _tools!.AskUserAsync(call.Command, cancellationToken)
+                            .ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
                 // Seeing, focusing or closing a window needs no separate approval; the arguments
                 // ride in Command as they arrived.
                 if (call.Name == AgentTransports.Window.Name)
@@ -469,6 +485,7 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
                 // The whole arguments object is carried in Command untouched, so the host parses the
                 // task fields itself and nothing here needs to know their shape.
                 if (name == AgentTransports.Tasks.Name
+                    || name == AgentTransports.AskUser.Name
                     || name == AgentTransports.Window.Name
                     || name == AgentTransports.Mouse.Name
                     || name == AgentTransports.Keyboard.Name
@@ -639,6 +656,12 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
 
             if (_tools is { TasksEnabled: true })
             {
+                tools.Add(Function(AgentTransports.AskUser.Name, AgentTransports.AskUser.Description, new()
+                {
+                    [AgentTransports.AskUser.Question] = Property("string", AgentTransports.AskUser.QuestionDescription),
+                    [AgentTransports.AskUser.Options] = ArrayProperty("string", AgentTransports.AskUser.OptionsDescription),
+                }, AgentTransports.AskUser.Question));
+
                 tools.Add(Function(AgentTransports.Tasks.Name, AgentTransports.Tasks.Description, new()
                 {
                     [AgentTransports.Tasks.Op] = Property("string", AgentTransports.Tasks.OpDescription),
@@ -667,6 +690,9 @@ public sealed class OpenAiCompatibleTransport : IAgentTransport
     }
 
     private static object Property(string type, string description) => new { type, description };
+
+    private static object ArrayProperty(string itemType, string description) =>
+        new { type = "array", items = new { type = itemType }, description };
 
     private static object Function(string name, string description, Dictionary<string, object> properties, string required) =>
         Function(name, description, properties, new[] { required });

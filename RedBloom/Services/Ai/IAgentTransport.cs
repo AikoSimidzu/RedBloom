@@ -233,6 +233,13 @@ public interface IAgentToolHost
     Task<string> ManageTasksAsync(string argumentsJson, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Puts a question to the user — with optional preset answers shown as buttons — and returns the
+    /// answer they pick or type. Needs no approval; it only asks.
+    /// </summary>
+    /// <param name="argumentsJson">The tool call's raw arguments, as the model sent them.</param>
+    Task<string> AskUserAsync(string argumentsJson, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Carries out one of the file tools — read, write, edit or list — and returns the result. A
     /// write or edit is put to the user the same way a command is; a read or a listing is not.
     /// </summary>
@@ -416,6 +423,39 @@ public static class AgentTransports
 
         public const string Note = "note";
         public const string NoteDescription = "A short progress note to show the user, for op \"report\".";
+    }
+
+    /// <summary>
+    /// The ask-the-user tool, described the same way to both APIs.
+    /// </summary>
+    /// <remarks>
+    /// Lets the agent put a genuine question to the person it is talking to and wait for the answer,
+    /// the way an assistant confirms a decision instead of guessing. Preset options are shown as
+    /// buttons; the user can always type their own answer instead, so no catch-all option is needed.
+    /// It changes nothing on the machine, so it needs no approval.
+    /// </remarks>
+    public static class AskUser
+    {
+        public const string Name = "ask_user";
+
+        public const string Description =
+            "Ask the user a question and get their answer back — the way a careful assistant checks a "
+            + "decision instead of guessing. Use it when you genuinely need the person to choose or "
+            + "clarify: which option, which approach, a missing detail. Offer 2–4 concrete answers in "
+            + "\"options\" when the choice is between known alternatives; the user can always type their "
+            + "own answer instead, so you never need a catch-all \"other\" option. Ask one focused "
+            + "question at a time, and only when you cannot reasonably decide yourself. The result is "
+            + "the user's answer as plain text — an option they picked, or what they typed.";
+
+        public const string Question = "question";
+
+        public const string QuestionDescription = "The single, clear question to put to the user.";
+
+        public const string Options = "options";
+
+        public const string OptionsDescription =
+            "Optional. 2–4 short preset answers to offer as buttons. The user may still type their own "
+            + "answer instead, so do not add an \"other\" or \"something else\" option.";
     }
 
     /// <summary>

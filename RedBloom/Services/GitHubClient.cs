@@ -70,6 +70,46 @@ public static class GitHubClient
     public readonly record struct Repo(string FullName, string Name, string Owner, string Url, string CloneUrl, bool Private, string Description, int Stars);
 
     /// <summary>
+    /// Confirms the stored token still works. A token can be accepted at sign-in and later go dead —
+    /// most often because the OAuth App expires its tokens — after which git and the API return 401.
+    /// On a definite rejection the token is forgotten so the UI falls back to "sign in"; a transient
+    /// network error is not treated as a rejection, so a brief outage does not sign the user out.
+    /// </summary>
+    public static async Task<bool> EnsureValidAsync(CancellationToken cancellationToken = default)
+    {
+        var token = Token();
+        if (token.Length == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var request = Build(HttpMethod.Get, "https://api.github.com/user", token);
+            using var response = await Http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(json);
+                Login = doc.RootElement.TryGetProperty("login", out var login) ? login.GetString() ?? string.Empty : string.Empty;
+                return true;
+            }
+
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            {
+                Disconnect();   // the token is dead — clear it so the app offers a fresh sign-in
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return true;   // could not reach GitHub; assume the token is still good rather than sign out
+        }
+    }
+
+    /// <summary>
     /// Signs in with a token: checks it against <c>/user</c>, and on success remembers it and the
     /// login. Returns null on success, or a message to show on failure.
     /// </summary>

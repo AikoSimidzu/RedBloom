@@ -296,7 +296,10 @@ public partial class AiSettingsPage : UserControl
     private void Tunnel_Changed(object sender, SelectionChangedEventArgs e) => Capture();
 
     /// <summary>A connection as the picker lists it, or the "no tunnel" row.</summary>
-    private sealed record TunnelChoice(string Id, string Name);
+    // Public on purpose: WPF's DisplayMemberPath binds by reflection and cannot read the properties
+    // of a non-public type, so a private record here would fall back to ToString() and show
+    // "TunnelChoice { Id = …, Name = … }" instead of the session name.
+    public sealed record TunnelChoice(string Id, string Name);
 
     // ---- editing ----
 

@@ -491,6 +491,20 @@ public sealed class AnthropicTransport : IAgentTransport
                     continue;
                 }
 
+                // Asking the user waits for their answer; it changes nothing, so no approval.
+                if (call.Name == AgentTransports.AskUser.Name)
+                {
+                    yield return AgentEvent.Doing(AgentPhase.Asking);
+
+                    results.Add(new ToolResultBlockParam
+                    {
+                        ToolUseID = id,
+                        Content = await _tools!.AskUserAsync(call.Arguments, cancellationToken).ConfigureAwait(false),
+                    });
+
+                    continue;
+                }
+
                 // Asking another agent runs it and returns what it produced; no approval, the same
                 // as the other tools that make rather than change.
                 if (call.Name == AgentTransports.Ask.Name)
@@ -1037,6 +1051,21 @@ public sealed class AnthropicTransport : IAgentTransport
         {
             tools.Add(new Tool
             {
+                Name = AgentTransports.AskUser.Name,
+                Description = AgentTransports.AskUser.Description,
+                InputSchema = new()
+                {
+                    Properties = new Dictionary<string, System.Text.Json.JsonElement>
+                    {
+                        [AgentTransports.AskUser.Question] = Schema("string", AgentTransports.AskUser.QuestionDescription),
+                        [AgentTransports.AskUser.Options] = ArraySchema("string", AgentTransports.AskUser.OptionsDescription),
+                    },
+                    Required = [AgentTransports.AskUser.Question],
+                },
+            });
+
+            tools.Add(new Tool
+            {
                 Name = AgentTransports.Tasks.Name,
                 Description = AgentTransports.Tasks.Description,
                 InputSchema = new()
@@ -1084,6 +1113,9 @@ public sealed class AnthropicTransport : IAgentTransport
 
     private static System.Text.Json.JsonElement Schema(string type, string description) =>
         System.Text.Json.JsonSerializer.SerializeToElement(new { type, description });
+
+    private static System.Text.Json.JsonElement ArraySchema(string itemType, string description) =>
+        System.Text.Json.JsonSerializer.SerializeToElement(new { type = "array", items = new { type = itemType }, description });
 
     /// <summary>
     /// The effort level to ask for, lowered when it would contradict the thinking setting.
