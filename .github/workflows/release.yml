@@ -1,0 +1,87 @@
+name: Build & Release
+
+# Publishes a self-contained Windows build as a .zip attached to a GitHub Release.
+#
+# Triggers:
+#   • push a tag like v1.0.0  → builds and creates the Release automatically
+#   • run manually (Actions → Build & Release → Run workflow):
+#       - give a tag (e.g. v1.0.0) to build AND publish a Release
+#       - leave the tag empty to build only (the .zip is kept as a workflow artifact)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. v1.0.0 (empty = build only, no Release)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write        # required to create the Release and upload the archive
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' } else { '${{ github.event.inputs.tag }}' }
+          $isRelease = -not [string]::IsNullOrWhiteSpace($tag)
+          if (-not $isRelease) { $tag = "ci-$(Get-Date -Format 'yyyyMMdd-HHmmss')" }
+          "tag=$tag"           | Out-File $env:GITHUB_OUTPUT -Append
+          "release=$isRelease" | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Version: $tag  (release: $isRelease)"
+
+      - name: Restore
+        run: dotnet restore RedBloom/RedBloom.csproj
+
+      - name: Publish (self-contained, win-x64)
+        run: >
+          dotnet publish RedBloom/RedBloom.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=false
+          -p:DebugType=none
+          -o publish
+
+      - name: Create archive
+        id: zip
+        shell: pwsh
+        run: |
+          $name = "RedBloom-${{ steps.ver.outputs.tag }}-win-x64.zip"
+          Compress-Archive -Path publish/* -DestinationPath $name -Force
+          "name=$name" | Out-File $env:GITHUB_OUTPUT -Append
+          $mb = [math]::Round((Get-Item $name).Length / 1MB, 1)
+          Write-Host "Created $name ($mb MB)"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedBloom-win-x64
+          path: ${{ steps.zip.outputs.name }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.ver.outputs.release == 'True'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: RedBloom ${{ steps.ver.outputs.tag }}
+          files: ${{ steps.zip.outputs.name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
