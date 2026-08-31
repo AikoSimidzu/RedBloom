@@ -585,9 +585,7 @@ public partial class ProjectHomeView : UserControl, IDisposable
         var wasConnected = GitHubClient.IsConnected;
         if (!wasConnected || !await GitHubClient.EnsureValidAsync())
         {
-            MessageBox.Show(Window.GetWindow(this),
-                LocalizationService.T(wasConnected ? "L_GhReauth" : "L_GhNotConnected"),
-                "GitHub", MessageBoxButton.OK, MessageBoxImage.Information);
+            Post(new { t = "publishStatus", state = "error", text = LocalizationService.T(wasConnected ? "L_GhReauth" : "L_GhNotConnected") });
             return;
         }
 
@@ -614,23 +612,28 @@ public partial class ProjectHomeView : UserControl, IDisposable
             return;
         }
 
+        Post(new { t = "publishStatus", state = "start" });
+
         ExportMetadata();
         WriteGitIgnore(choice.ImportAll);
 
         var repo = await GitHubClient.CreateRepoAsync(SafeName(choice.Name), choice.Private).ConfigureAwait(true);
         if (repo is not { } r)
         {
-            MessageBox.Show(Window.GetWindow(this), LocalizationService.T("L_PublishRepoFailed"), "GitHub", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Post(new { t = "publishStatus", state = "error", text = LocalizationService.T("L_PublishRepoFailed") });
             return;
         }
 
-        Post(new { t = "publishStatus", state = "start" });
+        if (choice.ImportAll)
+        {
+            await SyncExternalSourcesAsync(PublishProgress()).ConfigureAwait(true);
+        }
+
         var error = await GitOps.PublishAsync(_project.Folder, r.CloneUrl, GitHubClient.CurrentToken(), choice.Message, PublishProgress()).ConfigureAwait(true);
-        Post(new { t = "publishStatus", state = error is null ? "done" : "error", text = error ?? string.Empty });
+        Post(new { t = "publishStatus", state = error is null ? "done" : "error", text = error ?? r.FullName });
 
         if (error is not null)
         {
-            MessageBox.Show(Window.GetWindow(this), error, LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -640,9 +643,6 @@ public partial class ProjectHomeView : UserControl, IDisposable
         PushSources();
         PushGitBadges();
         Post(new { t = "published" });
-
-        MessageBox.Show(Window.GetWindow(this), string.Format(LocalizationService.T("L_PublishDone"), r.FullName),
-            LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private async Task UpdateRepo()
@@ -653,18 +653,19 @@ public partial class ProjectHomeView : UserControl, IDisposable
             return;
         }
 
+        Post(new { t = "publishStatus", state = "start" });
+
         ExportMetadata();
         WriteGitIgnore(choice.ImportAll);
 
+        if (choice.ImportAll)
+        {
+            await SyncExternalSourcesAsync(PublishProgress()).ConfigureAwait(true);
+        }
+
         var cloneUrl = $"https://github.com/{_project.PublishedRepo}.git";
-
-        Post(new { t = "publishStatus", state = "start" });
         var error = await GitOps.PublishAsync(_project.Folder, cloneUrl, GitHubClient.CurrentToken(), choice.Message, PublishProgress()).ConfigureAwait(true);
-        Post(new { t = "publishStatus", state = error is null ? "done" : "error", text = error ?? string.Empty });
-
-        MessageBox.Show(Window.GetWindow(this),
-            error ?? string.Format(LocalizationService.T("L_UpdateDone"), _project.PublishedRepo),
-            LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, error is null ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        Post(new { t = "publishStatus", state = error is null ? "done" : "error", text = error ?? _project.PublishedRepo });
 
         PushGitBadges();
     }
@@ -672,6 +673,83 @@ public partial class ProjectHomeView : UserControl, IDisposable
     /// <summary>A progress sink that streams git's publish progress to the page as it happens.</summary>
     private IProgress<string> PublishProgress() =>
         new Progress<string>(line => Post(new { t = "publishStatus", state = "progress", text = line }));
+
+    private static readonly string[] CopySkip =
+        [".git", ".git__rbpublish", ".vs", "bin", "obj", "node_modules", "packages", "target", ".chats", ".rooms"];
+
+    /// <summary>
+    /// Copies every linked source folder that lives outside the project into the project folder, so a
+    /// full publish actually carries the code. A VS or local source is referenced by its own path,
+    /// which is usually outside the project, so it would never be inside the published repository
+    /// otherwise. Build output and VCS folders are skipped; sources already inside are left to git.
+    /// </summary>
+    private Task SyncExternalSourcesAsync(IProgress<string>? progress) => Task.Run(() =>
+    {
+        var root = Path.GetFullPath(_project.Folder);
+        var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+
+        foreach (var source in _project.Sources.ToList())
+        {
+            if (source.Path.Length == 0 || !Directory.Exists(source.Path))
+            {
+                continue;
+            }
+
+            string src;
+            try
+            {
+                src = Path.GetFullPath(source.Path);
+            }
+            catch (Exception ex) when (ex is ArgumentException or PathTooLongException)
+            {
+                continue;
+            }
+
+            // Already inside the project folder (e.g. a cloned GitHub source) — git handles it.
+            if (src.Equals(root, StringComparison.OrdinalIgnoreCase)
+                || src.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            progress?.Report($"Copying {source.Name}…");
+
+            try
+            {
+                CopyTree(src, Path.Combine(root, SafeName(source.Name)));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Debug.WriteLine($"Could not copy source {src}: {ex.Message}");
+            }
+        }
+    });
+
+    private static void CopyTree(string src, string dest)
+    {
+        Directory.CreateDirectory(dest);
+
+        foreach (var dir in Directory.EnumerateDirectories(src))
+        {
+            var name = Path.GetFileName(dir);
+            if (!CopySkip.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                CopyTree(dir, Path.Combine(dest, name));
+            }
+        }
+
+        foreach (var file in Directory.EnumerateFiles(src))
+        {
+            try
+            {
+                File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Debug.WriteLine($"Could not copy file {file}: {ex.Message}");
+            }
+        }
+    }
 
     /// <summary>
     /// Writes the .gitignore that decides what the publish carries. With <paramref name="importAll"/>

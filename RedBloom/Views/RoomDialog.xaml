@@ -69,7 +69,20 @@
                     <ItemsControl x:Name="AgentsList" Margin="8,6">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Margin="0,3,0,5">
+                                <Border Margin="0,0,0,6" Padding="10,7" CornerRadius="8" BorderThickness="1">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{DynamicResource Chrome}" />
+                                            <Setter Property="BorderBrush" Value="{DynamicResource Divider}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Chosen}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource AccentDim}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                <StackPanel>
                                     <CheckBox IsChecked="{Binding Chosen, Mode=TwoWay}"
                                               VerticalContentAlignment="Center"
                                               Foreground="{DynamicResource TextPrimary}">
@@ -161,6 +174,7 @@
                                                  Text="{Binding ContextWindow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     </Grid>
                                 </StackPanel>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
