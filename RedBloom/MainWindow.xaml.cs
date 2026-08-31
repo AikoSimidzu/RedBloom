@@ -1169,13 +1169,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     /// </summary>
     private AiAgent? AgentForChat(ChatSession chat)
     {
-        if (AgentPicker.ItemsSource is IEnumerable<AiAgent> agents
-            && agents.FirstOrDefault(a => a.Id == chat.AgentId) is { } owner)
-        {
-            return owner;
-        }
+        // From the full available set — the configured agents plus Claude CLI and local model files —
+        // not the sidebar picker, which is empty until the AI panel has been opened. Otherwise a
+        // project chat could not open until the user first visited that panel.
+        var agents = AvailableAgents();
 
-        return SelectedAgent;
+        return agents.FirstOrDefault(a => a.Id == chat.AgentId)
+            ?? (AgentPicker.ItemsSource as IEnumerable<AiAgent>)?.FirstOrDefault()
+            ?? SelectedAgent
+            ?? agents.FirstOrDefault();
     }
 
     private void ChatList_MouseDoubleClick(object sender, MouseButtonEventArgs e)

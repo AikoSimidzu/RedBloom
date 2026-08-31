@@ -305,6 +305,9 @@ public partial class ProjectHomeView : UserControl, IDisposable
         srcOpenVs = LocalizationService.T("L_SourceOpenVs"),
         srcClone = LocalizationService.T("L_SourceClone"),
         publish = LocalizationService.T("L_Publish"),
+        publishing = LocalizationService.T("L_ProjectPublishing"),
+        publishDone = LocalizationService.T("L_ProjectPublished"),
+        publishFailed = LocalizationService.T("L_ProjectPublishFailed"),
         update = LocalizationService.T("L_PublishUpdate"),
         statLoc = LocalizationService.T("L_StatLoc"),
         secGraph = LocalizationService.T("L_ProjectGraph"),
@@ -621,7 +624,10 @@ public partial class ProjectHomeView : UserControl, IDisposable
             return;
         }
 
-        var error = await GitOps.PublishAsync(_project.Folder, r.CloneUrl, GitHubClient.CurrentToken(), choice.Message).ConfigureAwait(true);
+        Post(new { t = "publishStatus", state = "start" });
+        var error = await GitOps.PublishAsync(_project.Folder, r.CloneUrl, GitHubClient.CurrentToken(), choice.Message, PublishProgress()).ConfigureAwait(true);
+        Post(new { t = "publishStatus", state = error is null ? "done" : "error", text = error ?? string.Empty });
+
         if (error is not null)
         {
             MessageBox.Show(Window.GetWindow(this), error, LocalizationService.T("L_PublishTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -651,7 +657,10 @@ public partial class ProjectHomeView : UserControl, IDisposable
         WriteGitIgnore(choice.ImportAll);
 
         var cloneUrl = $"https://github.com/{_project.PublishedRepo}.git";
-        var error = await GitOps.PublishAsync(_project.Folder, cloneUrl, GitHubClient.CurrentToken(), choice.Message).ConfigureAwait(true);
+
+        Post(new { t = "publishStatus", state = "start" });
+        var error = await GitOps.PublishAsync(_project.Folder, cloneUrl, GitHubClient.CurrentToken(), choice.Message, PublishProgress()).ConfigureAwait(true);
+        Post(new { t = "publishStatus", state = error is null ? "done" : "error", text = error ?? string.Empty });
 
         MessageBox.Show(Window.GetWindow(this),
             error ?? string.Format(LocalizationService.T("L_UpdateDone"), _project.PublishedRepo),
@@ -659,6 +668,10 @@ public partial class ProjectHomeView : UserControl, IDisposable
 
         PushGitBadges();
     }
+
+    /// <summary>A progress sink that streams git's publish progress to the page as it happens.</summary>
+    private IProgress<string> PublishProgress() =>
+        new Progress<string>(line => Post(new { t = "publishStatus", state = "progress", text = line }));
 
     /// <summary>
     /// Writes the .gitignore that decides what the publish carries. With <paramref name="importAll"/>

@@ -41,7 +41,10 @@ public static partial class VisualStudioSources
 
         try
         {
-            foreach (var file in Directory.EnumerateFiles(root, "*.sln"))
+            // Both the classic .sln and the newer XML .slnx solution formats.
+            foreach (var file in Directory.EnumerateFiles(root)
+                         .Where(f => f.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+                                     || f.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)))
             {
                 Add(found, file);
             }
@@ -138,6 +141,6 @@ public static partial class VisualStudioSources
         }
     }
 
-    [GeneratedRegex(@"[A-Za-z]:\\(?:[^""<>|*?\r\n]+?)\.sln", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"[A-Za-z]:\\(?:[^""<>|*?\r\n]+?)\.(?:slnx|sln)", RegexOptions.IgnoreCase)]
     private static partial Regex SolutionPathRegex();
 }

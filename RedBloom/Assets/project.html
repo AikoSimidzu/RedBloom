@@ -55,6 +55,14 @@
   #sources .src .act { color: var(--faint); background: none; border: 0; cursor: pointer; font-family: "Segoe MDL2 Assets"; font-size: 12px; padding: 4px; }
   #sources .src .act:hover { color: var(--text); }
   #sources .empty { color: var(--faint); font-size: 12px; padding: 3px 4px; }
+  #pubprogress { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; padding: 8px 11px; border: 1px solid var(--divider);
+                 border-radius: 8px; background: var(--raised); color: var(--muted); font-size: 12px; }
+  #pubprogress.ok { color: #5bb85b; border-color: #33301f; } #pubprogress.err { color: #e0555f; }
+  #pubprogress #pubtext { font-family: var(--code-font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .psp { width: 12px; height: 12px; flex: 0 0 auto; border: 2px solid var(--faint); border-top-color: var(--accent);
+         border-radius: 50%; animation: pspin .7s linear infinite; }
+  #pubprogress.ok .psp, #pubprogress.err .psp { display: none; }
+  @keyframes pspin { to { transform: rotate(360deg); } }
 
   /* graph */
   #graph { position: relative; height: 66vh; min-height: 420px; margin-top: 8px;
@@ -144,6 +152,7 @@
   <div class="row"><h2 class="sec grow" id="secSources"></h2>
     <button class="pill" id="publish" style="margin-right:6px"><span class="ic">&#xE898;</span> <span id="publishLbl"></span></button>
     <button class="pill" id="addSource">+ <span id="addSourceLbl"></span></button></div>
+  <div id="pubprogress" style="display:none"><span class="psp"></span><span id="pubtext"></span></div>
   <div id="sources"></div>
 
   <div class="row"><h2 class="sec grow" id="secGraph"></h2><button class="pill" id="expandGraph"></button></div>
@@ -234,6 +243,20 @@
       const n = document.createElement("span"); n.className = "n"; n.textContent = fmt(l.lines);
       b.appendChild(nm); b.appendChild(tr); b.appendChild(n); c.appendChild(b);
     });
+  }
+
+  // ---------- publish progress ----------
+  let pubHideTimer = null;
+  function publishStatus(m) {
+    const el = $("pubprogress"), txt = $("pubtext");
+    clearTimeout(pubHideTimer);
+    el.classList.remove("ok", "err");
+    $("publish").disabled = m.state === "start" || m.state === "progress";
+
+    if (m.state === "start") { el.style.display = "flex"; txt.textContent = S.publishing || "Publishing…"; }
+    else if (m.state === "progress") { el.style.display = "flex"; if (m.text) txt.textContent = m.text; }
+    else if (m.state === "done") { el.style.display = "flex"; el.classList.add("ok"); txt.textContent = S.publishDone || "Published."; pubHideTimer = setTimeout(() => { el.style.display = "none"; }, 4000); }
+    else if (m.state === "error") { el.style.display = "flex"; el.classList.add("err"); txt.textContent = m.text || (S.publishFailed || "Publish failed."); pubHideTimer = setTimeout(() => { el.style.display = "none"; }, 8000); }
   }
 
   // ---------- sources ----------
@@ -524,6 +547,7 @@
     } else if (m.t === "theme" && m.vars) { for (const [k, v] of Object.entries(m.vars)) document.documentElement.style.setProperty("--" + k, v); drawEdges();
     } else if (m.t === "stats") { renderStats(m.stats);
     } else if (m.t === "sources") { renderSources(m.sources);
+    } else if (m.t === "publishStatus") { publishStatus(m);
     } else if (m.t === "published") { $("publishLbl").textContent = S.update || "Update";
     } else if (m.t === "infoHtml") { showInfo(m.html || "");
     } else if (m.t === "gitBadge") { const el = document.querySelector('.badge[data-src="' + m.id + '"]'); if (el) el.textContent = m.text || ""; }

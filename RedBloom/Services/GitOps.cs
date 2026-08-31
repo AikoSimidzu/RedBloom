@@ -49,7 +49,7 @@ public static class GitOps
     /// Publishes a folder as the given repository: initialises it if needed, commits everything, and
     /// pushes. Returns null on success, or a message on failure.
     /// </summary>
-    public static async Task<string?> PublishAsync(string folder, string cloneUrl, string token, string message = "Publish from RedBloom")
+    public static async Task<string?> PublishAsync(string folder, string cloneUrl, string token, string message = "Publish from RedBloom", IProgress<string>? progress = null)
     {
         if (!Directory.Exists(folder))
         {
@@ -67,31 +67,121 @@ public static class GitOps
             }
         }
 
-        // Clear the index first, so files newly covered by .gitignore drop out on a later publish
-        // (a switch from "everything" to "project data only"). Harmless when nothing is tracked yet.
-        await RunAsync($"-C {q} rm -r --cached --ignore-unmatch .", folder, 60_000).ConfigureAwait(false);
-        await RunAsync($"-C {q} add -A", folder, 60_000).ConfigureAwait(false);
+        // A linked source cloned into the project keeps its own .git, which git would otherwise add
+        // as an embedded repo (a gitlink) — so none of its files reach the published repo. Hiding the
+        // nested .git folders during the commit makes their contents publish as ordinary files; they
+        // are restored afterwards, whatever happens, so the clones keep working.
+        var hidden = HideNestedGit(folder);
 
-        // -c identity so a commit works even when git has no global user configured.
-        var (commitOk, commitOut) = await RunAsync(
-            $"-C {q} -c user.email=redbloom@localhost -c user.name=RedBloom commit -m \"{message.Replace("\"", "'")}\"", folder, 60_000).ConfigureAwait(false);
-
-        // "nothing to commit" is fine — the tree may already be committed.
-        if (!commitOk && !commitOut.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            return Clean(commitOut, token);
+            progress?.Report("Staging files…");
+
+            // Clear the index first, so files newly covered by .gitignore drop out on a later publish
+            // (a switch from "everything" to "project data only"), and so a folder previously added as
+            // a gitlink is replaced by its real files.
+            await RunAsync($"-C {q} rm -r --cached --ignore-unmatch .", folder, 60_000).ConfigureAwait(false);
+            await RunAsync($"-C {q} add -A", folder, 120_000).ConfigureAwait(false);
+
+            progress?.Report("Committing…");
+
+            // -c identity so a commit works even when git has no global user configured.
+            var (commitOk, commitOut) = await RunAsync(
+                $"-C {q} -c user.email=redbloom@localhost -c user.name=RedBloom commit -m \"{message.Replace("\"", "'")}\"", folder, 120_000).ConfigureAwait(false);
+
+            // "nothing to commit" is fine — the tree may already be committed.
+            if (!commitOk && !commitOut.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase))
+            {
+                return Clean(commitOut, token);
+            }
+
+            await RunAsync($"-C {q} branch -M main", folder, 15_000).ConfigureAwait(false);
+            await RunAsync($"-C {q} remote remove origin", folder, 15_000).ConfigureAwait(false);
+            await RunAsync($"-C {q} remote add origin {Quote(Authed(cloneUrl, token))}", folder, 15_000).ConfigureAwait(false);
+
+            progress?.Report("Uploading to GitHub…");
+
+            var (pushOk, pushOut) = await RunReportingAsync(
+                $"-C {q} push -u origin main --progress", folder, 300_000, progress, token).ConfigureAwait(false);
+
+            // Clean the token out of the remote whatever happened.
+            await RunAsync($"-C {q} remote set-url origin {Quote(cloneUrl)}", folder, 15_000).ConfigureAwait(false);
+
+            return pushOk ? null : Clean(pushOut, token);
+        }
+        finally
+        {
+            RestoreNestedGit(hidden);
+        }
+    }
+
+    private const string HiddenGit = ".git__rbpublish";
+
+    /// <summary>
+    /// Temporarily renames every nested <c>.git</c> folder (not the project's own) out of the way, so
+    /// a source cloned into the project publishes its files instead of an empty gitlink. Returns the
+    /// pairs to put back.
+    /// </summary>
+    private static List<(string Hidden, string Original)> HideNestedGit(string root)
+    {
+        var moved = new List<(string, string)>();
+
+        try
+        {
+            var rootGit = System.IO.Path.Combine(System.IO.Path.GetFullPath(root), ".git");
+
+            var nested = Directory.EnumerateDirectories(root, ".git", SearchOption.AllDirectories)
+                .Where(dir => !string.Equals(System.IO.Path.GetFullPath(dir), rootGit, StringComparison.OrdinalIgnoreCase)
+                              && !dir.Contains(System.IO.Path.DirectorySeparatorChar + HiddenGit + System.IO.Path.DirectorySeparatorChar))
+                .ToList();
+
+            foreach (var git in nested)
+            {
+                var parent = System.IO.Path.GetDirectoryName(git);
+                if (parent is null)
+                {
+                    continue;
+                }
+
+                var target = System.IO.Path.Combine(parent, HiddenGit);
+                try
+                {
+                    if (!Directory.Exists(target))
+                    {
+                        Directory.Move(git, target);
+                        moved.Add((target, git));
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // A .git we cannot move is left alone; its folder just publishes as a gitlink.
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best effort — publish proceeds with whatever could be hidden.
         }
 
-        await RunAsync($"-C {q} branch -M main", folder, 15_000).ConfigureAwait(false);
-        await RunAsync($"-C {q} remote remove origin", folder, 15_000).ConfigureAwait(false);
-        await RunAsync($"-C {q} remote add origin {Quote(Authed(cloneUrl, token))}", folder, 15_000).ConfigureAwait(false);
+        return moved;
+    }
 
-        var (pushOk, pushOut) = await RunAsync($"-C {q} push -u origin main", folder, 180_000).ConfigureAwait(false);
-
-        // Clean the token out of the remote whatever happened.
-        await RunAsync($"-C {q} remote set-url origin {Quote(cloneUrl)}", folder, 15_000).ConfigureAwait(false);
-
-        return pushOk ? null : Clean(pushOut, token);
+    private static void RestoreNestedGit(List<(string Hidden, string Original)> moved)
+    {
+        foreach (var (hidden, original) in moved)
+        {
+            try
+            {
+                if (Directory.Exists(hidden) && !Directory.Exists(original))
+                {
+                    Directory.Move(hidden, original);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                System.Diagnostics.Debug.WriteLine($"Could not restore {original}: {ex.Message}");
+            }
+        }
     }
 
     /// <summary>One pending change in a folder: its two-letter git status and its path.</summary>
@@ -167,6 +257,90 @@ public static class GitOps
         token.Length > 0 ? text.Replace(token, "***") : text;
 
     private static string Quote(string s) => "\"" + s + "\"";
+
+    /// <summary>
+    /// Runs git and streams its progress to <paramref name="progress"/> as it happens — git writes
+    /// its "Writing objects: NN%" lines to stderr, separated by carriage returns, so they are split on
+    /// both CR and LF and reported one at a time. Returns success and the full combined output.
+    /// </summary>
+    private static Task<(bool Ok, string Output)> RunReportingAsync(
+        string arguments, string workDir, int timeoutMs, IProgress<string>? progress, string token) => Task.Run(async () =>
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo("git", arguments)
+                {
+                    WorkingDirectory = Directory.Exists(workDir) ? workDir : ".",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                },
+            };
+
+            if (!process.Start())
+            {
+                return (false, "git could not be started.");
+            }
+
+            var all = new System.Text.StringBuilder();
+
+            async Task Pump(StreamReader reader)
+            {
+                var buffer = new char[512];
+                var line = new System.Text.StringBuilder();
+                int read;
+
+                while ((read = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+                {
+                    for (var i = 0; i < read; i++)
+                    {
+                        var c = buffer[i];
+                        if (c is '\r' or '\n')
+                        {
+                            if (line.Length > 0)
+                            {
+                                var text = line.ToString().Trim();
+                                all.Append(text).Append('\n');
+                                if (text.Length > 0 && progress is not null)
+                                {
+                                    progress.Report(Clean(text, token));
+                                }
+
+                                line.Clear();
+                            }
+                        }
+                        else
+                        {
+                            line.Append(c);
+                        }
+                    }
+                }
+
+                if (line.Length > 0)
+                {
+                    all.Append(line.ToString().Trim()).Append('\n');
+                }
+            }
+
+            var pumps = Task.WhenAll(Pump(process.StandardOutput), Pump(process.StandardError));
+
+            if (!await Task.Run(() => process.WaitForExit(timeoutMs)).ConfigureAwait(false))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                return (false, "git timed out.");
+            }
+
+            await pumps.ConfigureAwait(false);
+            return (process.ExitCode == 0, all.ToString().Trim());
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return (false, $"git is not available: {ex.Message}");
+        }
+    });
 
     private static Task<(bool Ok, string Output)> RunAsync(string arguments, string workDir, int timeoutMs) => Task.Run(() =>
     {
